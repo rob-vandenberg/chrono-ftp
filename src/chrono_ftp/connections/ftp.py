@@ -1,4 +1,6 @@
 import calendar
+import codecs
+import encodings.utf_8
 import ftplib
 import hashlib
 import re
@@ -6,6 +8,7 @@ import socket
 import ssl
 import threading
 import time
+from collections.abc import Buffer
 from pathlib import Path
 from typing import override
 
@@ -15,9 +18,10 @@ from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, LoginRefused, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.5"
+__version__ = "ftp.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: A name that is not valid UTF-8 keeps its real bytes, so it no longer ends the connection
 # v0.0.5: Initial: ftplib, TLS where the server offers it, MLSD for listings (D-011)
 
 SECONDS: float = 30.0
@@ -29,11 +33,47 @@ PLAIN: str = "plain"
 CHANGED_TEXT: str = "This server's certificate has changed since you trusted it, so Chrono FTP did not connect."
 NOT_ENCRYPTED_TEXT: str = "This server does not offer encryption, so your password and files would travel readable over the network."
 NO_LONGER_ENCRYPTED_TEXT: str = "This server used to offer encryption and no longer does, so Chrono FTP did not connect."
-UNREADABLE_NAME_TEXT: str = "This folder holds a name Chrono FTP can't read. Please connect again."
+NAMES_ENCODING: str = "chrono-ftp-names"
 SIZE_PATTERN: re.Pattern[str] = re.compile(r"[0-9]{1,18}")
 LOST_TEXT: str = "The connection to the server was lost."
 FTP_ERRORS: tuple[type[BaseException], ...] = (ftplib.Error, OSError, EOFError, ValueError)
 LOST_ERRORS: tuple[type[BaseException], ...] = (EOFError, ConnectionError, TimeoutError)
+
+
+class _NamesDecoder(encodings.utf_8.IncrementalDecoder):
+    def __init__(self, errors: str = "surrogateescape") -> None:
+        super().__init__("surrogateescape")
+
+
+class _NamesEncoder(codecs.IncrementalEncoder):
+    @override
+    def encode(self, input: str, final: bool = False) -> bytes:
+        return input.encode("utf-8", "surrogateescape")
+
+
+def _encode_names(text: str, errors: str = "surrogateescape") -> tuple[bytes, int]:
+    return text.encode("utf-8", "surrogateescape"), len(text)
+
+
+def _decode_names(input: Buffer, errors: str = "surrogateescape") -> tuple[str, int]:
+    data = bytes(input)
+    return data.decode("utf-8", "surrogateescape"), len(data)
+
+
+def _names_codec(name: str) -> codecs.CodecInfo | None:
+    """ftplib reads with a strict encoding and has no way to change that: this one keeps the real bytes of a name that is not valid UTF-8."""
+    if name.replace("_", "-") != NAMES_ENCODING:
+        return None
+    return codecs.CodecInfo(
+        _encode_names,
+        _decode_names,
+        incrementalencoder=_NamesEncoder,
+        incrementaldecoder=_NamesDecoder,
+        name=NAMES_ENCODING,
+    )
+
+
+codecs.register(_names_codec)
 
 
 class _TlsFtp(ftplib.FTP_TLS):
@@ -95,7 +135,7 @@ class FtpConnection(RemoteConnection):
         return context
 
     def _new_session(self, session: ftplib.FTP) -> ftplib.FTP:
-        session.encoding = "utf-8"
+        session.encoding = NAMES_ENCODING
         session.connect(self.connection.host, self.connection.port)
         return session
 
@@ -129,6 +169,7 @@ class FtpConnection(RemoteConnection):
         line = self._prefix() + PLAIN
         if line not in known:
             raise UnknownServer("connection", "not encrypted", line, NOT_ENCRYPTED_TEXT)
+        self.encrypted = False
         return self._new_session(ftplib.FTP(timeout=SECONDS))
 
     def _open(self) -> ftplib.FTP:
@@ -211,9 +252,6 @@ class FtpConnection(RemoteConnection):
             except ssl.SSLError as error:
                 self._drop()  # another certificate on the data connection: nothing on this connection can be trusted
                 raise ConnectionLost(LOST_TEXT) from error
-            except UnicodeError as error:
-                self._drop()  # the reply of the listing is still on its way: nothing that follows could be trusted
-                raise ConnectionLost(UNREADABLE_NAME_TEXT) from error
             except ftplib.error_perm as error:
                 text = str(error)
                 raise RemoteActionFailed(NO_LISTING_TEXT if text.startswith("500") or text.startswith("502") else text) from error

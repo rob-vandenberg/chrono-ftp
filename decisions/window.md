@@ -8,3 +8,5 @@
 6. [[D-021]] Import of a session list
 7. [[D-028]] Breeze icons
 8. [[D-032]] Place of the folder tree
+9. [[D-033]] One file list on both sides
+10. [[D-034]] Each side has its own buttons

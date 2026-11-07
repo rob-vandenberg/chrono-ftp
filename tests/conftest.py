@@ -10,9 +10,10 @@ import pytest
 from chrono_ftp.core import credentials
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 0.0.5"
+__version__ = "conftest.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: Nor the real data folder
 # v0.0.5: No test touches the real connection list or credential store
 # v0.0.3: The window tests get their plugin (tests/ui/uiplugin.py)
 # v0.0.1: Initial: no test may take longer than 20 seconds (AGENTS.md 4.4.4)
@@ -69,4 +70,5 @@ def memory_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MemoryStore
     store = MemoryStore()
     monkeypatch.setattr(credentials, "store", store)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     return store

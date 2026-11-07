@@ -1,28 +1,35 @@
+import shutil
 import stat
+import threading
 from collections.abc import Callable, Generator
 from pathlib import Path
+from typing import cast
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel
-from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QInputDialog, QMessageBox
+from PySide6.QtCore import QByteArray, QItemSelectionModel, QMimeData, QPointF, Qt
+from PySide6.QtGui import QColor, QDropEvent, QPalette
+from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import UnknownServer
+from chrono_ftp.connections.base import RemoteConnection, UnknownServer
 from chrono_ftp.connections.ssh import SshConnection
 from chrono_ftp.core import colours
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.changedialog import ChangeDialog
-from chrono_ftp.ui.mainwindow import MainWindow
+from chrono_ftp.ui.comparedialog import CompareDialog
+from chrono_ftp.ui.filelist import DRAG_MARK, LOCAL_FILES, REMOTE_FILES, FileList
+from chrono_ftp.engine.jobs import Worker
+from chrono_ftp.ui.mainwindow import EDIT_WAIT_TRIES, MainWindow, Session, _same_server
 from tests.conftest import MemoryStore
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.5"
+__version__ = "test_ui_sessions.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: Drag and drop, edit, odd names, the buttons of the sides, the status bar, synchronize
 # v0.0.5: Initial: the real window against real servers in the test process
 
 GREEN: str = "#00aa00"
@@ -50,7 +57,11 @@ def window(qtbot: QtBot, memory_store: MemoryStore) -> Generator[MainWindow]:
     memory_store.passwords["Shop"] = PASSWORD
     memory_store.passwords["Other"] = PASSWORD
     made = MainWindow()
-    qtbot.addWidget(made)
+
+    def let_go(_widget: QWidget) -> None:
+        made._forget_edits(list(made.edited))  # the test is over: closing has no one to ask about them
+
+    qtbot.addWidget(made, before_close_func=let_go)
     yield made
     made.close()
 
@@ -62,17 +73,15 @@ def connected(qtbot: QtBot, window: MainWindow, connection: Connection) -> None:
 
 
 def names_on_the_right(window: MainWindow) -> list[str]:
-    return [str(window.remote_side.files.item(row, 0).text()) for row in range(window.remote_side.files.rowCount())]
+    return window.remote_side.file_list.names()
 
 
 def select(window: MainWindow, *names: str) -> None:
     selection = window.remote_side.file_list.selectionModel()
     assert selection is not None
     selection.clear()
-    for row in range(window.remote_side.files.rowCount()):
-        item = window.remote_side.files.item(row, 0)
-        if item.text() in names:
-            selection.select(item.index(), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    for name in names:
+        selection.select(window.remote_side.file_list.index_of(name), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
 
 
 def base_of(window: MainWindow) -> QColor:
@@ -88,7 +97,7 @@ def test_a_connection_opens_in_a_tab_in_its_colour(qtbot: QtBot, window: MainWin
         assert window.tab_bar.count() == 1
         assert window.tab_bar.background_of(0) == GREEN
         assert base_of(window) == QColor(GREEN)
-        assert window.remote_side.path_label.text() == "/"
+        assert window.remote_side.path_line.text() == "/"
 
 
 def test_text_and_selection_stay_readable_on_the_colour(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -153,7 +162,7 @@ def test_closing_the_last_tab_makes_the_right_side_grey(qtbot: QtBot, window: Ma
         connected(qtbot, window, ssh_settings(server))
         window.close_tab(0)
         assert base_of(window) == QColor(colours.NOT_CONNECTED)
-        assert window.remote_side.path_label.text() == "Not connected"
+        assert window.remote_side.path_line.text() == "Not connected"
         assert names_on_the_right(window) == []
 
 
@@ -557,3 +566,778 @@ def test_rename_refuses_a_name_that_is_taken(qtbot: QtBot, window: MainWindow, t
         window.actions_by_name["rename"].trigger()
     assert len(told) == 1
     assert (root / "a.txt").exists() and (root / "b.txt").read_text(encoding="utf-8") == "b"
+
+
+def text_of(path: Path) -> str:
+    """A replaced file is away for a moment during the swap: that is no answer yet."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+def mark(kind: str) -> QMimeData:
+    mime = QMimeData()
+    mime.setData(kind, QByteArray(DRAG_MARK))
+    return mime
+
+
+def dropped(view: FileList, kind: str, row_name: str | None = None) -> None:
+    position = QPointF(view.visualRect(view.index_of(row_name)).center()) if row_name else QPointF(5, view.viewport().height() - 5)
+    mime = mark(kind)  # the event does not keep it alive
+    view.dropEvent(QDropEvent(position, Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+
+
+def pick_local(window: MainWindow, *names: str) -> None:
+    selection = window.local_side.file_list.selectionModel()
+    assert selection is not None
+    for name in names:
+        selection.select(window.local_side.file_list.index_of(name), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+
+
+def test_a_file_dragged_to_the_right_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root, here = tmp_path / "server", tmp_path / "here"
+    (root / "inner").mkdir(parents=True)
+    here.mkdir()
+    (here / "a.txt").write_text("a", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window.local_side.go_to(str(here))
+        qtbot.waitUntil(lambda: "inner" in names_on_the_right(window))
+        pick_local(window, "a.txt")
+        dropped(window.remote_side.file_list, LOCAL_FILES, "inner")
+        qtbot.waitUntil(lambda: (root / "inner" / "a.txt").exists())
+
+
+def test_a_file_dragged_to_the_left_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root, here = tmp_path / "server", tmp_path / "here"
+    root.mkdir()
+    (here / "inner").mkdir(parents=True)
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window.local_side.go_to(str(here))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        dropped(window.local_side.file_list, REMOTE_FILES, "inner")
+        qtbot.waitUntil(lambda: (here / "inner" / "a.txt").exists())
+
+
+def test_a_drag_within_the_right_side_moves_on_the_server(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    (root / "inner").mkdir(parents=True)
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    with ssh_server(root, shell=False) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        dropped(window.remote_side.file_list, REMOTE_FILES, "inner")
+        qtbot.waitUntil(lambda: (root / "inner" / "a.txt").exists())
+        assert not (root / "a.txt").exists()
+
+
+def test_an_edited_file_goes_back_to_the_server_on_every_save(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: bool(opened))
+        Path(opened[0]).write_text("new text", encoding="utf-8")
+        qtbot.waitUntil(lambda: text_of(root / "a.txt") == "new text")
+        qtbot.waitUntil(lambda: all(job.state == State.DONE for job in window.queue.jobs))
+
+
+def test_a_name_that_is_not_utf8_can_be_copied_and_deleted_on_a_real_server(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, here = tmp_path / "server", tmp_path / "here"
+    root.mkdir()
+    here.mkdir()
+    name = "b\udcffd.txt"
+    Path(root, name).write_text("content", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question", yes)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window.local_side.go_to(str(here))
+        qtbot.waitUntil(lambda: "b\ufffdd.txt" in names_on_the_right(window))
+        select(window, name)
+        window.actions_by_name["download"].trigger()
+        qtbot.waitUntil(lambda: Path(here, name).exists())
+        assert Path(here, name).read_text(encoding="utf-8") == "content"
+        window.actions_by_name["delete"].trigger()
+        qtbot.waitUntil(lambda: not Path(root, name).exists())
+
+
+def test_a_folder_with_a_name_that_is_not_utf8_can_be_entered(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    inner = root / "f\udcffd"
+    inner.mkdir(parents=True)
+    (inner / "a.txt").write_text("a", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "f\ufffdd" in names_on_the_right(window))
+        select(window, "f\udcffd")
+        window.remote_side.file_list.opened.emit(window.remote_side.selected_entries()[0])
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+
+
+def test_a_listing_with_a_name_that_is_not_utf8_keeps_an_ftp_connection_alive(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "plain.txt").write_text("a", encoding="utf-8")
+    Path(root, "b\udcffd.txt").write_text("a", encoding="utf-8")
+    with ftp_server(root) as port:
+        connected(qtbot, window, Connection(name="Shop", host="127.0.0.1", port=port, user=USER, protocol=FTP, start_folder="/"))
+        qtbot.waitUntil(lambda: "plain.txt" in names_on_the_right(window))
+        assert window.sessions[0].alive
+
+
+def test_the_remote_side_walks_with_its_buttons_and_home_is_where_the_login_starts(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    (root / "inner").mkdir(parents=True)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        side = window.remote_side
+        qtbot.waitUntil(lambda: "inner" in names_on_the_right(window))
+        window.open_remote_folder("/inner")
+        qtbot.waitUntil(lambda: side.folder == "/inner")
+        side.navigation.buttons["back"].trigger()
+        qtbot.waitUntil(lambda: side.folder == "/")
+        side.navigation.buttons["forward"].trigger()
+        qtbot.waitUntil(lambda: side.folder == "/inner")
+        side.navigation.buttons["home"].trigger()
+        qtbot.waitUntil(lambda: side.folder == window.sessions[0].home_folder)
+        side.path_line.setText("/inner/")
+        side.path_line.returnPressed.emit()
+        qtbot.waitUntil(lambda: side.folder == "/inner")
+
+
+def test_the_status_bar_shows_the_protocol_the_lock_and_the_time(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window._show_connection_state()
+        assert window.protocol_label.text() == "SFTP"
+        assert window.lock_label.isVisibleTo(window)
+        assert window.time_label.text().startswith("0:00:")
+
+
+def test_plain_ftp_shows_no_lock(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    with ftp_server(root) as port:
+        connected(qtbot, window, Connection(name="Shop", host="127.0.0.1", port=port, user=USER, protocol=FTP, start_folder="/"))
+        window._show_connection_state()
+        assert window.protocol_label.text() == "FTP"
+        assert not window.lock_label.isVisibleTo(window)
+
+
+def test_synchronize_copies_only_what_is_ticked_and_deletes_nothing(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root, here = tmp_path / "server", tmp_path / "here"
+    (root / "shared").mkdir(parents=True)
+    (here / "shared").mkdir(parents=True)
+    (here / "mine.txt").write_text("mine", encoding="utf-8")
+    (root / "theirs.txt").write_text("theirs", encoding="utf-8")
+    (here / "shared" / "deep.txt").write_text("deep", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window.local_side.go_to(str(here))
+        window.actions_by_name["compare"].trigger()
+        dialog = window.findChild(CompareDialog)
+        assert dialog is not None
+        qtbot.waitUntil(lambda: dialog.table.rowCount() == 3)
+        dialog.copy_button.click()
+        qtbot.waitUntil(lambda: (root / "mine.txt").exists() and (here / "theirs.txt").exists() and (root / "shared" / "deep.txt").exists())
+        qtbot.waitUntil(lambda: all(job.state == State.DONE for job in window.queue.jobs))
+        assert (root / "theirs.txt").exists() and (here / "mine.txt").exists()
+
+
+def test_back_to_a_folder_that_is_refused_leaves_the_history_as_it_was(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    (root / "gone").mkdir(parents=True)
+    (root / "next").mkdir()
+    told: list[str] = []
+
+    def note(_parent: object, _title: str, text: str) -> None:
+        told.append(text)
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        side = window.remote_side
+        window.open_remote_folder("/gone")
+        qtbot.waitUntil(lambda: side.folder == "/gone")
+        window.open_remote_folder("/")
+        qtbot.waitUntil(lambda: side.folder == "/")
+        (root / "gone").rmdir()
+        side.navigation.buttons["back"].trigger()
+        qtbot.waitUntil(lambda: bool(told))
+        assert side.history.behind[-1] == "/gone" and side.history.ahead == []
+        window.open_remote_folder("/next")
+        qtbot.waitUntil(lambda: side.folder == "/next")
+        assert side.history.behind[-1] == "/"
+
+
+def test_refresh_after_a_refused_folder_shows_the_folder_on_the_screen(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    told: list[str] = []
+
+    def note(_parent: object, _title: str, text: str) -> None:
+        told.append(text)
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window.open_remote_folder("/nowhere")
+        qtbot.waitUntil(lambda: bool(told))
+        (root / "new.txt").write_text("x", encoding="utf-8")
+        window.refresh()
+        qtbot.waitUntil(lambda: "new.txt" in names_on_the_right(window))
+        assert len(told) == 1
+
+
+def test_a_finished_upload_does_not_undo_the_move_the_person_asked_for(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    (root / "inner").mkdir(parents=True)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        session = window.sessions[0]
+        window.open_remote_folder("/inner")
+        window._reload(session)
+        qtbot.waitUntil(lambda: window.remote_side.folder == "/inner")
+
+
+def test_opening_a_file_in_the_list_edits_that_file_not_the_selection(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    (root / "b.txt").write_text("b", encoding="utf-8")
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "b.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        view = window.remote_side.file_list
+        view.opened.emit(view.files.rows[view.index_of("b.txt").row()])
+        qtbot.waitUntil(lambda: bool(opened))
+        assert Path(opened[0]).name == "b.txt"
+
+
+def test_a_save_while_the_connection_is_gone_goes_after_reconnect(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: bool(opened))
+        session = window.sessions[0]
+        session.alive = False
+        Path(opened[0]).write_text("new", encoding="utf-8")
+        qtbot.waitUntil(lambda: window.edited[opened[0]].unsent and not window.edit_settle.isActive())
+        assert (root / "a.txt").read_text(encoding="utf-8") == "old"
+        session.alive = True
+        window.edit_settle.start()
+        qtbot.waitUntil(lambda: text_of(root / "a.txt") == "new")
+
+
+def test_closing_a_tab_with_a_file_open_for_editing_asks_first(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    opened: list[str] = []
+    asked: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+
+    def no(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: bool(opened))
+        monkeypatch.setattr(QMessageBox, "question", no)
+        window.close_tab(0)
+        assert "a.txt" in asked[0] and len(window.sessions) == 1
+        assert "What you save after this" in asked[0]
+        monkeypatch.setattr(QMessageBox, "question", yes)
+        window.close_tab(0)
+        assert window.sessions == [] and window.edited == {}
+        assert not Path(opened[0]).exists()
+
+
+def test_each_tab_keeps_its_own_history_and_filter(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    root = tmp_path / "server"
+    (root / "inner").mkdir(parents=True)
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        side = window.remote_side
+        window.open_remote_folder("/inner")
+        qtbot.waitUntil(lambda: side.folder == "/inner")
+        connected(qtbot, window, ssh_settings(server, "Other", MAGENTA))
+        qtbot.waitUntil(lambda: side.folder == "/")
+        assert side.history.behind == []
+        window.sessions[1].name_mask = "*.png"
+        window.tab_bar.setCurrentIndex(0)
+        qtbot.waitUntil(lambda: side.folder == "/inner")
+        assert side.history.behind == ["/"]
+        assert side.file_list.name_mask == ""
+        window.tab_bar.setCurrentIndex(1)
+        assert side.file_list.name_mask == "*.png"
+
+
+def test_a_name_with_a_slash_is_refused_on_the_server(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    told: list[str] = []
+
+    def note(_parent: object, _title: str, text: str) -> None:
+        told.append(text)
+
+    def answer(*_args: object) -> str:
+        return "../outside"
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    monkeypatch.setattr(window, "_ask_text", answer)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        window.actions_by_name["new_folder"].trigger()
+        assert told
+
+
+def editing(qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch, name: str = "a.txt") -> str:
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    qtbot.waitUntil(lambda: name in names_on_the_right(window))
+    select(window, name)
+    window.actions_by_name["edit"].trigger()
+    qtbot.waitUntil(lambda: bool(opened))
+    return opened[0]
+
+
+def test_a_refused_send_asks_and_try_again_sends_it(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    asked: list[str] = []
+
+    def again(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
+        asked.append(text)
+        root.chmod(0o755)  # the person put the server right
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", again)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        root.chmod(0o555)
+        try:
+            Path(copy).write_text("new", encoding="utf-8")
+            qtbot.waitUntil(lambda: text_of(root / "a.txt") == "new")
+        finally:
+            root.chmod(0o755)
+        assert copy in asked[0]
+        qtbot.waitUntil(lambda: not window.edited[copy].pending)
+
+
+def test_a_copy_that_never_reached_the_server_is_kept_when_its_edit_ends(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        Path(copy).write_text("new", encoding="utf-8")
+        window.edited[copy].unsent = True
+        window._forget_edits([copy])
+        assert Path(copy).read_text(encoding="utf-8") == "new"
+        shutil.rmtree(Path(copy).parent)
+
+
+def test_a_refused_rename_leaves_the_edit_going(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    told: list[str] = []
+
+    def note(_parent: object, _title: str, text: str) -> None:
+        told.append(text)
+
+    def answer(*_args: object) -> str:
+        return "b.txt"
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        monkeypatch.setattr(window, "_ask_text", answer)
+        root.chmod(0o555)
+        try:
+            window.actions_by_name["rename"].trigger()
+            qtbot.waitUntil(lambda: bool(told))
+        finally:
+            root.chmod(0o755)
+        assert copy in window.edited
+
+
+def test_a_rename_in_another_tab_of_the_same_server_ends_the_edit_too(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    told: list[str] = []
+
+    def note(_parent: object, _title: str, text: str) -> None:
+        told.append(text)
+
+    def answer(*_args: object) -> str:
+        return "b.txt"
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        editing(qtbot, window, monkeypatch)
+        connected(qtbot, window, ssh_settings(server, "Other", MAGENTA))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        monkeypatch.setattr(window, "_ask_text", answer)
+        window.actions_by_name["rename"].trigger()
+        qtbot.waitUntil(lambda: window.edited == {})
+
+
+def test_a_stopped_send_goes_only_with_a_new_save(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        edited = window.edited[copy]
+        edited.job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, copy, "/", True, "a.txt", state=State.STOPPED)
+        window._edit_job_ended(edited.job)
+        assert edited.unsent and edited.held
+        window._send_edited_files()
+        assert edited.job is None and edited.unsent
+        window._edited_file_changed(copy)
+        assert not edited.held
+
+
+def test_closing_a_tab_says_when_a_save_is_not_on_the_server_yet(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    asked: list[str] = []
+
+    def no(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        window.edited[copy].unsent = True
+        monkeypatch.setattr(QMessageBox, "question", no)
+        window.close_tab(0)
+        assert copy in asked[0]
+        window.edited[copy].unsent = False
+
+
+def test_a_tab_closed_during_the_download_of_an_edit_opens_nothing(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        window.actions_by_name["edit"].trigger()
+        worker = window.sessions[0].worker
+        window.close_tab(0)
+        assert window.sessions == []
+        finished = threading.Event()
+        worker.submit(finished.set, lambda _nothing: None, lambda _error: None)
+        qtbot.wait(300)
+        assert opened == [] and window.edited == {}
+
+
+def test_no_on_the_question_about_edits_leaves_the_transfers_running(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    answers = iter([QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No])
+
+    def answer(*_args: object) -> QMessageBox.StandardButton:
+        return next(answers)
+
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        editing(qtbot, window, monkeypatch)
+        job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, "/nowhere", "/", True, "x", state=State.RUNNING)
+        window.queue.jobs.append(job)
+        monkeypatch.setattr(QMessageBox, "question", answer)
+        window.close_tab(0)
+        window.queue.jobs.remove(job)
+        assert not job.stop_asked.is_set()
+
+
+def test_closing_the_window_with_a_file_open_for_editing_asks_first(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    asked: list[str] = []
+
+    def no(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        monkeypatch.setattr(QMessageBox, "question", no)
+        assert not window.close()
+        assert "a.txt" in asked[0]
+        assert Path(copy).exists()
+
+
+def test_a_copy_that_stays_away_ends_the_waiting(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        Path(copy).unlink()
+        window.edited[copy].unsent = True
+        window.edited[copy].waited = EDIT_WAIT_TRIES - 1
+        window._send_edited_files()
+        assert window.edited == {}
+
+
+def test_a_save_never_makes_a_renamed_file_again(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+
+    def note(*_args: object) -> None:
+        pass
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        editing(qtbot, window, monkeypatch)
+
+        def answer(*_args: object) -> str:
+            return "b.txt"
+
+        monkeypatch.setattr(window, "_ask_text", answer)
+        window.actions_by_name["rename"].trigger()
+        qtbot.waitUntil(lambda: window.edited == {})
+        assert (root / "b.txt").exists()
+
+
+def test_a_move_refused_halfway_ends_the_edit_of_the_file_that_did_move(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    (root / "t").mkdir(parents=True)
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    (root / "z.txt").write_text("z", encoding="utf-8")
+    (root / "t" / "z.txt").write_text("there", encoding="utf-8")
+
+    def note(*_args: object) -> None:
+        pass
+
+    def answer(*_args: object) -> str:
+        return "/t"
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root, shell=False) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        editing(qtbot, window, monkeypatch)
+        select(window, "a.txt", "z.txt")
+        monkeypatch.setattr(window, "_ask_text", answer)
+        window.actions_by_name["move"].trigger()
+        qtbot.waitUntil(lambda: window.edited == {})
+        assert (root / "t" / "a.txt").exists()
+
+
+def test_a_renamed_parent_folder_ends_the_edit_of_what_is_inside(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "a.txt").write_text("old", encoding="utf-8")
+
+    def note(*_args: object) -> None:
+        pass
+
+    def answer(*_args: object) -> str:
+        return "live"
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "sub" in names_on_the_right(window))
+        window.open_remote_folder("/sub")
+        editing(qtbot, window, monkeypatch)
+        window.open_remote_folder("/")
+        qtbot.waitUntil(lambda: "sub" in names_on_the_right(window))
+        select(window, "sub")
+        monkeypatch.setattr(window, "_ask_text", answer)
+        window.actions_by_name["rename"].trigger()
+        qtbot.waitUntil(lambda: window.edited == {})
+
+
+def test_no_to_try_again_waits_for_its_own_save_and_other_saves_do_not_bring_it_back(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        edited = window.edited[copy]
+        edited.job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, copy, "/", True, "a.txt", state=State.FAILED, message="refused")
+        asked: list[str] = []
+
+        def no(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
+            asked.append(text)
+            return QMessageBox.StandardButton.No
+
+        monkeypatch.setattr(QMessageBox, "question", no)
+        window._edit_job_ended(edited.job)
+        window._send_edited_files()
+        assert len(asked) == 1 and edited.job is None and edited.unsent
+        window._connected(window.sessions[0], cast(RemoteConnection, window.sessions[0].remote), "/")
+        assert not edited.held
+        edited.unsent = False
+
+
+def test_a_save_during_a_send_that_is_stopped_still_goes(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        edited = window.edited[copy]
+        edited.unsent = True
+        Path(copy).write_text("newer", encoding="utf-8")
+        edited.job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, copy, "/", True, "a.txt", state=State.STOPPED)
+        window._edit_job_ended(edited.job)
+        assert not edited.held
+        qtbot.waitUntil(lambda: text_of(root / "a.txt") == "newer")
+
+
+def test_a_file_with_changes_on_their_way_opens_the_same_copy_and_otherwise_a_fresh_one(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: bool(opened))
+        window.edited[opened[0]].unsent = True
+        window.edited[opened[0]].held = True
+        window.actions_by_name["edit"].trigger()
+        assert opened == [opened[0], opened[0]]
+        window.edited[opened[0]].unsent = False
+        (root / "a.txt").write_text("newer on the server", encoding="utf-8")
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: len(opened) == 3)
+        assert Path(opened[2]).read_text(encoding="utf-8") == "newer on the server"
+        assert len(window.edited) == 1
+
+
+def test_a_fresh_copy_that_can_not_be_fetched_leaves_the_edit_as_it_was(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    told: list[str] = []
+
+    def note(_parent: object, _title: str, text: str) -> None:
+        told.append(text)
+
+    monkeypatch.setattr(QMessageBox, "information", note)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        (root / "a.txt").unlink()
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: bool(told))
+        assert copy in window.edited and Path(copy).exists()
+
+
+def test_two_presses_on_edit_give_one_copy(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    opened: list[str] = []
+    monkeypatch.setattr(window, "_open_local_file", opened.append)
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
+        select(window, "a.txt")
+        window.actions_by_name["edit"].trigger()
+        window.actions_by_name["edit"].trigger()
+        qtbot.waitUntil(lambda: bool(opened))
+        qtbot.wait(200)
+        assert len(opened) == 1 and len(window.edited) == 1
+
+
+def test_another_login_on_the_same_server_is_another_place(qtbot: QtBot, window: MainWindow) -> None:
+    first = Session(Connection(name="A", host="h", user="alice"), Worker(window.bridge.deliver), "/")
+    second = Session(Connection(name="B", host="h", user="bob"), Worker(window.bridge.deliver), "/")
+    assert not _same_server(first, second)
+    first.worker.stop()
+    second.worker.stop()

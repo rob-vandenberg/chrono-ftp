@@ -17,9 +17,10 @@ from chrono_ftp.ui.remoteside import NOT_CONNECTED_TEXT, RemoteSide
 from chrono_ftp.ui.settingsdialog import SettingsDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.3"
+__version__ = "test_ui_mainwindow.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: The shared file list
 # v0.0.3: Initial: the fixed sides, the grey of no connection, a local folder really shown
 
 
@@ -33,10 +34,7 @@ def window_for(qtbot: QtBot) -> MainWindow:
 
 
 def names_in(side: LocalSide) -> set[str]:
-    model = side.file_list.model()
-    assert model is not None
-    root = side.file_list.rootIndex()
-    return {str(model.index(row, 0, root).data()) for row in range(model.rowCount(root))}
+    return set(side.file_list.names())
 
 
 def test_the_left_side_is_local_and_the_right_side_is_remote(qtbot: QtBot) -> None:
@@ -69,15 +67,15 @@ def test_the_lists_get_nearly_all_the_height(qtbot: QtBot) -> None:
         window.show()
     line = window.fontMetrics().height()
     for side in (window.local_side, window.remote_side):
-        assert side.path_label.height() <= 2 * line
-        assert side.file_list.height() >= side.height() - 3 * line
+        assert side.path_line.height() <= 2 * line
+        assert side.file_list.height() >= side.height() - side.navigation.height() - side.actions_bar.height() - 4 * line
     assert window.tab_bar.height() <= 3 * line
 
 
 def test_the_right_side_is_plain_grey_and_says_not_connected(qtbot: QtBot) -> None:
     window = window_for(qtbot)
     remote = window.remote_side
-    assert remote.path_label.text() == NOT_CONNECTED_TEXT
+    assert remote.path_line.text() == NOT_CONNECTED_TEXT
     grey = QColor(colours.NOT_CONNECTED)
     assert remote.tree.palette().color(QPalette.ColorRole.Base) == grey
     assert remote.file_list.palette().color(QPalette.ColorRole.Base) == grey
@@ -117,7 +115,7 @@ def test_the_left_side_shows_a_real_folder(qtbot: QtBot, tmp_path: Path) -> None
     window = window_for(qtbot)
     local = window.local_side
     assert local.go_to(str(tmp_path))
-    assert local.path_label.text() == str(tmp_path)
+    assert local.path_line.text() == str(tmp_path)
     qtbot.waitUntil(lambda: {"report.txt", "pictures"} <= names_in(local))
 
 
@@ -128,12 +126,10 @@ def test_a_double_click_on_a_folder_opens_it_and_the_parent_entry_goes_back(qtbo
     local = window.local_side
     local.go_to(str(tmp_path))
     qtbot.waitUntil(lambda: "inner" in names_in(local))
-    local._entry_opened(local.list_model.index(str(inner)))
+    local.file_list.opened.emit(local.file_list.files.rows[local.file_list.index_of("inner").row()])
     assert local.folder == str(inner)
     qtbot.waitUntil(lambda: ".." in names_in(local))
-    root = local.file_list.rootIndex()
-    parent = next(local.list_model.index(row, 0, root) for row in range(local.list_model.rowCount(root)) if local.list_model.index(row, 0, root).data() == "..")
-    local._entry_opened(parent)
+    local.file_list.opened.emit(None)
     assert local.folder == str(tmp_path)
 
 
@@ -152,7 +148,7 @@ def test_a_file_opened_in_the_list_leaves_the_folder_as_it_is(qtbot: QtBot, tmp_
     local = window.local_side
     local.go_to(str(tmp_path))
     qtbot.waitUntil(lambda: "report.txt" in names_in(local))
-    local._entry_opened(local.list_model.index(str(file)))
+    local.file_list.opened.emit(local.file_list.files.rows[local.file_list.index_of("report.txt").row()])
     assert local.folder == str(tmp_path)
 
 
@@ -186,7 +182,7 @@ def test_a_closed_folder_is_shown_as_closed(qtbot: QtBot, tmp_path: Path, rights
         closed.chmod(rights)
         assert local.go_to(str(closed))
         assert local.folder == str(closed)
-        assert local.path_label.text() == f"{closed} ({NO_ACCESS_TEXT})"
+        assert local.path_line.text() == f"{closed} ({NO_ACCESS_TEXT})"
         assert local.tree_model.filePath(local.tree.currentIndex()) == str(closed)
         assert names_in(local) == set()
     finally:
@@ -236,7 +232,7 @@ def test_return_in_the_list_opens_the_folder(qtbot: QtBot, tmp_path: Path) -> No
     with qtbot.waitExposed(window):
         window.show()
     local.file_list.setFocus()
-    local.file_list.setCurrentIndex(local.list_model.index(str(inner)))
+    local.file_list.setCurrentIndex(local.file_list.index_of("inner"))
     QTest.keyClick(local.file_list, Qt.Key.Key_Return)
     assert local.folder == str(inner)
 
@@ -249,7 +245,7 @@ def test_when_the_folder_shown_is_removed_the_side_moves_up(qtbot: QtBot, tmp_pa
     local.go_to(str(deep))
     shutil.rmtree(tmp_path / "a")
     qtbot.waitUntil(lambda: local.folder == str(tmp_path))
-    assert local.path_label.text() == str(tmp_path)
+    assert local.path_line.text() == str(tmp_path)
 
 
 def test_the_root_folder_has_no_parent_entry(qtbot: QtBot) -> None:
@@ -266,10 +262,10 @@ def test_a_new_file_keeps_the_selection_in_the_list(qtbot: QtBot, tmp_path: Path
     local = window.local_side
     local.go_to(str(tmp_path))
     qtbot.waitUntil(lambda: "keep.txt" in names_in(local))
-    local.file_list.setCurrentIndex(local.list_model.index(str(tmp_path / "keep.txt")))
+    local.file_list.setCurrentIndex(local.file_list.index_of("keep.txt"))
     (tmp_path / "new.txt").write_text("text", encoding="utf-8")
     qtbot.waitUntil(lambda: "new.txt" in names_in(local))
-    assert local.list_model.filePath(local.file_list.currentIndex()) == str(tmp_path / "keep.txt")
+    assert local.file_list.currentIndex().data() == "keep.txt"
 
 
 def test_when_a_folder_higher_up_is_renamed_the_side_moves_up(qtbot: QtBot, tmp_path: Path) -> None:
@@ -313,7 +309,7 @@ def test_a_folder_opened_while_shown_shows_its_files(qtbot: QtBot, tmp_path: Pat
         assert names_in(local) == set()
         folder.chmod(0o755)
         qtbot.waitUntil(lambda: "file.txt" in names_in(local))
-        assert local.path_label.text() == str(folder)
+        assert local.path_line.text() == str(folder)
     finally:
         folder.chmod(0o755)
 
@@ -328,7 +324,7 @@ def test_a_folder_closed_while_shown_is_shown_as_closed(qtbot: QtBot, tmp_path: 
     qtbot.waitUntil(lambda: "file.txt" in names_in(local))
     try:
         folder.chmod(0o000)
-        qtbot.waitUntil(lambda: NO_ACCESS_TEXT in local.path_label.text())
+        qtbot.waitUntil(lambda: NO_ACCESS_TEXT in local.path_line.text())
         assert names_in(local) == set()
     finally:
         folder.chmod(0o755)
@@ -376,9 +372,8 @@ def test_a_closed_folder_keeps_the_column_names(qtbot: QtBot, tmp_path: Path) ->
     try:
         closed.chmod(0o000)
         local.go_to(str(closed))
-        model = local.file_list.model()
-        assert model is local.closed_model
-        assert model.headerData(0, Qt.Orientation.Horizontal) == "Name"
+        assert local.file_list.names() == []
+        assert local.file_list.model().headerData(0, Qt.Orientation.Horizontal) == "Name"
     finally:
         closed.chmod(0o755)
 
@@ -392,7 +387,7 @@ def test_return_does_not_act_on_an_entry_of_the_folder_before(qtbot: QtBot, tmp_
         window.show()
     local.go_to(str(tmp_path))
     qtbot.waitUntil(lambda: "inner" in names_in(local))
-    local.file_list.setCurrentIndex(local.list_model.index(str(tmp_path / "inner")))
+    local.file_list.setCurrentIndex(local.file_list.index_of("inner"))
     local.go_to(str(tmp_path / "other"))
     local.file_list.setFocus()
     QTest.keyClick(local.file_list, Qt.Key.Key_Return)

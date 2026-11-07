@@ -1,11 +1,13 @@
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QProgressBar, QTableWidget, QTableWidgetItem, QWidget
 
+from chrono_ftp.connections.base import shown_name
 from chrono_ftp.transfers.queue import Job
 
 # --- Version ------------------------------------------------------------
-__version__ = "queueview.py 0.0.5"
+__version__ = "queueview.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: Names that are not valid UTF-8 are shown readable
 # v0.0.5: Initial: the transfers with their progress (D-014)
 
 COLUMNS: tuple[str, ...] = ("Name", "Direction", "Way", "State", "Progress")
@@ -30,7 +32,7 @@ class QueueView(QTableWidget):
             self.insertRow(row)
             self.setCellWidget(row, 4, QProgressBar())
         row = self.jobs.index(job)
-        texts = (job.name, "Upload" if job.upload else "Download", job.way, job.message or job.state.value)
+        texts = (shown_name(job.name), "Upload" if job.upload else "Download", job.way, shown_name(job.message) or job.state.value)
         for column, text in enumerate(texts):
             self.setItem(row, column, QTableWidgetItem(text))
         bar = self.cellWidget(row, 4)

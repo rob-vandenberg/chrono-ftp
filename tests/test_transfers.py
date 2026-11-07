@@ -1,17 +1,18 @@
 import shlex
 import stat
 import threading
+import time
 from collections.abc import Generator
 from pathlib import Path
 from typing import override
 
 import pytest
 
-from chrono_ftp.connections.base import Capabilities, RemoteConnection, RemoteEntry
+from chrono_ftp.connections.base import OLD_SUFFIX, Capabilities, RemoteConnection, RemoteEntry
 from chrono_ftp.connections.ftp import FtpConnection
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import RemoteActionFailed
-from chrono_ftp.transfers.queue import Job, State, TransferQueue, rsync_arguments, rsync_possible
+from chrono_ftp.transfers.queue import LEFTOVER_SECONDS, PART_SUFFIX, Job, State, TransferQueue, rsync_arguments, rsync_possible, tidy
 from tests.fakeservers import PASSWORD, USER, ftp_server
 from tests.test_connections import trusted_ssh
 from tests.fakeservers import ssh_server
@@ -19,9 +20,10 @@ from tests.test_engine import Scripted
 from chrono_ftp.connections.base import CommandResult
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_transfers.py 0.0.5"
+__version__ = "test_transfers.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: Leftovers and links in the target
 # v0.0.5: Initial
 
 # the ftp fixture is further down: pytest finds it by name
@@ -401,3 +403,114 @@ def test_a_file_never_takes_the_place_of_a_folder_behind_a_link(tmp_path: Path) 
     item = upload_over_sftp(tmp_path, root, "link", "a file")
     assert item.state == State.FAILED
     assert (root / "site").is_dir() and (root / "link").is_symlink()
+
+
+class Leftovers(Scripted):
+    """A folder as a dropped connection left it; it notes what is done to it."""
+
+    def __init__(self, entries: list[RemoteEntry]) -> None:
+        super().__init__(CommandResult(0, "", ""))
+        self.entries: list[RemoteEntry] = entries
+        self.done: list[str] = []
+
+    @override
+    def list_folder(self, path: str) -> list[RemoteEntry]:
+        return self.entries
+
+    @override
+    def rename(self, old: str, new: str) -> None:
+        self.done.append(f"rename {old} {new}")
+
+    @override
+    def delete(self, path: str, is_folder: bool) -> None:
+        self.done.append(f"delete {path}")
+
+
+def long_known(entries: list[RemoteEntry]) -> dict[str, tuple[float, int]]:
+    return {f"/srv/{entry.name}": (time.time() - 3600, entry.size) for entry in entries}
+
+
+def test_a_leftover_seen_for_the_first_time_is_left_alone_it_may_be_a_moment_in_another_transfer() -> None:
+    entries = [RemoteEntry("a.txt" + OLD_SUFFIX, False, 5, 1.0)]
+    remote = Leftovers(entries)
+    seen: dict[str, tuple[float, int]] = {}
+    tidy(remote, "/srv", entries, seen)
+    tidy(remote, "/srv", entries, seen)
+    assert remote.done == []
+
+
+def test_a_part_file_that_grows_is_being_written_whatever_its_date_says() -> None:
+    old = time.time() - 2 * LEFTOVER_SECONDS
+    entries = [RemoteEntry("a" + PART_SUFFIX, False, 900, old)]
+    remote = Leftovers(entries)
+    tidy(remote, "/srv", entries, {"/srv/a" + PART_SUFFIX: (time.time() - 3600, 500)})
+    assert remote.done == []
+
+
+def test_an_old_file_alone_is_the_only_copy_and_gets_its_name_back() -> None:
+    entries = [RemoteEntry("a.txt" + OLD_SUFFIX, False, 5, 1.0)]
+    remote = Leftovers(entries)
+    tidy(remote, "/srv", entries, long_known(entries))
+    assert remote.done == ["rename /srv/a.txt.chrono-ftp-old /srv/a.txt"]
+
+
+def test_an_old_file_next_to_the_new_one_goes() -> None:
+    entries = [RemoteEntry("a.txt", False, 5, 1.0), RemoteEntry("a.txt" + OLD_SUFFIX, False, 5, 1.0)]
+    remote = Leftovers(entries)
+    tidy(remote, "/srv", entries, long_known(entries))
+    assert remote.done == ["delete /srv/a.txt.chrono-ftp-old"]
+
+
+def test_a_part_file_goes_only_when_nothing_can_be_writing_it() -> None:
+    now = time.time()
+    entries = [RemoteEntry("dead" + PART_SUFFIX, False, 5, now - LEFTOVER_SECONDS - 60), RemoteEntry("busy" + PART_SUFFIX, False, 5, now - 5), RemoteEntry("no-date" + PART_SUFFIX, False, 5, None), RemoteEntry("plain.txt", False, 5, 1.0)]
+    remote = Leftovers(entries)
+    tidy(remote, "/srv", entries, long_known(entries))
+    assert remote.done == ["delete /srv/dead.chrono-ftp-part"]
+
+
+def test_a_tidy_that_is_refused_leaves_the_folder_as_it_is() -> None:
+    class Refusing(Leftovers):
+        @override
+        def delete(self, path: str, is_folder: bool) -> None:
+            raise RemoteActionFailed("no")
+
+    entries = [RemoteEntry("a.txt", False, 5, 1.0), RemoteEntry("a.txt" + OLD_SUFFIX, False, 5, 1.0)]
+    assert tidy(Refusing(entries), "/srv", entries, long_known(entries)) == entries
+
+
+def test_rsync_stands_aside_for_a_link_deep_in_the_target(tmp_path: Path) -> None:
+    (tmp_path / "site" / "deep").mkdir(parents=True)
+    (tmp_path / "site" / "deep" / "link").symlink_to("/")
+    queue = TransferQueue(lambda item: None)
+    item = job(scripted(), local=str(tmp_path), remote_path="/srv/site", upload=False, name="site")
+    assert queue._links_in_the_target(item)
+    (tmp_path / "site" / "deep" / "link").unlink()
+    assert not queue._links_in_the_target(item)
+    queue.close()
+
+
+def test_an_upload_looks_for_links_on_the_server_before_rsync_may_run() -> None:
+    class Found(Leftovers):
+        output: str = "/srv/site/link\n"
+
+        @override
+        def run(self, command: str) -> CommandResult:
+            return CommandResult(0, self.output, "")
+
+    remote = Found([RemoteEntry("site", True)])
+    remote.capabilities = Capabilities(shell=True, tools=frozenset({"rsync", "find"}))
+    queue = TransferQueue(lambda item: None)
+    assert queue._links_in_the_target(job(remote, local="/home/a/site", remote_path="/srv", name="site"))
+    remote.output = ""
+    assert not queue._links_in_the_target(job(remote, local="/home/a/site", remote_path="/srv", name="site"))
+    queue.close()
+
+
+def test_a_source_that_is_gone_fails_and_never_shows_done(tmp_path: Path, ftp: tuple[FtpConnection, Connection, Path]) -> None:
+    connection, settings, _root = ftp
+    queue = TransferQueue(lambda item: None)
+    item = Job(connection, settings, str(tmp_path / "gone.txt"), "/", True, "gone.txt")
+    run_all(queue, item)
+    queue.close()
+    assert item.state == State.FAILED

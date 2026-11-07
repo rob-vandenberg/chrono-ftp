@@ -32,4 +32,15 @@ Result: replaces the reference program for everyday copying.
 3. Terminal launch: done (0.0.5).
 4. One-time import of a session list: done (0.0.5), but not yet checked against a real export.
 5. The folder `packaging/` for the first installer: open.
-6. Compare local and remote files: postponed, the first thing to drop.
+6. Compare local and remote files: done (0.0.6), as Synchronize.
+
+## Milestone 4: daily use
+
+1. Test of the real window against a real test account: done (0.0.6).
+2. Drag and drop between the sides and from a file manager: done (0.0.6).
+3. Sorting, keys, right-click menus, remembered sizes: done (0.0.6).
+4. Buttons per side, path line, count line, rights, link target, filter, status bar: done (0.0.6).
+5. Edit of a server file in the person's own program: done (0.0.6).
+6. Rename, delete and new folder on this computer: done (0.0.6).
+7. Leftovers of a dropped transfer tidied; links in a target tree kept; names that are not valid UTF-8: done (0.0.6).
+8. The connection colour in the terminal: done (0.0.6), not yet seen on screen.

@@ -7,20 +7,22 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import RemoteConnection, RemoteEntry, joined
+from chrono_ftp.connections.base import OLD_SUFFIX, RemoteConnection, RemoteEntry, joined
 from chrono_ftp.core.connection import SFTP, Connection
-from chrono_ftp.core.errors import ChronoFtpError, RemoteActionFailed
+from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "queue.py 0.0.5"
+__version__ = "queue.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: Leftovers of a dropped transfer are tidied; rsync stands aside for links in the target tree
 # v0.0.5: Initial: rsync where it can work, else SFTP or FTP; progress, throttling, stop (D-014)
 
 PROGRESS_PATTERN: re.Pattern[bytes] = re.compile(rb"(\d+)%")
@@ -28,7 +30,10 @@ LOGIN_FAILED_STATUSES: frozenset[int] = frozenset({12, 255})  # rsync could not 
 READ_SIZE: int = 4096
 PART_SUFFIX: str = ".chrono-ftp-part"  # a transfer lands here first: a stop or failure never touches the file already there
 STALL_SECONDS: int = 60
+LEFTOVER_SECONDS: int = 3600  # a temporary file untouched this long belongs to no running transfer, also not on another computer
+SEEN_BEFORE_SECONDS: float = 30.0  # what is only a moment in another transfer's life is never there this long, unchanged
 POLL_SECONDS: float = 0.2
+SOURCE_GONE_TEXT: str = "This file is no longer on this computer, so it was not sent."
 FOLDER_IN_THE_WAY_TEXT: str = "There is a folder with this name on the server, so this file was not sent."
 
 
@@ -76,6 +81,56 @@ def rsync_arguments(job: Job, limit: int) -> list[str]:
     if job.upload:
         return [*arguments, "--", job.local, f"{login}:{job.remote_path.rstrip('/')}/"]
     return [*arguments, "--", f"{login}:{job.remote_path}", f"{job.local.rstrip('/')}/"]
+
+
+def _settled(seen: dict[str, tuple[float, int]], path: str, size: int, moment: float) -> bool:
+    """True when this file was seen earlier, unchanged. Its date can't tell: a file moved aside keeps its old date, and the clock of a
+    server is not ours. So a transfer running in another tab or on another computer is never touched."""
+    first, known = seen.get(path, (moment, -1))
+    if known != size:
+        seen[path] = (moment, size)
+        return False
+    return moment - first >= SEEN_BEFORE_SECONDS
+
+
+def tidy(connection: RemoteConnection, folder: str, entries: list[RemoteEntry], seen: dict[str, tuple[float, int]]) -> list[RemoteEntry]:
+    """What a dropped connection left behind in this folder. An old file with nothing under its real name is the only copy, so it gets its
+    name back; next to a new file it has served its purpose. Only our own suffixes are touched; what can't be tidied stays as it is.
+    seen remembers the leftovers from one look at a folder to the next."""
+    present = {entry.name: entry for entry in entries}
+    moment = time.time()
+    tidied = False
+    for entry in entries:
+        if entry.is_folder or entry.is_link or not entry.name.endswith((OLD_SUFFIX, PART_SUFFIX)):
+            continue
+        if not _settled(seen, joined(folder, entry.name), entry.size, moment):
+            continue
+        try:
+            if entry.name.endswith(OLD_SUFFIX):
+                real = entry.name.removesuffix(OLD_SUFFIX)
+                if real not in present:
+                    connection.rename(joined(folder, entry.name), joined(folder, real))
+                    tidied = True
+                elif not present[real].is_folder:
+                    connection.delete(joined(folder, entry.name), False)
+                    tidied = True
+            elif entry.name.endswith(PART_SUFFIX) and entry.modified is not None and moment - entry.modified > LEFTOVER_SECONDS:
+                connection.delete(joined(folder, entry.name), False)
+                tidied = True
+        except ConnectionLost:
+            raise
+        except RemoteActionFailed:
+            continue
+    return connection.list_folder(folder) if tidied else entries
+
+
+def _has_a_link(folder: Path, stop: threading.Event) -> bool:
+    for place, folders, files in os.walk(folder):
+        if stop.is_set():
+            raise Stopped
+        if any(os.path.islink(os.path.join(place, name)) for name in (*folders, *files)):
+            return True
+    return False
 
 
 def _local_size(path: Path) -> int:
@@ -130,7 +185,7 @@ class TransferQueue:
             self.changed(job)
 
     def _transfer(self, job: Job) -> None:
-        if rsync_possible(job) and not self._target_is_a_link(job) and self._with_rsync(job):
+        if rsync_possible(job) and not self._links_in_the_target(job) and self._with_rsync(job):
             return
         job.way = job.connection.protocol.upper()
         connection = job.remote.for_a_transfer()
@@ -140,11 +195,23 @@ class TransferQueue:
             if connection is not job.remote:
                 connection.close()
 
-    def _target_is_a_link(self, job: Job) -> bool:
-        """rsync would replace a link by a file: the file by file way keeps it."""
+    def _links_in_the_target(self, job: Job) -> bool:
+        """rsync would replace a link by a file, also deep inside a folder: the file by file way keeps it."""
         if not job.upload:
-            return Path(job.local, job.name).is_symlink()
-        return any(entry.name == job.name and entry.is_link for entry in job.remote.list_folder(job.remote_path))
+            target = Path(job.local, job.name)
+            return target.is_symlink() or _has_a_link(target, job.stop_asked)
+        there = next((entry for entry in job.remote.list_folder(job.remote_path) if entry.name == job.name), None)
+        if there is None or not there.is_folder or there.is_link:
+            return there is not None and there.is_link
+        if not job.remote.capabilities.has("find"):
+            return True
+        try:
+            result = job.remote.run(f"find {shlex.quote(joined(job.remote_path, job.name))} -type l -print -quit")
+        except ConnectionLost:
+            raise
+        except RemoteActionFailed:
+            return True  # no answer: the file by file way is always safe
+        return result.status != 0 or bool(result.output.strip())
 
     def _with_rsync(self, job: Job) -> bool:
         """True when rsync did the job; False when it could not log in, so the other way takes over."""
@@ -253,6 +320,8 @@ class TransferQueue:
     def _upload_into(self, connection: RemoteConnection, source: Path, target: str, step: Callable[[int], None], present: dict[str, RemoteEntry]) -> None:
         """present: what the folder this goes into already holds, read once per folder."""
         old = present.get(source.name)
+        if not os.path.lexists(source):
+            raise RemoteActionFailed(SOURCE_GONE_TEXT)
         if source.is_file():
             self._send(connection, source, target, step, old)
             return

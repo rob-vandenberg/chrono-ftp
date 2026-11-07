@@ -1,3 +1,6 @@
+import os
+import shlex
+import subprocess
 from collections.abc import Generator
 from pathlib import Path
 
@@ -6,13 +9,13 @@ import pytest
 from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import RemoteConnection, UnknownServer
 from chrono_ftp.connections.ftp import FtpConnection, _TlsFtp, entry_from
-from chrono_ftp.connections.ssh import SshConnection
+from chrono_ftp.connections.ssh import SshConnection, sendable
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import ConnectionFailed, RemoteActionFailed
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, self_signed_certificate, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_connections.py 0.0.5"
+__version__ = "test_connections.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
 # v0.0.5: Initial: both connections against real servers in the test process
@@ -328,3 +331,15 @@ def test_every_data_connection_must_show_the_trusted_certificate(tmp_path: Path)
         with pytest.raises(RemoteActionFailed):
             connection.list_folder("/")
         connection.close()
+
+
+def test_a_command_with_a_name_that_is_not_utf8_reaches_the_real_file(tmp_path: Path) -> None:
+    Path(tmp_path, "caf\udce9").write_text("x", encoding="utf-8")
+    line = sendable(f"rm -- {shlex.quote(str(tmp_path / 'caf\udce9'))}")
+    assert line.isascii()
+    subprocess.run(["sh", "-c", line], check=True)
+    assert os.listdir(tmp_path) == []
+
+
+def test_a_plain_command_is_sent_as_it_is() -> None:
+    assert sendable("ls -l") == "ls -l"

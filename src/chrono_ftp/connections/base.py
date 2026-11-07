@@ -6,9 +6,10 @@ from pathlib import PurePosixPath
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "base.py 0.0.5"
+__version__ = "base.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: shown_name: a name that is not valid UTF-8 keeps its real bytes and only its display is replaced
 # v0.0.5: Initial: the common connection layer: panes, tabs and colours see only this (D-009)
 
 OLD_SUFFIX: str = ".chrono-ftp-old"
@@ -25,6 +26,7 @@ class RemoteEntry:
     owner: str = ""
     group: str = ""
     is_link: bool = False
+    link_target: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,11 @@ def safe_name(name: str) -> bool:
     return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name and "\0" not in name
 
 
+def shown_name(name: str) -> str:
+    """What the screen shows. Names keep the bytes of the server through surrogates, so an action reaches the real file; Qt can't hold those."""
+    return name.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def joined(folder: str, name: str) -> str:
     return str(PurePosixPath(folder) / name)
 
@@ -74,6 +81,7 @@ class RemoteConnection(ABC):
     """One login on one server. Every method blocks, so the window calls them from a worker (D-019)."""
 
     capabilities: Capabilities = Capabilities()
+    encrypted: bool = True  # False only for FTP without TLS, which the person chose (OR-19)
 
     @abstractmethod
     def connect(self) -> None: ...

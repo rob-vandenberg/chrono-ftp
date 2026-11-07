@@ -19,7 +19,7 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 | `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list. |
 | `connections` | The common connection layer (`base.py`), its two implementations (`ssh.py`, `ftp.py`), capability detection, and the servers the person trusted (`trust.py`). |
 | `transfers` | The transfer queue: `rsync` with a speed limit, falling back to SFTP or FTP; progress. |
-| `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`). |
+| `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`), actions on this computer (`localfiles.py`), comparing two folders (`compare.py`). |
 | `ui` | PySide6 user interface. Pure window actions live here; server work does not. |
 
 There is no separate command-line program (D-022).
@@ -54,7 +54,7 @@ Each connection reports what it can do after connecting (D-016): the system, the
 
 ## 6. The window
 
-1. Left: the local side, neutral, with `QFileSystemModel`: folder tree and file list next to each other (`ui/localside.py`). Right: the remote side (`ui/remoteside.py`), filled by answers from the connection's own thread (D-019). The look is set in `ui/theme.py`: Fusion with the colours of `core/colours.py`, so nothing comes from the platform (OR-9).
+1. Left: the local side, neutral: a `QFileSystemModel` tree and the shared file list, read with `os` (`ui/localside.py`, `ui/filelist.py`, D-033). Right: the remote side (`ui/remoteside.py`), filled by answers from the connection's own thread (D-019). Each side has its own buttons (`ui/sidebar.py`, D-034). The look is set in `ui/theme.py`: Fusion with the colours of `core/colours.py`, so nothing comes from the platform (OR-9).
 2. Both the folder tree and the file list on the right take the connection's colour; text is black or white by the background's brightness, selected rows too (D-007).
 3. Every tab is one connection and keeps its own local and remote folder: a click on another tab changes both sides (D-008).
 4. Tabs have the connection's colour, inactive tabs slightly dimmed, a dropped connection grey, through a small custom tab bar above both sides (D-007, D-008).

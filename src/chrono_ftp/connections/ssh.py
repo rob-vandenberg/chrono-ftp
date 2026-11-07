@@ -15,9 +15,10 @@ from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ConnectionFailed, ConnectionLost, LoginRefused, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.5"
+__version__ = "ssh.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: Names that are not valid UTF-8 keep their real bytes, in paths and in commands
 # v0.0.5: Initial: browse over SFTP and run commands over the same login (D-010); capabilities are detected (D-016)
 
 CONNECT_SECONDS: float = 20.0
@@ -44,9 +45,19 @@ def _modes(permissions: int | None) -> str:
     return "" if permissions is None else format(permissions & 0o7777, "04o")
 
 
+def sendable(command: str) -> str:
+    """A command travels as strict UTF-8. One with a name that is not valid UTF-8 goes as plain digits, and the shell makes the real bytes."""
+    try:
+        command.encode("utf-8")
+        return command
+    except UnicodeEncodeError:
+        digits = "".join(f"\\0{byte:03o}" for byte in command.encode("utf-8", "surrogateescape"))
+        return f"eval \"$(printf '%b' '{digits}')\""
+
+
 def _text(value: bytes | str | None) -> str:
     if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
+        return value.decode("utf-8", "surrogateescape")
     return value or ""
 
 
@@ -90,7 +101,7 @@ class SshConnection(RemoteConnection):
         if self.password:
             options["password"] = self.password
         self._client = await asyncssh.connect(**options)
-        self._sftp = await self._client.start_sftp_client(path_errors="replace")  # one bad name never blocks a whole folder (OR-15)
+        self._sftp = await self._client.start_sftp_client(path_errors="surrogateescape")  # a name that is not valid UTF-8 stays reachable (OR-15)
 
     def _known_keys(self) -> list[asyncssh.SSHKey]:
         found: list[asyncssh.SSHKey] = []
@@ -201,16 +212,24 @@ class SshConnection(RemoteConnection):
             kind = attributes.type
             is_link = kind == asyncssh.FILEXFER_TYPE_SYMLINK
             is_folder = kind == asyncssh.FILEXFER_TYPE_DIRECTORY
+            target = ""
             if is_link:
                 try:
                     is_folder = self._sftp_call(self._sftp_now().isdir(joined(path, name)))
-                except RemoteActionFailed:
+                except RemoteActionFailed as error:
+                    if isinstance(error, ConnectionLost):
+                        raise
                     is_folder = False  # a broken link is shown as a file
+                try:
+                    target = _text(self._sftp_call(self._sftp_now().readlink(joined(path, name))))
+                except RemoteActionFailed as error:
+                    if isinstance(error, ConnectionLost):
+                        raise
             size = attributes.size if isinstance(attributes.size, int) and attributes.size >= 0 else 0
             owner = _text(attributes.owner) or ("" if attributes.uid is None else str(attributes.uid))
             group = _text(attributes.group) or ("" if attributes.gid is None else str(attributes.gid))
             modified = None if attributes.mtime is None else float(attributes.mtime)
-            entries.append(RemoteEntry(name, is_folder, size, modified, _modes(attributes.permissions), owner, group, is_link))
+            entries.append(RemoteEntry(name, is_folder, size, modified, _modes(attributes.permissions), owner, group, is_link, target))
         return entries
 
     @override
@@ -300,7 +319,7 @@ class SshConnection(RemoteConnection):
 
     def _run(self, command: str, seconds: float) -> CommandResult:
         async def go() -> CommandResult:
-            result = await self._client_now().run(command, check=False, stdin=asyncssh.DEVNULL, encoding="utf-8", errors="replace")
+            result = await self._client_now().run(sendable(command), check=False, stdin=asyncssh.DEVNULL, encoding="utf-8", errors="surrogateescape")
             return CommandResult(result.exit_status if result.exit_status is not None else -1, _text(cast("bytes | str | None", result.stdout)), _text(cast("bytes | str | None", result.stderr)))
 
         try:

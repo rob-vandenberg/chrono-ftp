@@ -1,9 +1,10 @@
 """The errors of Chrono FTP. Their text is shown to the person, so it reassures and never alarms (OR-23)."""
 
 # --- Version ------------------------------------------------------------
-__version__ = "errors.py 0.0.5"
+__version__ = "errors.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: LocalActionFailed
 # v0.0.5: Initial
 
 
@@ -29,3 +30,7 @@ class RemoteActionFailed(ChronoFtpError):
 
 class ConnectionLost(RemoteActionFailed):
     """The connection dropped; the tab goes grey and can be connected again."""
+
+
+class LocalActionFailed(ChronoFtpError):
+    """An action on this computer could not be done; the text says why."""

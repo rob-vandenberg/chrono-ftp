@@ -1,21 +1,27 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QFileInfo, QFileSystemWatcher, QModelIndex, Qt, Signal
-from PySide6.QtGui import QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QFileSystemModel, QLabel, QSplitter, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtCore import QDir, QFileSystemWatcher, QModelIndex, Qt, QTimer, Signal
+from PySide6.QtWidgets import QFileSystemModel, QLabel, QLineEdit, QSplitter, QTreeView, QVBoxLayout, QWidget
 
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
+from chrono_ftp.connections.base import RemoteEntry, shown_name
+from chrono_ftp.engine import localfiles
+from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar
+from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, FileList, mask_text, summary_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "localside.py 0.0.5"
+__version__ = "localside.py 0.0.6"
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: The shared file list, read with os, so a name that is not valid UTF-8 shows too; sorting, drops, hidden files
 # v0.0.5: Several entries can be selected; the folder shown is told to the window
 # v0.0.3: Initial: the left side, always this computer: folder tree and file list, neutral (OR-1, OR-2, D-019)
 
-NAME_COLUMN_WIDTH: int = 260
 NO_ACCESS_TEXT: str = "no access"
+TREE_WIDTH: int = 180
+LIST_WIDTH: int = 420
+SETTLE_MILLISECONDS: int = 150  # a copy into this folder changes it thousands of times: it is read once things settle
 
 
 class LocalSide(QWidget):
@@ -23,139 +29,170 @@ class LocalSide(QWidget):
     and the path line always agree (OR-15). When the folder shown or one above it is removed or renamed, the side moves to the nearest
     folder above it that is still there."""
 
-    folder_changed = Signal(str)
+    folder_changed = Signal(object)  # a str; object, because Qt would change a name that is not valid UTF-8
     selection_changed = Signal()
+    file_opened = Signal(object)
+    filter_wanted = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.path_label = QLabel()
+        self.navigation = NavigationBar()
+        self.actions_bar = action_bar()
+        self.path_line = QLineEdit()
+        self.count_label = QLabel()
+        self.history = FolderHistory()
         self.tree_model = QFileSystemModel(self)
-        self.tree_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
+        self.tree_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.tree_model.setRootPath(QDir.rootPath())
-        self.list_model = QFileSystemModel(self)
-        self.closed_model = QStandardItemModel(0, self.list_model.columnCount(), self)  # what a closed folder shows: nothing
-        self.closed_model.setHorizontalHeaderLabels([str(self.list_model.headerData(column, Qt.Orientation.Horizontal)) for column in range(self.list_model.columnCount())])
         self.tree = QTreeView()
         self.tree.setModel(self.tree_model)
         self.tree.setRootIndex(self.tree_model.index(QDir.rootPath()))
         self.tree.setHeaderHidden(True)
         for column in range(1, self.tree_model.columnCount()):
             self.tree.hideColumn(column)
-        self.file_list = QTreeView()
-        self.file_list.setModel(self.list_model)
-        self.file_list.setRootIsDecorated(False)
-        self.file_list.setItemsExpandable(False)
+        self.file_list = FileList(LOCAL_COLUMN_COUNT, FROM_LOCAL, frozenset({FROM_REMOTE}))
         self.file_list.setAlternatingRowColors(True)
-        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.file_list.setColumnWidth(0, NAME_COLUMN_WIDTH)
         self.parts = QSplitter(Qt.Orientation.Horizontal)
         self.parts.setChildrenCollapsible(False)
         self.parts.addWidget(self.tree)
         self.parts.addWidget(self.file_list)
         self.parts.setStretchFactor(1, 1)
+        self.parts.setSizes([TREE_WIDTH, LIST_WIDTH])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.path_label)
+        layout.setSpacing(2)
+        layout.addWidget(self.navigation)
+        layout.addWidget(self.actions_bar)
+        layout.addWidget(self.path_line)
         layout.addWidget(self.parts, 1)  # all the height goes to the lists
+        layout.addWidget(self.count_label)
         selection = self.tree.selectionModel()
         if selection is not None:
             selection.currentChanged.connect(self._tree_moved)  # a click and the arrow keys alike
-        self.file_list.activated.connect(self._entry_opened)  # a double click and Return alike
+        self.file_list.opened.connect(self._entry_opened)  # a double click and Return alike
+        self.file_list.selection_changed.connect(self.selection_changed)
+        self.file_list.selection_changed.connect(self._show_count)
+        self.navigation.wanted.connect(self._button_pressed)
+        self.path_line.returnPressed.connect(self._path_typed)
         self.watcher = QFileSystemWatcher(self)
-        self.watcher.directoryChanged.connect(self._folder_changed)
+        self.settle = QTimer(self)
+        self.settle.setSingleShot(True)
+        self.settle.setInterval(SETTLE_MILLISECONDS)
+        self.settle.timeout.connect(self._folder_changed)
+        self.watcher.directoryChanged.connect(self._folder_touched)
         self.folder: str = ""
-        self.shown: tuple[int, int, bool] | None = None  # what the list shows: device, inode, can be opened
+        self._walking: bool = False  # Back and Forward move through the history, they don't add to it
         if not self.go_to(QDir.homePath()):
             self.go_to(QDir.rootPath())
 
     def go_to(self, path: str) -> bool:
-        clean = QDir.cleanPath(path)
-        information = QFileInfo(clean)
-        if not information.isDir():
+        clean = os.path.normpath(path)
+        if not os.path.isdir(clean):
             return False
+        same = clean == self.folder
+        if self.folder and not same and not self._walking:
+            self.history.left(self.folder)
         self.folder = clean
+        self.file_list.folder = clean
         self._watch()
-        self._show_folder()
-        self.file_list.setCurrentIndex(QModelIndex())  # an entry of the folder before is not on screen any more
-        index = self.tree_model.index(clean)
-        self.tree.setCurrentIndex(index)
-        self.tree.scrollTo(index)
+        self._read(same)
+        if not same:
+            self.file_list.setCurrentIndex(QModelIndex())  # an entry of the folder before is not on screen any more
+        if shown_name(clean) == clean:  # the tree can't reach a folder whose name Qt can't hold
+            index = self.tree_model.index(clean)
+            self.tree.setCurrentIndex(index)
+            self.tree.scrollTo(index)
+        self.navigation.show_state(self.history, clean != os.path.dirname(clean), True)
         self.folder_changed.emit(clean)
         return True
+
+    def walk_to(self, folder: str) -> None:
+        """A move that adds nothing to the history: Back, Forward and a change of tab."""
+        self._walking = True
+        self.go_to(folder)
+        self._walking = False
+        self.navigation.show_state(self.history, self.folder != os.path.dirname(self.folder), True)
+
+    def _button_pressed(self, name: str) -> None:
+        self.history.behind = [folder for folder in self.history.behind if os.path.isdir(folder)]  # one removed since is no step
+        self.history.ahead = [folder for folder in self.history.ahead if os.path.isdir(folder)]
+        if name == "back" and self.history.behind:
+            self.walk_to(self.history.back(self.folder))
+        elif name == "forward" and self.history.ahead:
+            self.walk_to(self.history.forward(self.folder))
+        elif name == "parent":
+            self.go_to(os.path.dirname(self.folder))
+        elif name == "root":
+            self.go_to(QDir.rootPath())
+        elif name == "home":
+            self.go_to(QDir.homePath())
+        elif name == "refresh":
+            self.refresh()
+        elif name == "filter":
+            self.filter_wanted.emit()
+
+    def _path_typed(self) -> None:
+        if not self.go_to(os.path.expanduser(self.path_line.text().strip())):
+            self.path_line.setText(shown_name(self.folder))
+
+    def _show_count(self) -> None:
+        self.count_label.setText(summary_text(self.selected_entries(), self.file_list.visible_entries()) + mask_text(self.file_list.name_mask))
+
+    def refresh(self) -> None:
+        self._read(True)
 
     def set_tree_place(self, place: str) -> None:
         self.tree.setVisible(place != TREE_HIDDEN)
         self.parts.setOrientation(Qt.Orientation.Vertical if place == TREE_ABOVE else Qt.Orientation.Horizontal)
 
+    def set_show_hidden(self, show: bool) -> None:
+        self.file_list.set_show_hidden(show)
+        hidden = QDir.Filter.Hidden if show else QDir.Filter(0)
+        self.tree_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | hidden)
+
+    def selected_entries(self) -> list[RemoteEntry]:
+        return self.file_list.selected_entries()
+
     def selected_paths(self) -> list[str]:
-        selection = self.file_list.selectionModel()
-        if selection is None or self.file_list.model() is not self.list_model:
-            return []
-        rows = [index for index in selection.selectedRows(0) if index.data() != ".."]
-        return [self.list_model.filePath(index) for index in rows]
+        return [os.path.join(self.folder, entry.name) for entry in self.file_list.selected_entries()]
 
-    def _state_of_folder(self) -> tuple[int, int, bool] | None:
-        try:
-            status = os.stat(self.folder)
-        except OSError:
-            return None
-        information = QFileInfo(self.folder)
-        return status.st_dev, status.st_ino, information.isReadable() and information.isExecutable()
-
-    def _show_folder(self) -> None:
-        self.shown = self._state_of_folder()
-        can_open = self.shown is not None and self.shown[2]
-        self.path_label.setText(self.folder if can_open else f"{self.folder} ({NO_ACCESS_TEXT})")
-        columns = self.file_list.header().saveState()  # a change of model forgets the widths the person dragged
-        if can_open:
-            at_the_top = self.folder == QDir.rootPath()  # nothing above the root, so no parent entry there
-            self.list_model.setFilter(QDir.Filter.AllEntries | (QDir.Filter.NoDotAndDotDot if at_the_top else QDir.Filter.NoDot))
-            if self.file_list.model() is not self.list_model:
-                self.file_list.setModel(self.list_model)
-            self.file_list.setRootIndex(self.list_model.setRootPath(self.folder))
-        else:
-            self.file_list.setModel(self.closed_model)
-        self.file_list.header().restoreState(columns)
-        selection = self.file_list.selectionModel()
-        if selection is not None:
-            selection.selectionChanged.connect(self.selection_changed)
+    def _read(self, same_folder: bool) -> None:
+        entries = localfiles.read_folder(self.folder)
+        self.path_line.setText(shown_name(self.folder) if entries is not None else f"{shown_name(self.folder)} ({NO_ACCESS_TEXT})")
+        self.file_list.show_entries(entries or [], entries is not None and self.folder != os.path.dirname(self.folder), same_folder)
 
     def _watch(self) -> None:
         """The folder and every folder above it: a removal or rename higher up shows only there."""
         place = Path(self.folder)
         wanted = {str(place), *(str(parent) for parent in place.parents)}
+        wanted = {folder for folder in wanted if shown_name(folder) == folder}
         watched = set(self.watcher.directories())
         if watched - wanted:
             self.watcher.removePaths(sorted(watched - wanted))
         if wanted - watched:
             self.watcher.addPaths(sorted(wanted - watched))
 
-    def _renew_list_model(self) -> None:
-        """The model holds on to what it read: only a new one reads the folder that now has this name."""
-        old = self.list_model
-        self.list_model = QFileSystemModel(self)
-        if self.file_list.model() is old:
-            self.file_list.setModel(self.closed_model)
-        old.deleteLater()
+    def _folder_touched(self, _folder: str) -> None:
+        self.settle.start()
 
     def _tree_moved(self, index: QModelIndex) -> None:
         path = self.tree_model.filePath(index)
-        if path and path != self.folder:
+        if path and path != self.folder and os.path.isdir(self.folder):  # when the folder shown goes away, the tree moves to a neighbour by itself
             self.go_to(path)
 
     def _folder_changed(self) -> None:
         self._watch()  # a folder removed and made again has left the watcher
-        if QFileInfo(self.folder).isDir():
-            if self._state_of_folder() != self.shown:  # another folder under this name, or its rights changed
-                self._renew_list_model()
-                self._show_folder()
-            return  # only contents changed: the lists follow by themselves and the selection stays
+        if os.path.isdir(self.folder):
+            self._read(True)
+            return
         place = Path(self.folder)
         while not self.go_to(str(place)) and place != place.parent:
             place = place.parent
 
-    def _entry_opened(self, entry: QModelIndex) -> None:
-        if entry.siblingAtColumn(0).data() == "..":
-            self.go_to(str(Path(self.folder).parent))
+    def _entry_opened(self, entry: RemoteEntry | None) -> None:
+        if entry is None:
+            self.go_to(os.path.dirname(self.folder))
+        elif entry.is_folder:
+            self.go_to(os.path.join(self.folder, entry.name))
         else:
-            self.go_to(self.list_model.filePath(entry))  # a file is refused there
+            self.file_opened.emit(os.path.join(self.folder, entry.name))

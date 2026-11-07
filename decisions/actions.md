@@ -6,3 +6,5 @@
 4. [[D-018]] Terminal
 5. [[D-020]] Compare
 6. [[D-027]] Actions that need a shell
+7. [[D-037]] Edit
+8. [[D-038]] Synchronize
