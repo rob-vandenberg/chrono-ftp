@@ -7,9 +7,10 @@ from chrono_ftp.config import connections
 from chrono_ftp.core.connection import FTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config_connections.py 0.0.5"
+__version__ = "test_config_connections.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: A user name the server accepted
 # v0.0.5: Initial
 
 
@@ -71,3 +72,36 @@ def test_a_second_damaged_file_does_not_overwrite_the_first_copy() -> None:
     second = connections.load().set_aside
     assert first is not None and second is not None and first != second
     assert first.read_text(encoding="utf-8") == "one"
+
+
+def test_an_accepted_user_goes_to_its_own_connection_only() -> None:
+    connections.save([Connection(name="A", host="a"), Connection(name="B", host="b", user="bob")])
+    connections.remember_user("A", "anna")
+    assert [item.user for item in connections.load().connections] == ["anna", "bob"]
+
+
+def test_a_connection_removed_in_the_meantime_stays_removed() -> None:
+    connections.save([Connection(name="A", host="a")])
+    connections.remember_user("gone", "anna")
+    assert [item.name for item in connections.load().connections] == ["A"]
+
+
+def test_a_file_that_can_not_be_read_is_never_replaced_by_a_kept_user() -> None:
+    connections.save([Connection(name="A", host="a"), Connection(name="B", host="b")])
+    path = connections.list_path()
+    before = path.read_bytes()
+    path.chmod(0o000)
+    try:
+        connections.remember_user("A", "anna")
+    finally:
+        path.chmod(0o600)
+    assert path.read_bytes() == before
+
+
+def test_a_list_with_a_damaged_entry_is_left_as_it_is_by_a_kept_user() -> None:
+    connections.save([Connection(name="A", host="a")])
+    path = connections.list_path()
+    damaged = path.read_text(encoding="utf-8").replace('"host": "a"', '"host": 5')
+    path.write_text(damaged, encoding="utf-8")
+    connections.remember_user("A", "anna")
+    assert path.read_text(encoding="utf-8") == damaged

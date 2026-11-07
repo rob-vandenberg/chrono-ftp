@@ -5,7 +5,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast, override
 
@@ -13,6 +13,7 @@ from PySide6.QtCore import QByteArray, QFile, QFileSystemWatcher, QPoint, QSize,
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget
 
+from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import Capabilities, RemoteConnection, RemoteEntry, UnknownServer, joined, parent_of, safe_name, shown_name
@@ -32,6 +33,7 @@ from chrono_ftp.ui.comparedialog import CompareDialog, uploads
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.filelist import FROM_REMOTE, PARENT_ENTRY, FileList
 from chrono_ftp.ui.localside import LocalSide
+from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
 from chrono_ftp.ui.queueview import LOWEST_HEIGHT, QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
@@ -41,9 +43,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from chrono_ftp.ui.tabbar import ConnectionTabBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.7"
+__version__ = "mainwindow.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: One login window with user and password; no login goes out without a user name (D-040)
 # v0.0.7: One top row; the queue under a separator, hidden when idle unless pinned, open after a failure
 # v0.0.6: Drag and drop, right-click menus, keys, actions on the side with the focus, also on this computer; sizes remembered; leftovers tidied
 # v0.0.5: Tabs, actions and transfers: a tab is a connection with its own local and remote folder (D-008, D-027)
@@ -104,6 +107,8 @@ class Session:
     connecting: bool = False
     password: str | None = None
     typed_password: bool = False  # stored only once the server accepted it
+    typed_user: bool = False  # saved with the connection only once the server accepted it
+    user_before: str = ""  # what Cancel goes back to
     wanted_folder: str = ""  # the last folder asked for: an older answer is left out
     home_folder: str = ""
     connected_at: float = 0.0
@@ -400,8 +405,34 @@ class MainWindow(QMainWindow):
         self.tab_bar.setCurrentIndex(index)
         self._connect(session)
 
+    def _ask_login(self, session: Session, password_needed: bool) -> bool:
+        """False when the person cancelled: nothing about the connection has changed then."""
+        connection = session.connection
+        dialog = LoginDialog(connection.name, connection.user, not connection.key_file, password_needed, self)
+        if dialog.exec() != LoginDialog.DialogCode.Accepted.value:
+            if session.typed_user:
+                session.connection = replace(connection, user=session.user_before)
+                session.typed_user = False
+            if session.typed_password:
+                session.password = None  # what was typed for a login the person gave up
+                session.typed_password = False
+            return False
+        user = dialog.user.text().strip()
+        if user != connection.user:
+            if not session.typed_user:
+                session.user_before = connection.user
+            session.connection = replace(connection, user=user)
+            session.typed_user = True
+        if dialog.password.text():
+            session.password = dialog.password.text()
+            session.typed_password = True
+        return True
+
     def _connect(self, session: Session) -> None:
         if session.connecting:
+            return
+        if not session.connection.user and not self._ask_login(session, False):
+            self.update_actions()  # a login without a name would go out under a name the person never chose
             return
         session.connecting = True
         self.status.showMessage(f"Connecting to {session.connection.host}")
@@ -455,11 +486,14 @@ class MainWindow(QMainWindow):
         session.connected_at = time.monotonic()
         if session is self.current():
             self.remote_side.home_folder = session.home_folder
+        self.status.showMessage(f"Connected to {session.connection.host}")
         if session.typed_password and session.password:
             self._store_password(session, session.password)
             session.typed_password = False
+        if session.typed_user:
+            self._store_user(session)
+            session.typed_user = False
         self._set_tab(session)
-        self.status.showMessage(f"Connected to {session.connection.host}")
         self.load_folder(session, folder)
         for copy in self._edits_of(session):
             if self.edited[copy].after_reconnect:
@@ -475,17 +509,27 @@ class MainWindow(QMainWindow):
             if answer == QMessageBox.StandardButton.Yes:
                 (trust.remember_host_key if error.kind == "host key" else trust.remember_certificate)(error.to_remember)
                 self._connect(session)
+            else:
+                self.update_actions()  # Reconnect is there again
             return
-        if isinstance(error, LoginRefused) and not session.connection.key_file:
-            password, given = QInputDialog.getText(self, WINDOW_TITLE, f"Password for {session.connection.name}", QLineEdit.EchoMode.Password)
-            if given and password:
-                session.password = password
-                session.typed_password = True
+        if isinstance(error, LoginRefused) and (not session.connection.key_file or session.typed_user):
+            if self._ask_login(session, not session.connection.key_file):
                 self._connect(session)
-                return
+            else:
+                self.status.showMessage(str(error))
+                self.update_actions()
+            return
         self.status.showMessage(str(error))
         QMessageBox.information(self, WINDOW_TITLE, f"{session.connection.name}: {error}")
         self.update_actions()
+
+    def _store_user(self, session: Session) -> None:
+        try:
+            saved_connections.remember_user(session.connection.name, session.connection.user)
+        except OSError:
+            self.status.showMessage(f"The user name of {session.connection.name} could not be kept for next time.")
+        if self.connection_list is not None:
+            self.connection_list.user_accepted(session.connection.name, session.connection.user)
 
     def _store_password(self, session: Session, password: str) -> None:
         try:

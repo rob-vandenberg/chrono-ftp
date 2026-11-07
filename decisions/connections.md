@@ -6,3 +6,4 @@
 4. [[D-016]] Capability detection
 5. [[D-029]] Trusting a server
 6. [[D-036]] Names that are not valid UTF-8
+7. [[D-040]] The login window

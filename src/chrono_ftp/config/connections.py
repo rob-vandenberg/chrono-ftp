@@ -1,16 +1,17 @@
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import cast
 
 from chrono_ftp.core.connection import DEFAULT_PORTS, HIGHEST_PORT, LOWEST_PORT, PROTOCOLS, SFTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "connections.py 0.0.5"
+__version__ = "connections.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: A user name the server accepted is kept (D-040)
 # v0.0.5: Initial: the connection list in one file, written atomically; a damaged file is kept aside (D-017, OR-15)
 
 FILE_NAME: str = "connections.json"
@@ -81,6 +82,22 @@ def load() -> LoadedList:
     found = [_connection_from(entry) for entry in cast(list[object], entries)]
     usable = tuple(connection for connection in found if connection is not None)
     return LoadedList(usable, _set_aside(path) if len(usable) != len(found) else None)
+
+
+def remember_user(name: str, user: str) -> None:
+    """The user name a server accepted, for the connection of this name. A connection removed in the meantime stays removed. A file that
+    can't be read in full is left exactly as it is: the rest of the list may only be in there."""
+    try:
+        data: object = json.loads(list_path().read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return
+    entries: object = cast(dict[str, object], data).get("connections") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return
+    found = [_connection_from(entry) for entry in cast(list[object], entries)]
+    usable = [connection for connection in found if connection is not None]
+    if len(usable) == len(found) and any(connection.name == name for connection in usable):
+        save([replace(connection, user=user) if connection.name == name else connection for connection in usable])
 
 
 def save(connections: Sequence[Connection]) -> None:

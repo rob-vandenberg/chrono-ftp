@@ -1,6 +1,8 @@
 
 from pathlib import Path
 
+from dataclasses import replace
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -27,9 +29,10 @@ from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_
 from chrono_ftp.core.errors import CredentialError
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.5"
+__version__ = "connectionlist.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: A user name kept after a login shows here
 # v0.0.5: Initial: the saved connections, each with its colour; the fields of the selected one (D-017)
 
 WINDOW_TITLE: str = "Connections"
@@ -127,6 +130,12 @@ class ConnectionList(QDialog):
         self._fill_list()
         if loaded.set_aside is not None:
             QMessageBox.information(self, WINDOW_TITLE, f"{SET_ASIDE_TEXT}\n{loaded.set_aside}")
+
+    def user_accepted(self, name: str, user: str) -> None:
+        """A login kept this user name; the fields follow, so Save can't put back the old one."""
+        self.connections = [replace(connection, user=user) if connection.name == name else connection for connection in self.connections]
+        if self.name.text().strip() == name:
+            self.user.setText(user)
 
     def _fill_list(self) -> None:
         self.list.blockSignals(True)

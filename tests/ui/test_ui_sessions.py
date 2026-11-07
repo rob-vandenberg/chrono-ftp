@@ -2,6 +2,7 @@ import shutil
 import stat
 import threading
 from collections.abc import Callable, Generator
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +12,7 @@ from PySide6.QtGui import QColor, QDropEvent, QPalette
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
+from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import RemoteConnection, UnknownServer
 from chrono_ftp.connections.ssh import SshConnection
@@ -21,14 +23,16 @@ from chrono_ftp.ui.changedialog import ChangeDialog
 from chrono_ftp.ui.comparedialog import CompareDialog
 from chrono_ftp.ui.filelist import DRAG_MARK, LOCAL_FILES, REMOTE_FILES, FileList
 from chrono_ftp.engine.jobs import Worker
+from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.mainwindow import EDIT_WAIT_TRIES, MainWindow, Session, _same_server
 from tests.conftest import MemoryStore
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.6"
+__version__ = "test_ui_sessions.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: The login window
 # v0.0.6: Drag and drop, edit, odd names, the buttons of the sides, the status bar, synchronize
 # v0.0.5: Initial: the real window against real servers in the test process
 
@@ -440,16 +444,104 @@ def test_a_typed_password_is_stored_only_after_the_server_accepted_it(qtbot: QtB
     answers = ["wrong", PASSWORD]
     stored_at_second_ask: list[dict[str, str]] = []
 
-    def typed(*args: object) -> tuple[str, bool]:
+    def typed(dialog: LoginDialog) -> int:
         stored_at_second_ask.append(dict(memory_store.passwords))
-        return answers.pop(0), True
+        dialog.password.setText(answers.pop(0))
+        return LoginDialog.DialogCode.Accepted.value
 
-    monkeypatch.setattr(QInputDialog, "getText", typed)
+    monkeypatch.setattr(LoginDialog, "exec", typed)
     with ssh_server(tmp_path) as server:
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
     assert stored_at_second_ask == [{}, {}]
     assert memory_store.passwords == {"Shop": PASSWORD}
+
+
+def test_a_connection_without_a_user_asks_first_and_keeps_the_name_only_after_the_login(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:
+    memory_store.passwords.clear()
+    with ssh_server(tmp_path) as server:
+        trust_server(server)
+        settings = replace(ssh_settings(server), user="")
+        saved_connections.save([settings])
+        users_at_ask: list[str] = []
+
+        def typed(dialog: LoginDialog) -> int:
+            users_at_ask.append(saved_connections.load().connections[0].user)
+            dialog.user.setText(USER)
+            dialog.password.setText(PASSWORD)
+            return LoginDialog.DialogCode.Accepted.value
+
+        monkeypatch.setattr(LoginDialog, "exec", typed)
+        connected(qtbot, window, settings)
+    assert users_at_ask == [""]
+    assert saved_connections.load().connections[0].user == USER
+
+
+def test_cancel_on_the_login_window_tries_nothing_and_changes_nothing(qtbot: QtBot, window: MainWindow, tmp_path: Path, memory_store: MemoryStore) -> None:
+    memory_store.passwords.clear()
+    cancelled: list[str] = []
+
+    def cancel(dialog: LoginDialog) -> int:
+        cancelled.append(dialog.user.text())
+        return LoginDialog.DialogCode.Rejected.value
+
+    with pytest.MonkeyPatch.context() as patch, ssh_server(tmp_path) as server:
+        patch.setattr(LoginDialog, "exec", cancel)
+        trust_server(server)
+        window.open_connection(replace(ssh_settings(server), user=""))
+        session = window.sessions[0]
+        assert cancelled == [""]
+        assert session.remote is None and not session.connecting
+        assert session.connection.user == ""
+        assert window.actions_by_name["reconnect"].isEnabled()
+
+
+def test_cancel_after_a_refused_try_goes_back_to_the_user_of_before(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:
+    memory_store.passwords.clear()
+    answers = iter([("other", "wrong"), None])
+
+    def answer(dialog: LoginDialog) -> int:
+        given = next(answers)
+        if given is None:
+            return LoginDialog.DialogCode.Rejected.value
+        dialog.user.setText(given[0])
+        dialog.password.setText(given[1])
+        return LoginDialog.DialogCode.Accepted.value
+
+    monkeypatch.setattr(LoginDialog, "exec", answer)
+    with ssh_server(tmp_path) as server:
+        trust_server(server)
+        window.open_connection(ssh_settings(server))
+        session = window.sessions[0]
+        qtbot.waitUntil(lambda: not session.connecting and session.connection.user == USER and not session.typed_user, timeout=5000)
+        assert session.password is None and not session.typed_password
+
+
+def test_a_list_keeps_its_selection_when_a_login_keeps_a_user(qtbot: QtBot, window: MainWindow) -> None:
+    saved_connections.save([Connection(name="Shop", host="h")])
+    window.show_connection_list()
+    view = window.connection_list
+    assert view is not None
+    view.list.setCurrentRow(0)
+    view.user_accepted("Shop", "anna")
+    assert view.selected() is not None and view.user.text() == "anna"
+    view.close()
+
+
+def test_a_refused_login_shows_the_known_user_and_can_change_it(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:
+    memory_store.passwords.clear()
+    seen: list[str] = []
+
+    def typed(dialog: LoginDialog) -> int:
+        seen.append(dialog.user.text())
+        dialog.password.setText(PASSWORD)
+        return LoginDialog.DialogCode.Accepted.value
+
+    monkeypatch.setattr(LoginDialog, "exec", typed)
+    with ssh_server(tmp_path) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+    assert seen == [USER]
 
 
 def test_a_server_that_is_down_asks_for_no_password(qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:

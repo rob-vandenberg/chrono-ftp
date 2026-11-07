@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QByteArray, QFile, QItemSelectionModel, QMimeData, QPointF, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QDropEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QMessageBox, QToolBar
+from PySide6.QtWidgets import QDialogButtonBox, QMessageBox, QPushButton, QToolBar
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import settings
@@ -13,14 +13,16 @@ from chrono_ftp.core.connection import Connection
 from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.filelist import DRAG_MARK, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, LOCAL_FILES, REMOTE_FILES, FileList, rights_text, size_text, summary_text
 from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
+from chrono_ftp.ui.logindialog import WIDTH, LoginDialog
 from chrono_ftp.ui.mainwindow import LOCAL_MENU, MainWindow, REMOTE_MENU
 from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.7"
+__version__ = "test_ui_filelist.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: The login window
 # v0.0.7: The queue, the pin and the rows of buttons
 # v0.0.6: Initial
 
@@ -496,3 +498,54 @@ def test_the_general_buttons_share_the_row_of_the_tabs(qtbot: QtBot) -> None:
     window = shown_window(qtbot)
     assert window.general_bar.parent() is window.top_row
     assert window.findChildren(QToolBar, options=Qt.FindChildOption.FindDirectChildrenOnly) == []
+
+
+def shown_login(qtbot: QtBot, user: str, password_shown: bool = True, password_needed: bool = True) -> LoginDialog:
+    dialog = LoginDialog("Shop", user, password_shown, password_needed)
+    qtbot.addWidget(dialog)
+    with qtbot.waitExposed(dialog):
+        dialog.show()
+    return dialog
+
+
+def ok_of(dialog: LoginDialog) -> QPushButton:
+    button = dialog.buttons.button(QDialogButtonBox.StandardButton.Ok)
+    assert button is not None
+    return button
+
+
+def test_a_known_user_is_filled_in_and_the_cursor_stands_on_the_password(qtbot: QtBot) -> None:
+    dialog = shown_login(qtbot, "anna")
+    assert dialog.user.text() == "anna"
+    assert dialog.focusWidget() is dialog.password
+
+
+def test_without_a_known_user_the_cursor_stands_on_the_user(qtbot: QtBot) -> None:
+    dialog = shown_login(qtbot, "")
+    assert dialog.focusWidget() is dialog.user
+
+
+def test_ok_needs_a_user_and_after_a_refusal_a_password(qtbot: QtBot) -> None:
+    dialog = shown_login(qtbot, "anna")
+    assert not ok_of(dialog).isEnabled()
+    dialog.password.setText("secret")
+    assert ok_of(dialog).isEnabled()
+    dialog.user.setText("  ")
+    assert not ok_of(dialog).isEnabled()
+
+
+def test_before_the_first_try_the_password_may_stay_empty(qtbot: QtBot) -> None:
+    dialog = shown_login(qtbot, "", password_needed=False)
+    dialog.user.setText("anna")
+    assert ok_of(dialog).isEnabled()
+
+
+def test_a_key_login_shows_no_password_field(qtbot: QtBot) -> None:
+    dialog = shown_login(qtbot, "", password_shown=False, password_needed=False)
+    assert not dialog.password.isVisible()
+
+
+def test_the_login_window_has_room(qtbot: QtBot) -> None:
+    dialog = shown_login(qtbot, "anna")
+    assert dialog.width() >= WIDTH
+    assert dialog.password.width() > WIDTH // 2

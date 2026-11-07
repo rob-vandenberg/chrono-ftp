@@ -2,7 +2,7 @@
 
 ## Now
 
-Version 0.0.7: the most height for the file lists, with a queue that hides when idle unless pinned. Since 0.0.5: one shared file list with sorting, drag and drop, buttons per side, a path line, a count line, rights and link target, a filter, Edit, Synchronize, actions on this computer, remembered sizes, tidying of leftovers, names that are not valid UTF-8, and the connection colour in the terminal.
+Version 0.0.8: one login window, and the most height for the file lists, with a queue that hides when idle unless pinned. Since 0.0.5: one shared file list with sorting, drag and drop, buttons per side, a path line, a count line, rights and link target, a filter, Edit, Synchronize, actions on this computer, remembered sizes, tidying of leftovers, names that are not valid UTF-8, and the connection colour in the terminal.
 
 Tested on a real test account over SFTP, without a shell, and on a real SSH server on this computer. Not yet tested on a real FTP server: that needs a login the program can use with a person typing the password.
 

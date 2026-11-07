@@ -29,3 +29,7 @@ One shared file list on both sides, with buttons per side after the owner's pict
 ## 0.0.7 (2026-11-07): height for the file lists
 
 One top row and one button row per side; the queue under a separator, hidden when idle unless pinned, and open after a failure. In a window 800 pixels high the lists went from about 410 to 661 pixels with the queue hidden.
+
+## 0.0.8 (2026-11-07): the login window
+
+User and password in one window; a connection without a user asks before its first try; a typed user is kept once the server accepted it.
