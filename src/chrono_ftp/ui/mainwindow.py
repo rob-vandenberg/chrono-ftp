@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast, override
 
-from PySide6.QtCore import QByteArray, QFile, QFileSystemWatcher, QPoint, Qt, QTimer, QUrl
+from PySide6.QtCore import QByteArray, QFile, QFileSystemWatcher, QPoint, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
-from PySide6.QtWidgets import QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QSpinBox, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget
 
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections import trust
@@ -32,7 +32,8 @@ from chrono_ftp.ui.comparedialog import CompareDialog, uploads
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.filelist import FROM_REMOTE, PARENT_ENTRY, FileList
 from chrono_ftp.ui.localside import LocalSide
-from chrono_ftp.ui.queueview import QueueView
+from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
+from chrono_ftp.ui.queueview import LOWEST_HEIGHT, QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
 from chrono_ftp.ui.searchdialog import SearchDialog
 from chrono_ftp.ui.settingsdialog import SettingsDialog
@@ -40,9 +41,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from chrono_ftp.ui.tabbar import ConnectionTabBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.6"
+__version__ = "mainwindow.py 0.0.7"
 
 # --- Version history ----------------------------------------------------
+# v0.0.7: One top row; the queue under a separator, hidden when idle unless pinned, open after a failure
 # v0.0.6: Drag and drop, right-click menus, keys, actions on the side with the focus, also on this computer; sizes remembered; leftovers tidied
 # v0.0.5: Tabs, actions and transfers: a tab is a connection with its own local and remote folder (D-008, D-027)
 # v0.0.3: Initial: the tab bar above both sides, local on the left, remote on the right (OR-1, D-008)
@@ -58,6 +60,10 @@ LOCAL_MENU: tuple[str, ...] = ("upload", "local_edit", "local_rename", "local_de
 REMOTE_MENU: tuple[str, ...] = ("download", "edit", "rename", "move", "copy", "delete", "change", "new_folder")
 CLOCK_MILLISECONDS: int = 1000
 LOCK_SIZE: int = 16
+CENTRE_MARGIN: int = 2
+GENERAL_ICON_SIZE: int = 18
+QUEUE_LINGER_MILLISECONDS: int = 5000  # the queue stays this long after the last transfer, so the result can be seen
+HIGHEST_QUEUE_HEIGHT: int = 4000  # a number from a file is input
 EDIT_SETTLE_MILLISECONDS: int = 500  # a program saves in steps: the copy is sent when it has settled
 EDIT_WAIT_TRIES: int = 20  # a copy that stays away this often was removed
 SETTINGS_NOT_KEPT_TEXT: str = "These settings apply now, but could not be kept for next time."
@@ -75,6 +81,7 @@ class EditedFile:
     unsent: bool = False  # saved, and not yet on its way to the server
     job: Job | None = None  # on its way now; only its end says the save reached the server
     waited: int = 0  # how often the copy was not there
+    saves: int = 0  # how many saves were noticed: a fresh copy that started before one of them is out of date
     held: bool = False  # stopped or refused: it goes only with a new save of this file
     after_reconnect: bool = False  # refused: a new connection may also send it
 
@@ -149,6 +156,10 @@ class MainWindow(QMainWindow):
         top.addWidget(self.tab_bar)
         top.addWidget(self.new_tab_button)
         top.addStretch(1)
+        self.tab_bar.setUsesScrollButtons(True)
+        self.tab_bar.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)  # many tabs scroll: the buttons on the right stay
+        self.general_bar = QToolBar()
+        top.addWidget(self.general_bar)
         self.local_side = LocalSide()
         self.remote_side = RemoteSide()
         self.sides = QSplitter(Qt.Orientation.Horizontal)
@@ -158,11 +169,28 @@ class MainWindow(QMainWindow):
         self.sides.setStretchFactor(0, 1)
         self.sides.setStretchFactor(1, 1)
         self.queue_view = QueueView()
+        self.queue_panel = QueuePanel(self.queue_view)
+        self.queue_height: int = QUEUE_HEIGHT
+        self.failure_unseen: bool = False  # a failed transfer keeps the queue open until the person closes it
+        self.queue_closed: bool = False  # closed by hand during these transfers: it stays closed until they end, unless one fails
+        self.body = QSplitter(Qt.Orientation.Vertical)  # the separator above the queue
+        self.body.setChildrenCollapsible(False)
+        self.body.addWidget(self.sides)
+        self.body.addWidget(self.queue_panel)
+        self.body.setStretchFactor(0, 1)
+        self.body.setStretchFactor(1, 0)
+        self.queue_panel.hide()
+        self.queue_linger = QTimer(self)
+        self.queue_linger.setSingleShot(True)
+        self.queue_linger.setInterval(QUEUE_LINGER_MILLISECONDS)
+        self.queue_linger.timeout.connect(self._hide_idle_queue)
+        self.queue_panel.pin.toggled.connect(self._pin_toggled)
         centre = QWidget()
         layout = QVBoxLayout(centre)
+        layout.setContentsMargins(CENTRE_MARGIN, CENTRE_MARGIN, CENTRE_MARGIN, 0)
+        layout.setSpacing(CENTRE_MARGIN)
         layout.addWidget(self.top_row)
-        layout.addWidget(self.sides, 1)
-        layout.addWidget(self.queue_view)
+        layout.addWidget(self.body, 1)
         self.setCentralWidget(centre)
         self.status = self.statusBar()
         self.actions_by_name: dict[str, QAction] = {}
@@ -230,12 +258,22 @@ class MainWindow(QMainWindow):
             "local_columns": self.local_side.file_list.header().restoreState,
             "remote_columns": self.remote_side.file_list.header().restoreState,
         }
-        for name, text in saved_settings.load_window().items():
+        state = saved_settings.load_window()
+        for name, text in state.items():
             if name in restorers:
                 restorers[name](QByteArray.fromBase64(text.encode("ascii", "replace")))  # a damaged value is refused by Qt and changes nothing
+        height = state.get("queue_height", "")
+        if height.isdecimal() and len(height) <= len(str(HIGHEST_QUEUE_HEIGHT)) and int(height) <= HIGHEST_QUEUE_HEIGHT:
+            self.queue_height = max(int(height), LOWEST_HEIGHT)
+        if state.get("queue_pinned") == "yes":
+            self.queue_panel.pin.setChecked(True)
+            self._show_queue()
 
     def _save_sizes(self) -> None:
         state = {name: bytes(read().toBase64().data()).decode("ascii") for name, read in self._sized_parts().items()}
+        height = self.queue_panel.height() if self.queue_panel.isVisibleTo(self) else self.queue_height
+        state["queue_height"] = str(height)
+        state["queue_pinned"] = "yes" if self.queue_panel.pin.isChecked() else "no"
         try:
             saved_settings.save_window(state)
         except OSError:
@@ -301,10 +339,10 @@ class MainWindow(QMainWindow):
             ("new_folder", "New", "folder-new", "F7", self.new_folder),
         ):
             self._button(remote.actions_bar, name, text, icon_name, key, handler, remote.file_list)
-        bar = QToolBar()
+        bar = self.general_bar
         bar.setMovable(False)
         bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.addToolBar(bar)
+        bar.setIconSize(QSize(GENERAL_ICON_SIZE, GENERAL_ICON_SIZE))
         for name, text, icon_name, key, handler in (
             ("compare", "Synchronize", "folder-sync", "", self.compare),
             ("search", "Find Files", "edit-find", "", self.search),
@@ -315,6 +353,7 @@ class MainWindow(QMainWindow):
             ("settings", "Settings", "configure", "", self.open_settings),
         ):
             self._button(bar, name, text, icon_name, key, handler, None)
+        bar.setMinimumWidth(bar.sizeHint().width())
         refresh = QAction(icons.icon("view-refresh"), "Refresh", self)
         refresh.setShortcut(QKeySequence("F5"))
         refresh.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -742,6 +781,7 @@ class MainWindow(QMainWindow):
         if not session.alive or place in self.fetching:
             return
         self.fetching.add(place)
+        saves_before = self.edited[already].saves if already is not None else 0
         temporary = tempfile.mkdtemp(prefix="chrono-ftp-edit-")
         copy = os.path.join(temporary, name)
 
@@ -754,7 +794,7 @@ class MainWindow(QMainWindow):
                 shutil.rmtree(temporary, ignore_errors=True)
                 return
             if already is not None and already in self.edited:
-                if self.edited[already].pending:  # saved during the download: that copy is the newest
+                if self.edited[already].pending or self.edited[already].saves != saves_before:  # saved during the download: that copy is the newest
                     shutil.rmtree(temporary, ignore_errors=True)
                     self._open_local_file(already)
                     return
@@ -774,6 +814,7 @@ class MainWindow(QMainWindow):
         edited = self.edited.get(copy)
         if edited is not None:
             edited.unsent = True
+            edited.saves += 1
             edited.held = False
             edited.after_reconnect = False
             self.edit_settle.start()
@@ -811,7 +852,51 @@ class MainWindow(QMainWindow):
                 session.name_mask = view.name_mask
 
     def toggle_queue(self) -> None:
-        self.queue_view.setVisible(not self.queue_view.isVisible())
+        if self.queue_panel.isVisibleTo(self):
+            self.failure_unseen = False
+            self.queue_panel.pin.setChecked(False)  # closing it by hand also lets go of the pin
+            self.queue_closed = self._transfers_running()
+            self._hide_queue()
+        else:
+            self.queue_closed = False
+            self._show_queue()
+
+    def _show_queue(self) -> None:
+        self.queue_linger.stop()
+        if not self.queue_panel.isVisibleTo(self):
+            self.queue_panel.show()
+            total = sum(self.body.sizes())
+            self.body.setSizes([max(total - self.queue_height, 1), self.queue_height])
+
+    def _hide_queue(self) -> None:
+        if self.queue_panel.isVisibleTo(self):
+            self.queue_height = self.queue_panel.height() or self.queue_height
+            self.queue_panel.hide()
+
+    def _transfers_running(self) -> bool:
+        return any(job.state in (State.WAITING, State.RUNNING) for job in self.queue.jobs)
+
+    def _hide_idle_queue(self) -> None:
+        if not (self.queue_panel.pin.isChecked() or self.failure_unseen or self._transfers_running()):
+            self._hide_queue()
+
+    def _pin_toggled(self, pinned: bool) -> None:
+        if pinned:
+            self.queue_linger.stop()
+        elif not self.failure_unseen and not self._transfers_running():
+            self.queue_linger.start()
+
+    def _follow_queue(self, job: Job) -> None:
+        """The queue shows while something runs, and for a moment after, so the result can be seen."""
+        if job.state == State.FAILED:
+            self.failure_unseen = True
+        running = self._transfers_running()
+        if not running:
+            self.queue_closed = False
+        if job.state == State.FAILED or (running and not self.queue_closed):
+            self._show_queue()
+        elif not running and not self.queue_panel.pin.isChecked() and not self.failure_unseen:
+            self.queue_linger.start()
 
     def _show_connection_state(self) -> None:
         session = self.current()
@@ -1148,6 +1233,7 @@ class MainWindow(QMainWindow):
     def _job_changed(self, job: Job) -> None:
         self.queue_view.show_job(job)
         self.update_actions()
+        self._follow_queue(job)
         self._edit_job_ended(job)
         if job.state == State.DONE and job.upload:
             for session in self.sessions:

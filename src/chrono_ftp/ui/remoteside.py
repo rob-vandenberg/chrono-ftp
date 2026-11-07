@@ -9,13 +9,14 @@ from PySide6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QSplitter, Q
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, joined, parent_of, shown_name
 from chrono_ftp.core import colours
-from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar
+from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, button_row
 from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, mask_text, summary_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.6"
+__version__ = "remoteside.py 0.0.7"
 
 # --- Version history ----------------------------------------------------
+# v0.0.7: One row of buttons
 # v0.0.6: The shared file list; a path travels as an object, so a name that is not valid UTF-8 stays what it is
 # v0.0.5: The folder tree and file list of a live connection in its colour, loaded in the background (D-007, D-019)
 # v0.0.3: Initial: the right side, always a server: plain grey while there is no connection (OR-1, OR-3)
@@ -72,9 +73,8 @@ class RemoteSide(QWidget):
         self.parts.setSizes([TREE_WIDTH, LIST_WIDTH])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addWidget(self.navigation)
-        layout.addWidget(self.actions_bar)
+        layout.setSpacing(1)
+        layout.addLayout(button_row(self.navigation, self.actions_bar))
         layout.addWidget(self.path_line)
         layout.addWidget(self.parts, 1)
         layout.addWidget(self.count_label)

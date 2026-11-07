@@ -44,3 +44,4 @@ Result: replaces the reference program for everyday copying.
 6. Rename, delete and new folder on this computer: done (0.0.6).
 7. Leftovers of a dropped transfer tidied; links in a target tree kept; names that are not valid UTF-8: done (0.0.6).
 8. The connection colour in the terminal: done (0.0.6), not yet seen on screen.
+9. The most height for the file lists: one top row, one button row per side, the queue under a separator, hidden when idle unless pinned: done (0.0.7).

@@ -10,3 +10,4 @@
 8. [[D-032]] Place of the folder tree
 9. [[D-033]] One file list on both sides
 10. [[D-034]] Each side has its own buttons
+11. [[D-039]] The queue

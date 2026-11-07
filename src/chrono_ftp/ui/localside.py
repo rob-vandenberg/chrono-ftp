@@ -7,13 +7,14 @@ from PySide6.QtWidgets import QFileSystemModel, QLabel, QLineEdit, QSplitter, QT
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, shown_name
 from chrono_ftp.engine import localfiles
-from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar
+from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, button_row
 from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, FileList, mask_text, summary_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "localside.py 0.0.6"
+__version__ = "localside.py 0.0.7"
 
 # --- Version history ----------------------------------------------------
+# v0.0.7: One row of buttons
 # v0.0.6: The shared file list, read with os, so a name that is not valid UTF-8 shows too; sorting, drops, hidden files
 # v0.0.5: Several entries can be selected; the folder shown is told to the window
 # v0.0.3: Initial: the left side, always this computer: folder tree and file list, neutral (OR-1, OR-2, D-019)
@@ -60,9 +61,8 @@ class LocalSide(QWidget):
         self.parts.setSizes([TREE_WIDTH, LIST_WIDTH])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addWidget(self.navigation)
-        layout.addWidget(self.actions_bar)
+        layout.setSpacing(1)
+        layout.addLayout(button_row(self.navigation, self.actions_bar))
         layout.addWidget(self.path_line)
         layout.addWidget(self.parts, 1)  # all the height goes to the lists
         layout.addWidget(self.count_label)

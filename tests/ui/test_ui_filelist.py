@@ -4,19 +4,24 @@ import pytest
 from PySide6.QtCore import QByteArray, QFile, QItemSelectionModel, QMimeData, QPointF, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QDropEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QToolBar
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import settings
-from chrono_ftp.connections.base import RemoteEntry
+from chrono_ftp.connections.base import CommandResult, RemoteEntry
+from chrono_ftp.core.connection import Connection
+from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.filelist import DRAG_MARK, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, LOCAL_FILES, REMOTE_FILES, FileList, rights_text, size_text, summary_text
+from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
 from chrono_ftp.ui.mainwindow import LOCAL_MENU, MainWindow, REMOTE_MENU
 from chrono_ftp.ui.sidebar import FolderHistory
+from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.6"
+__version__ = "test_ui_filelist.py 0.0.7"
 
 # --- Version history ----------------------------------------------------
+# v0.0.7: The queue, the pin and the rows of buttons
 # v0.0.6: Initial
 
 ENTRIES: list[RemoteEntry] = [RemoteEntry("b.txt", False, 10, 2000.0), RemoteEntry("A.txt", False, 300, 1000.0), RemoteEntry("zebra", True), RemoteEntry("alpha", True), RemoteEntry(".hidden", False, 1)]
@@ -356,7 +361,138 @@ def test_the_queue_button_hides_and_shows_the_queue(qtbot: QtBot) -> None:
     window = window_for(qtbot)
     with qtbot.waitExposed(window):
         window.show()
-    window.actions_by_name["queue"].trigger()
     assert not window.queue_view.isVisible()
     window.actions_by_name["queue"].trigger()
     assert window.queue_view.isVisible()
+    window.actions_by_name["queue"].trigger()
+    assert not window.queue_view.isVisible()
+
+
+def finished_job(window: MainWindow, state: State) -> Job:
+    job = Job(Scripted(CommandResult(0, "", "")), Connection(name="T", host="h"), "/a", "/", True, "a", state=state)
+    window.queue.jobs.append(job)
+    return job
+
+
+def shown_window(qtbot: QtBot) -> MainWindow:
+    window = window_for(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    return window
+
+
+def test_the_queue_comes_with_a_transfer_and_goes_a_moment_after_the_last_one(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    job = finished_job(window, State.RUNNING)
+    window._job_changed(job)
+    assert window.queue_panel.isVisible()
+    job.state = State.DONE
+    window._job_changed(job)
+    assert window.queue_panel.isVisible() and window.queue_linger.isActive()
+    window.queue_linger.timeout.emit()
+    assert not window.queue_panel.isVisible()
+
+
+def test_the_queue_closed_by_hand_during_a_transfer_stays_closed_unless_one_fails(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    job = finished_job(window, State.RUNNING)
+    window._job_changed(job)
+    window.actions_by_name["queue"].trigger()
+    window._job_changed(job)
+    assert not window.queue_panel.isVisible()
+    job.state = State.FAILED
+    window._job_changed(job)
+    assert window.queue_panel.isVisible()
+
+
+def test_a_new_run_of_transfers_shows_the_queue_again_after_it_was_closed_by_hand(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    job = finished_job(window, State.RUNNING)
+    window._job_changed(job)
+    window.actions_by_name["queue"].trigger()
+    job.state = State.DONE
+    window._job_changed(job)
+    next_job = finished_job(window, State.RUNNING)
+    window._job_changed(next_job)
+    assert window.queue_panel.isVisible()
+    next_job.state = State.DONE  # closing the window would ask about a running transfer
+
+
+def test_a_huge_queue_height_in_the_window_file_changes_nothing(qtbot: QtBot) -> None:
+    settings.save_window({"queue_height": "9" * 5000})
+    assert window_for(qtbot).queue_height == QUEUE_HEIGHT
+
+
+def test_many_tabs_leave_the_general_buttons_in_full_view(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    for number in range(12):
+        window.tab_bar.addTab(f"server{number}.example.com")
+    qtbot.wait(50)
+    assert window.general_bar.width() >= window.general_bar.sizeHint().width()
+
+
+def test_a_pinned_queue_stays_and_comes_back_after_a_restart(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    window.actions_by_name["queue"].trigger()
+    window.queue_panel.pin.setChecked(True)
+    job = finished_job(window, State.DONE)
+    window._job_changed(job)
+    window._hide_idle_queue()
+    assert window.queue_panel.isVisible()
+    window.close()
+    assert shown_window(qtbot).queue_panel.isVisible()
+
+
+def test_letting_go_of_the_pin_hides_an_idle_queue_after_a_moment(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    window.actions_by_name["queue"].trigger()
+    window.queue_panel.pin.setChecked(True)
+    window.queue_panel.pin.setChecked(False)
+    assert window.queue_linger.isActive()
+
+
+def test_a_failed_transfer_keeps_the_queue_open_until_it_is_closed_by_hand(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    job = finished_job(window, State.FAILED)
+    window._job_changed(job)
+    assert window.queue_panel.isVisible() and not window.queue_linger.isActive()
+    other = finished_job(window, State.DONE)
+    window._job_changed(other)
+    window._hide_idle_queue()
+    assert window.queue_panel.isVisible()
+    window.actions_by_name["queue"].trigger()
+    assert not window.queue_panel.isVisible()
+    assert not window.failure_unseen
+
+
+def test_the_height_of_the_queue_is_the_one_the_person_dragged_also_after_a_restart(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    window.actions_by_name["queue"].trigger()
+    total = sum(window.body.sizes())
+    window.body.setSizes([total - 200, 200])
+    window.actions_by_name["queue"].trigger()
+    window.actions_by_name["queue"].trigger()
+    assert window.body.sizes()[1] == 200
+    window.close()
+    again = shown_window(qtbot)
+    again.actions_by_name["queue"].trigger()
+    assert again.body.sizes()[1] == 200
+
+
+def test_a_hidden_queue_gives_all_the_height_to_the_lists(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    assert window.sides.height() == window.body.height()
+
+
+def test_the_side_buttons_are_one_row_with_the_text_on_hover(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    for side in (window.local_side, window.remote_side):
+        assert side.navigation.y() == side.actions_bar.y()
+        assert side.actions_bar.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert window.actions_by_name["delete"].toolTip() == "Delete"
+
+
+def test_the_general_buttons_share_the_row_of_the_tabs(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    assert window.general_bar.parent() is window.top_row
+    assert window.findChildren(QToolBar, options=Qt.FindChildOption.FindDirectChildrenOnly) == []

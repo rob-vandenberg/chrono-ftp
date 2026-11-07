@@ -1317,6 +1317,20 @@ def test_a_fresh_copy_that_can_not_be_fetched_leaves_the_edit_as_it_was(qtbot: Q
         assert copy in window.edited and Path(copy).exists()
 
 
+def test_a_save_that_went_through_during_the_download_of_a_fresh_copy_wins(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "a.txt").write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch)
+        window.actions_by_name["edit"].trigger()
+        window.edited[copy].saves += 1  # saved and sent while the download ran
+        qtbot.waitUntil(lambda: window.fetching == set())
+        assert list(window.edited) == [copy]
+
+
 def test_two_presses_on_edit_give_one_copy(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "server"
     root.mkdir()

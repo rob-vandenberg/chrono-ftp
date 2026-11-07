@@ -17,9 +17,10 @@ from chrono_ftp.ui.remoteside import NOT_CONNECTED_TEXT, RemoteSide
 from chrono_ftp.ui.settingsdialog import SettingsDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.6"
+__version__ = "test_ui_mainwindow.py 0.0.7"
 
 # --- Version history ----------------------------------------------------
+# v0.0.7: One row of buttons
 # v0.0.6: The shared file list
 # v0.0.3: Initial: the fixed sides, the grey of no connection, a local folder really shown
 
@@ -68,7 +69,7 @@ def test_the_lists_get_nearly_all_the_height(qtbot: QtBot) -> None:
     line = window.fontMetrics().height()
     for side in (window.local_side, window.remote_side):
         assert side.path_line.height() <= 2 * line
-        assert side.file_list.height() >= side.height() - side.navigation.height() - side.actions_bar.height() - 4 * line
+        assert side.file_list.height() >= side.height() - side.navigation.height() - 4 * line
     assert window.tab_bar.height() <= 3 * line
 
 

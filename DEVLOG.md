@@ -25,3 +25,7 @@ Milestones 1, 2 and 3 in one go, on the owner's word to continue without stoppin
 ## 0.0.6 (2026-11-07): daily use
 
 One shared file list on both sides, with buttons per side after the owner's picture of the goal, drag and drop, Edit, Synchronize, local actions, tidying of leftovers, and names that are not valid UTF-8. The real window ran against a real test account over the network: every step passed at about 100 MB/s. A real SSH server on this computer confirmed that a link deep in a target tree stays a link and that a name that is not valid UTF-8 can be listed, fetched and deleted.
+
+## 0.0.7 (2026-11-07): height for the file lists
+
+One top row and one button row per side; the queue under a separator, hidden when idle unless pinned, and open after a failure. In a window 800 pixels high the lists went from about 410 to 661 pixels with the queue hidden.
