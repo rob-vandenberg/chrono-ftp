@@ -5,3 +5,4 @@
 3. [[D-024]] How decisions are kept
 4. [[D-025]] Pushing and releases
 5. [[D-026]] Test elsewhere first
+6. [[D-031]] The owner's word for the first version

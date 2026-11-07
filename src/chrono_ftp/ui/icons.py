@@ -46,6 +46,8 @@ ICON_NAMES: tuple[str, ...] = (
     "folder-new",
     "document-new",
     "edit-find",
+    "edit-copy",
+    "edit-cut",
     "media-playback-start",
     "media-playback-pause",
     "process-stop",

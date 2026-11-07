@@ -2,9 +2,9 @@
 
 Chrono FTP is a free program for Linux that moves files between your computer and your servers. Your own computer is always on the left and the server is always on the right, and every server has its own colour, so you can always see where you are.
 
-Chrono FTP is at the very start of its development: there is nothing to install yet.
+Chrono FTP is at an early stage: there is a first working version, but no installer yet.
 
-## What it will do
+## What it does
 
 1. Keep a list of your connections, each with its own colour.
 2. Open each connection in a tab, in that connection's colour.

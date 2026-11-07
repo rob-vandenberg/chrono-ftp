@@ -8,11 +8,13 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
+from chrono_ftp.config import connections, settings
 from chrono_ftp.core import colours
 from chrono_ftp.ui import theme
 from chrono_ftp.ui.localside import NO_ACCESS_TEXT, LocalSide
 from chrono_ftp.ui.mainwindow import MainWindow
 from chrono_ftp.ui.remoteside import NOT_CONNECTED_TEXT, RemoteSide
+from chrono_ftp.ui.settingsdialog import SettingsDialog
 
 # --- Version ------------------------------------------------------------
 __version__ = "test_ui_mainwindow.py 0.0.3"
@@ -54,11 +56,11 @@ def test_the_tab_bar_runs_above_both_sides(qtbot: QtBot) -> None:
     window = window_for(qtbot)
     with qtbot.waitExposed(window):
         window.show()
-    bar_top_left = window.tab_bar.mapTo(window, QPoint(0, 0))
+    bar_top_left = window.top_row.mapTo(window, QPoint(0, 0))
     sides_top_left = window.sides.mapTo(window, QPoint(0, 0))
     assert bar_top_left.y() < sides_top_left.y()
     assert window.tab_bar.height() > 0
-    assert window.tab_bar.width() == window.sides.width()
+    assert window.top_row.width() == window.sides.width()
 
 
 def test_the_lists_get_nearly_all_the_height(qtbot: QtBot) -> None:
@@ -395,3 +397,37 @@ def test_return_does_not_act_on_an_entry_of_the_folder_before(qtbot: QtBot, tmp_
     local.file_list.setFocus()
     QTest.keyClick(local.file_list, Qt.Key.Key_Return)
     assert local.folder == str(tmp_path / "other")
+
+
+@pytest.mark.parametrize("place,shown,orientation", [(settings.TREE_LEFT, True, Qt.Orientation.Horizontal), (settings.TREE_ABOVE, True, Qt.Orientation.Vertical), (settings.TREE_HIDDEN, False, Qt.Orientation.Horizontal)])
+def test_the_folder_tree_goes_where_the_settings_say_on_both_sides(qtbot: QtBot, place: str, shown: bool, orientation: Qt.Orientation) -> None:
+    settings.save(settings.Settings(place))
+    window = window_for(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    for side in (window.local_side, window.remote_side):
+        assert side.tree.isVisible() is shown
+        assert side.parts.orientation() == orientation
+        assert side.file_list.isVisible()
+
+
+def test_a_change_in_the_settings_window_applies_at_once_and_is_kept(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = window_for(qtbot)
+
+    def accepted(dialog: SettingsDialog) -> int:
+        dialog.tree_place.setCurrentIndex(dialog.tree_place.findData(settings.TREE_ABOVE))
+        return SettingsDialog.DialogCode.Accepted.value
+
+    monkeypatch.setattr(SettingsDialog, "exec", accepted)
+    window.actions_by_name["settings"].trigger()
+    assert window.remote_side.parts.orientation() == Qt.Orientation.Vertical
+    assert settings.load().tree_place == settings.TREE_ABOVE
+
+
+def test_a_bad_settings_file_gives_the_standard_settings() -> None:
+    path = connections.config_folder() / settings.FILE_NAME
+    path.parent.mkdir(parents=True)
+    path.write_text('{"tree_place": "nowhere"}', encoding="utf-8")
+    assert settings.load().tree_place == settings.TREE_LEFT
+    path.write_text("{broken", encoding="utf-8")
+    assert settings.load().tree_place == settings.TREE_LEFT

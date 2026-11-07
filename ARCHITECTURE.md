@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.4). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). So far `core` holds the colours and `ui` the main window; the other packages exist so that the layers are in place.
+The design as it stands now (version 0.0.5). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -16,10 +16,10 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 | Module | Responsibility |
 |---|---|
 | `core` | Pure data model: Connection, remote file entry, capabilities, error types, colours (`core/colours.py`), the thin door to the credential store. No other I/O. |
-| `config` | The connection list (`~/.config/chrono-ftp/connections.json`), settings, the one-time import of a session list. |
-| `connections` | The common connection layer and its two implementations, SSH and FTP; capability detection. |
+| `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list. |
+| `connections` | The common connection layer (`base.py`), its two implementations (`ssh.py`, `ftp.py`), capability detection, and the servers the person trusted (`trust.py`). |
 | `transfers` | The transfer queue: `rsync` with a speed limit, falling back to SFTP or FTP; progress. |
-| `engine` | What the window asks of connections and transfers; empty for now. |
+| `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`). |
 | `ui` | PySide6 user interface. Pure window actions live here; server work does not. |
 
 There is no separate command-line program (D-022).
@@ -54,7 +54,7 @@ Each connection reports what it can do after connecting (D-016): the system, the
 
 ## 6. The window
 
-1. Left: the local side, neutral, with `QFileSystemModel`: folder tree and file list next to each other (`ui/localside.py`). Right: the remote side (`ui/remoteside.py`), plain grey and empty for now, later with a custom model that loads in the background (D-019). The look is set in `ui/theme.py`: Fusion with the colours of `core/colours.py`, so nothing comes from the platform (OR-9).
+1. Left: the local side, neutral, with `QFileSystemModel`: folder tree and file list next to each other (`ui/localside.py`). Right: the remote side (`ui/remoteside.py`), filled by answers from the connection's own thread (D-019). The look is set in `ui/theme.py`: Fusion with the colours of `core/colours.py`, so nothing comes from the platform (OR-9).
 2. Both the folder tree and the file list on the right take the connection's colour; text is black or white by the background's brightness, selected rows too (D-007).
 3. Every tab is one connection and keeps its own local and remote folder: a click on another tab changes both sides (D-008).
 4. Tabs have the connection's colour, inactive tabs slightly dimmed, a dropped connection grey, through a small custom tab bar above both sides (D-007, D-008).

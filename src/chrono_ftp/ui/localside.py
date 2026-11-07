@@ -1,14 +1,17 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QFileInfo, QFileSystemWatcher, QModelIndex, Qt
+from PySide6.QtCore import QDir, QFileInfo, QFileSystemWatcher, QModelIndex, Qt, Signal
 from PySide6.QtGui import QStandardItemModel
-from PySide6.QtWidgets import QFileSystemModel, QLabel, QSplitter, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFileSystemModel, QLabel, QSplitter, QTreeView, QVBoxLayout, QWidget
+
+from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 
 # --- Version ------------------------------------------------------------
-__version__ = "localside.py 0.0.3"
+__version__ = "localside.py 0.0.5"
 
 # --- Version history ----------------------------------------------------
+# v0.0.5: Several entries can be selected; the folder shown is told to the window
 # v0.0.3: Initial: the left side, always this computer: folder tree and file list, neutral (OR-1, OR-2, D-019)
 
 NAME_COLUMN_WIDTH: int = 260
@@ -19,6 +22,9 @@ class LocalSide(QWidget):
     """The left side. A folder that can't be opened is shown as closed: its list is empty and the path line says so, so the tree, the list
     and the path line always agree (OR-15). When the folder shown or one above it is removed or renamed, the side moves to the nearest
     folder above it that is still there."""
+
+    folder_changed = Signal(str)
+    selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -40,16 +46,17 @@ class LocalSide(QWidget):
         self.file_list.setRootIsDecorated(False)
         self.file_list.setItemsExpandable(False)
         self.file_list.setAlternatingRowColors(True)
+        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.file_list.setColumnWidth(0, NAME_COLUMN_WIDTH)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self.tree)
-        splitter.addWidget(self.file_list)
-        splitter.setStretchFactor(1, 1)
+        self.parts = QSplitter(Qt.Orientation.Horizontal)
+        self.parts.setChildrenCollapsible(False)
+        self.parts.addWidget(self.tree)
+        self.parts.addWidget(self.file_list)
+        self.parts.setStretchFactor(1, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.path_label)
-        layout.addWidget(splitter, 1)  # all the height goes to the lists
+        layout.addWidget(self.parts, 1)  # all the height goes to the lists
         selection = self.tree.selectionModel()
         if selection is not None:
             selection.currentChanged.connect(self._tree_moved)  # a click and the arrow keys alike
@@ -73,7 +80,19 @@ class LocalSide(QWidget):
         index = self.tree_model.index(clean)
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
+        self.folder_changed.emit(clean)
         return True
+
+    def set_tree_place(self, place: str) -> None:
+        self.tree.setVisible(place != TREE_HIDDEN)
+        self.parts.setOrientation(Qt.Orientation.Vertical if place == TREE_ABOVE else Qt.Orientation.Horizontal)
+
+    def selected_paths(self) -> list[str]:
+        selection = self.file_list.selectionModel()
+        if selection is None or self.file_list.model() is not self.list_model:
+            return []
+        rows = [index for index in selection.selectedRows(0) if index.data() != ".."]
+        return [self.list_model.filePath(index) for index in rows]
 
     def _state_of_folder(self) -> tuple[int, int, bool] | None:
         try:
@@ -97,6 +116,9 @@ class LocalSide(QWidget):
         else:
             self.file_list.setModel(self.closed_model)
         self.file_list.header().restoreState(columns)
+        selection = self.file_list.selectionModel()
+        if selection is not None:
+            selection.selectionChanged.connect(self.selection_changed)
 
     def _watch(self) -> None:
         """The folder and every folder above it: a removal or rename higher up shows only there."""

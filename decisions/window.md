@@ -7,3 +7,4 @@
 5. [[D-019]] The two models
 6. [[D-021]] Import of a session list
 7. [[D-028]] Breeze icons
+8. [[D-032]] Place of the folder tree
