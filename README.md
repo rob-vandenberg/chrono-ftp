@@ -14,7 +14,7 @@ Chrono FTP is at the very start of its development: there is nothing to install 
 6. Search for files on the server.
 7. Rename, move, copy and delete on the server.
 
-It works with servers that offer SSH or FTP. What a server can't do is greyed out, so nothing fails halfway.
+It works with servers that offer SSH or FTP. What a server can't do is greyed out or not shown, so nothing fails halfway.
 
 ## License
 

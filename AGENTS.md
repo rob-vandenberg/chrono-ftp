@@ -9,7 +9,7 @@ The person must always see where they are, and the program must never damage a s
 1. Left is always local, right is always remote.
 2. A colour on the right always means a live connection, and tells which one.
 3. Work on a server is done on the server: one command where a shell exists, nothing travels through this computer.
-4. What a connection cannot do is greyed out, and never fails halfway.
+4. What a connection cannot do is greyed out, and never fails halfway; the actions that need a shell are not shown on an FTP connection.
 5. A recursive change of owner, group or permissions shows its exact command and waits for a yes.
 
 Every changelist says how it keeps this rule. What the rule does not settle is asked, never chosen.
@@ -43,7 +43,7 @@ Every changelist says how it keeps this rule. What the rule does not settle is a
 1. **Language:** Python 3.14, virtual environment in `.venv`.
 2. **Type checking:** Pyrefly in **strict** mode. Zero type errors is a hard gate. Every function, method and module-level variable carries full type annotations. No `Any` unless unavoidable and commented.
 3. **GUI:** Qt 6 through **PySide6**. No KDE Frameworks, no GTK, no webview shells.
-4. **License:** AGPL-3.0. Every dependency must be license-compatible.
+4. **License:** AGPL-3.0 only. Every dependency must be license-compatible.
 
 ## 4. Golden rules
 

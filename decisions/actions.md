@@ -5,3 +5,4 @@
 3. [[D-015]] Remote actions on the server
 4. [[D-018]] Terminal
 5. [[D-020]] Compare
+6. [[D-027]] Actions that need a shell

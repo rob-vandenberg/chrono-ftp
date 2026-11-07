@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.1). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). No package holds program code yet: the packages exist so that the layers are in place from the start.
+The design as it stands now (version 0.0.2). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). No package holds program code yet: the packages exist so that the layers are in place from the start.
 
 ## 1. Goals that shape the design
 
@@ -40,20 +40,22 @@ A module may import only from lower layers. Modules in one layer are independent
 
 The panes, tabs and colours do not know which connection type is in use. SSH and FTP are equals, and each server uses whichever it supports (D-009).
 
-1. **SSH** (D-010): browse over SFTP and run shell commands over the same login, with `asyncssh`. What a server without a shell does is an open question (`STATUS.md`).
+1. **SSH** (D-010): browse over SFTP and run shell commands over the same login, with `asyncssh`. Without a shell the actions that need one are greyed out (D-027).
 2. **FTP** (D-011): `ftplib`, with TLS where the server offers it, `MLSD` for listings.
 
-Each connection reports what it can do after connecting (D-016): the system, the tools and their options, what the account may do. What is unavailable is greyed out.
+Each connection reports what it can do after connecting (D-016): the system, the tools and their options, what the account may do. What is unavailable is greyed out; on an FTP connection the actions that need a shell are not shown (D-027).
 
 ## 5. Actions on a server
 
 1. Recursive owner, group and permissions: one `chown -R` or `chmod -R` on the server, after the exact command is shown and confirmed (D-012, D-013).
 2. Rename, move, copy, delete and search: `mv`, `cp -a`, `find` and the like on the server (D-015).
-3. Every path in a shell command goes through `shlex.quote`.
+3. Without a shell: rename, move and delete through the protocol, which is slower; copy, search, the recursive changes, the terminal and compare are not available (D-027).
+4. Every path in a shell command goes through `shlex.quote`.
 
 ## 6. The window
 
 1. Left: the local side, neutral, with `QFileSystemModel`. Right: the remote side with a custom model that loads in the background (D-019).
 2. Both the folder tree and the file list on the right take the connection's colour; text is black or white by the background's brightness, selected rows too (D-007).
 3. Every tab is one connection and keeps its own local and remote folder: a click on another tab changes both sides (D-008).
-4. Tabs have the connection's colour, inactive tabs slightly dimmed, through a small custom tab bar.
+4. Tabs have the connection's colour, inactive tabs slightly dimmed, a dropped connection grey, through a small custom tab bar above both sides (D-007, D-008).
+5. The layout follows the reference program; the buttons use Breeze icons (D-028).

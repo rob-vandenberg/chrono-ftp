@@ -6,3 +6,4 @@
 4. [[D-017]] Connection list
 5. [[D-019]] The two models
 6. [[D-021]] Import of a session list
+7. [[D-028]] Breeze icons
