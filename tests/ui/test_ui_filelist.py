@@ -14,14 +14,16 @@ from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.filelist import DRAG_MARK, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, LOCAL_FILES, REMOTE_FILES, FileList, rights_text, size_text, summary_text
 from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
 from chrono_ftp.ui.logindialog import WIDTH, LoginDialog
-from chrono_ftp.ui.mainwindow import LOCAL_MENU, MainWindow, REMOTE_MENU
+from chrono_ftp.ui.mainwindow import MainWindow
+from chrono_ftp.ui.windowbase import LOCAL_MENU, REMOTE_MENU
 from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.8"
+__version__ = "test_ui_filelist.py 0.0.11"
 
 # --- Version history ----------------------------------------------------
+# v0.0.11: Imports from the split main window
 # v0.0.8: The login window
 # v0.0.7: The queue, the pin and the rows of buttons
 # v0.0.6: Initial

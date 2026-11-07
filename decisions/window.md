@@ -11,3 +11,5 @@
 9. [[D-033]] One file list on both sides
 10. [[D-034]] Each side has its own buttons
 11. [[D-039]] The queue
+12. [[D-041]] The main window in parts
+13. [[D-042]] A closed window takes no more answers

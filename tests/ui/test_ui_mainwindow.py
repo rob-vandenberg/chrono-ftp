@@ -17,9 +17,10 @@ from chrono_ftp.ui.remoteside import NOT_CONNECTED_TEXT, RemoteSide
 from chrono_ftp.ui.settingsdialog import SettingsDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.7"
+__version__ = "test_ui_mainwindow.py 0.0.11"
 
 # --- Version history ----------------------------------------------------
+# v0.0.11: An answer of a thread after the window closed goes nowhere
 # v0.0.7: One row of buttons
 # v0.0.6: The shared file list
 # v0.0.3: Initial: the fixed sides, the grey of no connection, a local folder really shown
@@ -427,3 +428,13 @@ def test_a_bad_settings_file_gives_the_standard_settings() -> None:
     assert settings.load().tree_place == settings.TREE_LEFT
     path.write_text("{broken", encoding="utf-8")
     assert settings.load().tree_place == settings.TREE_LEFT
+
+
+def test_an_answer_that_comes_after_the_window_closed_goes_nowhere(qtbot: QtBot) -> None:
+    window = window_for(qtbot)
+    reached: list[str] = []
+    window.bridge.deliver(lambda: reached.append("on its way"))  # handed in before the close, its turn comes after it
+    window.close()
+    window.bridge.deliver(lambda: reached.append("late"))
+    QApplication.processEvents()
+    assert reached == []

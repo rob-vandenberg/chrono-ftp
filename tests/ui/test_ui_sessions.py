@@ -24,14 +24,17 @@ from chrono_ftp.ui.comparedialog import CompareDialog
 from chrono_ftp.ui.filelist import DRAG_MARK, LOCAL_FILES, REMOTE_FILES, FileList
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.ui.logindialog import LoginDialog
-from chrono_ftp.ui.mainwindow import EDIT_WAIT_TRIES, MainWindow, Session, _same_server
+from chrono_ftp.ui.mainwindow import MainWindow
+from chrono_ftp.ui.session import Session, same_server
+from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES
 from tests.conftest import MemoryStore
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.9"
+__version__ = "test_ui_sessions.py 0.0.11"
 
 # --- Version history ----------------------------------------------------
+# v0.0.11: Imports from the split main window; a test with a transfer waits for its end, not for the file, so nothing runs on after it
 # v0.0.9: The optional colour
 # v0.0.8: The login window
 # v0.0.6: Drag and drop, edit, odd names, the buttons of the sides, the status bar, synchronize
@@ -669,6 +672,11 @@ def text_of(path: Path) -> str:
         return ""
 
 
+def transfers_ended(window: MainWindow) -> bool:
+    """A file is on the other side before its transfer has ended: a test waits for the end, so nothing still runs when it is over."""
+    return bool(window.queue.jobs) and all(job.state not in (State.WAITING, State.RUNNING) for job in window.queue.jobs)
+
+
 def mark(kind: str) -> QMimeData:
     mime = QMimeData()
     mime.setData(kind, QByteArray(DRAG_MARK))
@@ -700,7 +708,8 @@ def test_a_file_dragged_to_the_right_lands_in_the_folder_it_fell_on(qtbot: QtBot
         qtbot.waitUntil(lambda: "inner" in names_on_the_right(window))
         pick_local(window, "a.txt")
         dropped(window.remote_side.file_list, LOCAL_FILES, "inner")
-        qtbot.waitUntil(lambda: (root / "inner" / "a.txt").exists())
+        qtbot.waitUntil(lambda: transfers_ended(window))
+        assert (root / "inner" / "a.txt").exists()
 
 
 def test_a_file_dragged_to_the_left_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -715,7 +724,8 @@ def test_a_file_dragged_to_the_left_lands_in_the_folder_it_fell_on(qtbot: QtBot,
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
         dropped(window.local_side.file_list, REMOTE_FILES, "inner")
-        qtbot.waitUntil(lambda: (here / "inner" / "a.txt").exists())
+        qtbot.waitUntil(lambda: transfers_ended(window))
+        assert (here / "inner" / "a.txt").exists()
 
 
 def test_a_drag_within_the_right_side_moves_on_the_server(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -956,7 +966,8 @@ def test_a_save_while_the_connection_is_gone_goes_after_reconnect(qtbot: QtBot, 
         assert (root / "a.txt").read_text(encoding="utf-8") == "old"
         session.alive = True
         window.edit_settle.start()
-        qtbot.waitUntil(lambda: text_of(root / "a.txt") == "new")
+        qtbot.waitUntil(lambda: transfers_ended(window))
+        assert text_of(root / "a.txt") == "new"
 
 
 def test_closing_a_tab_with_a_file_open_for_editing_asks_first(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1362,7 +1373,8 @@ def test_a_save_during_a_send_that_is_stopped_still_goes(qtbot: QtBot, window: M
         edited.job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, copy, "/", True, "a.txt", state=State.STOPPED)
         window._edit_job_ended(edited.job)
         assert not edited.held
-        qtbot.waitUntil(lambda: text_of(root / "a.txt") == "newer")
+        qtbot.waitUntil(lambda: transfers_ended(window))
+        assert text_of(root / "a.txt") == "newer"
 
 
 def test_a_file_with_changes_on_their_way_opens_the_same_copy_and_otherwise_a_fresh_one(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1445,7 +1457,7 @@ def test_two_presses_on_edit_give_one_copy(qtbot: QtBot, window: MainWindow, tmp
 def test_another_login_on_the_same_server_is_another_place(qtbot: QtBot, window: MainWindow) -> None:
     first = Session(Connection(name="A", host="h", user="alice"), Worker(window.bridge.deliver), "/")
     second = Session(Connection(name="B", host="h", user="bob"), Worker(window.bridge.deliver), "/")
-    assert not _same_server(first, second)
+    assert not same_server(first, second)
     first.worker.stop()
     second.worker.stop()
 

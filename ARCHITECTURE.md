@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.5). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.11; sections 2 to 5 date from 0.0.5). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -60,3 +60,16 @@ Each connection reports what it can do after connecting (D-016): the system, the
 4. Tabs have the connection's colour, inactive tabs slightly dimmed, a dropped connection grey, through a small custom tab bar above both sides (D-007, D-008).
 5. The layout follows the reference program; the buttons use Breeze icons from `ui/resources/icons/`, loaded by `ui/icons.py`: the text colour of the icon follows the theme, its other colours stay, and a disabled icon is one grey shape (D-028).
 6. A local folder that can't be opened is shown as closed: an empty list and "no access" on the path line. The side watches its folder and every folder above it, so a removal or rename moves it up to the nearest folder that is left.
+7. The main window is built from parts, one module per group of actions (D-041):
+   1. `ui/mainwindow.py`: `MainWindow` builds the window and its toolbar, greys the buttons that can't act, and closes;
+   2. `ui/windowbase.py`: what the parts share, the shared numbers and texts, and the methods one part calls in another;
+   3. `ui/session.py`: one tab, with the files of it open for editing;
+   4. `ui/windowlayout.py`: right-click menus, filter, settings and remembered sizes;
+   5. `ui/windowtabs.py`: tabs, login and connecting;
+   6. `ui/windowfolders.py`: remote folders, refresh, reconnect and the check for dropped connections;
+   7. `ui/windowedit.py`: Edit and the saves that go back to the server;
+   8. `ui/windowqueue.py`: showing, hiding and pinning the queue;
+   9. `ui/windowlocal.py`: actions on this computer;
+   10. `ui/windowserver.py`: actions on the server;
+   11. `ui/windowtransfers.py`: upload, download, drag and drop, the speed limit and stop.
+8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).

@@ -1,0 +1,147 @@
+"""The base of the main window's parts: the shared widgets, state and numbers, and the methods the parts call in each other (D-041)."""
+
+from collections.abc import Callable
+
+from PySide6.QtCore import QFileSystemWatcher, QTimer
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QInputDialog, QLabel, QLineEdit, QMainWindow, QSpinBox, QSplitter, QStatusBar, QToolBar, QToolButton, QWidget
+
+from chrono_ftp.config.settings import Settings
+from chrono_ftp.connections.base import RemoteConnection, RemoteEntry
+from chrono_ftp.transfers.queue import Job, TransferQueue
+from chrono_ftp.ui.bridge import Bridge
+from chrono_ftp.ui.connectionlist import ConnectionList
+from chrono_ftp.ui.localside import LocalSide
+from chrono_ftp.ui.queueview import QueuePanel, QueueView
+from chrono_ftp.ui.remoteside import RemoteSide
+from chrono_ftp.ui.session import EditedFile, Session
+from chrono_ftp.ui.tabbar import ConnectionTabBar
+
+# --- Version ------------------------------------------------------------
+__version__ = "windowbase.py 0.0.11"
+
+# --- Version history ----------------------------------------------------
+# v0.0.11: Initial: the shared part of mainwindow.py, so each group of actions can live in a module of its own (D-041)
+
+WINDOW_TITLE: str = "Chrono FTP"
+START_WIDTH: int = 1280
+START_HEIGHT: int = 800
+EMPTY_TAB_BAR_LINES: int = 2  # an empty tab bar has no height of its own: it keeps the height of a tab
+HIGHEST_LIMIT: int = 1_000_000
+CHECK_MILLISECONDS: int = 30_000  # how often an idle connection is checked, so a dropped one goes grey (OR-3)
+SHELL_ACTIONS: tuple[str, ...] = ("copy", "search", "change", "terminal")  # hidden on FTP, greyed on SFTP without a shell (D-027)
+LOCAL_MENU: tuple[str, ...] = ("upload", "local_edit", "local_rename", "local_delete", "local_new")
+REMOTE_MENU: tuple[str, ...] = ("download", "edit", "rename", "move", "copy", "delete", "change", "new_folder")
+CLOCK_MILLISECONDS: int = 1000
+LOCK_SIZE: int = 16
+CENTRE_MARGIN: int = 2
+GENERAL_ICON_SIZE: int = 18
+QUEUE_LINGER_MILLISECONDS: int = 5000  # the queue stays this long after the last transfer, so the result can be seen
+HIGHEST_QUEUE_HEIGHT: int = 4000  # a number from a file is input
+EDIT_SETTLE_MILLISECONDS: int = 500  # a program saves in steps: the copy is sent when it has settled
+EDIT_WAIT_TRIES: int = 20  # a copy that stays away this often was removed
+SETTINGS_NOT_KEPT_TEXT: str = "These settings apply now, but could not be kept for next time."
+NOT_A_NAME_TEXT: str = "A name can't hold a slash."
+NOT_OPENABLE_TEXT: str = "This name can't be handed to another program. You can still download, rename or delete it."
+
+
+class WindowBase(QMainWindow):
+    """What every part of the main window shares: its widgets and state, made in MainWindow.__init__, and the methods one part calls in another.
+    Each declared method is defined by exactly one part; MainWindow puts the parts before this class, so the part's method is the one that runs."""
+
+    bridge: Bridge
+    sessions: list[Session]
+    shown: Session | None
+    queue: TransferQueue
+    connection_list: ConnectionList | None
+    tab_bar: ConnectionTabBar
+    new_tab_button: QToolButton
+    top_row: QWidget
+    general_bar: QToolBar
+    local_side: LocalSide
+    remote_side: RemoteSide
+    sides: QSplitter
+    queue_view: QueueView
+    queue_panel: QueuePanel
+    queue_height: int
+    failure_unseen: bool
+    queue_closed: bool
+    body: QSplitter
+    queue_linger: QTimer
+    status: QStatusBar
+    actions_by_name: dict[str, QAction]
+    limit: QSpinBox
+    edited: dict[str, EditedFile]
+    fetching: set[tuple[str, int, str, str, str]]
+    edit_watcher: QFileSystemWatcher
+    edit_settle: QTimer
+    clock: QTimer
+    check_timer: QTimer
+    settings: Settings
+    protocol_label: QLabel
+    lock_label: QLabel
+    time_label: QLabel
+
+    def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
+        text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
+        return text.strip() if given and text.strip() else None
+
+    def current(self) -> Session | None:
+        raise NotImplementedError
+
+    def _connect(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def _set_tab(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def _edits_of(self, session: Session) -> list[str]:
+        raise NotImplementedError
+
+    def _edits_text(self, copies: list[str]) -> str:
+        raise NotImplementedError
+
+    def _forget_edits(self, copies: list[str]) -> None:
+        raise NotImplementedError
+
+    def _ask(self, session: Session, work: Callable[[RemoteConnection], object], done: Callable[[object], None], refresh_after_failure: bool = False, on_failure: Callable[[], None] | None = None) -> None:
+        raise NotImplementedError
+
+    def load_folder(self, session: Session, folder: str) -> None:
+        raise NotImplementedError
+
+    def _reload(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def update_actions(self) -> None:
+        raise NotImplementedError
+
+    def _then_refresh(self, session: Session) -> Callable[[object], None]:
+        raise NotImplementedError
+
+    def _on_screen(self) -> tuple[Session, str, list[RemoteEntry]] | None:
+        raise NotImplementedError
+
+    def _open_local_file(self, path: str) -> None:
+        raise NotImplementedError
+
+    def _show_queue(self) -> None:
+        raise NotImplementedError
+
+    def _follow_queue(self, job: Job) -> None:
+        raise NotImplementedError
+
+    def _stop_editing(self, session: Session, folder: str, names: list[str]) -> None:
+        raise NotImplementedError
+
+    def _gone_and_refresh(self, session: Session, folder: str, names: list[str]) -> Callable[[object], None]:
+        raise NotImplementedError
+
+    def _move_into(self, session: Session, folder: str, chosen: list[RemoteEntry], target: str) -> None:
+        raise NotImplementedError
+
+    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str) -> Job | None:
+        raise NotImplementedError
+
+    def _edit_job_ended(self, job: Job) -> None:
+        raise NotImplementedError
