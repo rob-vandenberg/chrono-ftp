@@ -8,8 +8,8 @@ The milestones and tasks of Chrono FTP. Status: done, next, open, postponed.
 
 ## Milestone 1: browse with colours
 
-1. Main window with the fixed left and right side: next. First carry over the window test plugin of Chrono Mail (`tests/ui/uiplugin.py`), because the 20-second limit of `tests/conftest.py` can't stop a test that waits inside Qt.
-2. Copy the Breeze icons of D-028, with their licence file: open.
+1. Main window with the fixed left and right side: done (0.0.3).
+2. Copy the Breeze icons of D-028, with their licence file: next.
 3. Connection list with colours, connection dialogs: open.
 4. Common connection layer, SSH connection, capability detection: open.
 5. Tabs in the connection's colour, each with its own local and remote folder: open.

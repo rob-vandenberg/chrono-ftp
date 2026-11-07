@@ -1,7 +1,24 @@
 """The PySide6 user interface: thin, it calls engine commands only."""
 
+import sys
+
+from PySide6.QtWidgets import QApplication
+
+from chrono_ftp.ui import theme
+from chrono_ftp.ui.mainwindow import WINDOW_TITLE, MainWindow
+
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.1"
+__version__ = "__init__.py 0.0.3"
 
 # --- Version history ----------------------------------------------------
+# v0.0.3: The program starts here
 # v0.0.1: Initial skeleton
+
+
+def main() -> int:
+    application = QApplication(sys.argv)
+    application.setApplicationName(WINDOW_TITLE)
+    theme.apply(application)
+    window = MainWindow()
+    window.show()
+    return application.exec()

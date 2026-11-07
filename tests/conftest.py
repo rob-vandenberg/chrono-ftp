@@ -7,10 +7,13 @@ from types import FrameType
 import pytest
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 0.0.1"
+__version__ = "conftest.py 0.0.3"
 
 # --- Version history ----------------------------------------------------
+# v0.0.3: The window tests get their plugin (tests/ui/uiplugin.py)
 # v0.0.1: Initial: no test may take longer than 20 seconds (AGENTS.md 4.4.4)
+
+pytest_plugins = ["tests.ui.uiplugin"]
 
 # Qt runs without a screen in the tests; set before anything creates the application object.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

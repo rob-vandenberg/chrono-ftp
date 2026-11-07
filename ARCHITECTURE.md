@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.2). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). No package holds program code yet: the packages exist so that the layers are in place from the start.
+The design as it stands now (version 0.0.3). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). So far `core` holds the colours and `ui` the main window; the other packages exist so that the layers are in place.
 
 ## 1. Goals that shape the design
 
@@ -49,13 +49,14 @@ Each connection reports what it can do after connecting (D-016): the system, the
 
 1. Recursive owner, group and permissions: one `chown -R` or `chmod -R` on the server, after the exact command is shown and confirmed (D-012, D-013).
 2. Rename, move, copy, delete and search: `mv`, `cp -a`, `find` and the like on the server (D-015).
-3. Without a shell: rename, move and delete through the protocol, which is slower; copy, search, the recursive changes, the terminal and compare are not available (D-027).
+3. Without a shell: rename, move and delete through the protocol, which is slower; copy, search, the recursive changes, the terminal and the `sha256sum` step of compare are not available (D-027). Comparing by size and date works on every connection (D-020).
 4. Every path in a shell command goes through `shlex.quote`.
 
 ## 6. The window
 
-1. Left: the local side, neutral, with `QFileSystemModel`. Right: the remote side with a custom model that loads in the background (D-019).
+1. Left: the local side, neutral, with `QFileSystemModel`: folder tree and file list next to each other (`ui/localside.py`). Right: the remote side (`ui/remoteside.py`), plain grey and empty for now, later with a custom model that loads in the background (D-019). The look is set in `ui/theme.py`: Fusion with the colours of `core/colours.py`, so nothing comes from the platform (OR-9).
 2. Both the folder tree and the file list on the right take the connection's colour; text is black or white by the background's brightness, selected rows too (D-007).
 3. Every tab is one connection and keeps its own local and remote folder: a click on another tab changes both sides (D-008).
 4. Tabs have the connection's colour, inactive tabs slightly dimmed, a dropped connection grey, through a small custom tab bar above both sides (D-007, D-008).
 5. The layout follows the reference program; the buttons use Breeze icons (D-028).
+6. A local folder that can't be opened is shown as closed: an empty list and "no access" on the path line. The side watches its folder and every folder above it, so a removal or rename moves it up to the nearest folder that is left.
