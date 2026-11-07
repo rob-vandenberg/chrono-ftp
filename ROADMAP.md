@@ -9,8 +9,8 @@ The milestones and tasks of Chrono FTP. Status: done, next, open, postponed.
 ## Milestone 1: browse with colours
 
 1. Main window with the fixed left and right side: done (0.0.3).
-2. Copy the Breeze icons of D-028, with their licence file: next.
-3. Connection list with colours, connection dialogs: open.
+2. Copy the Breeze icons of D-028, with their licence file: done (0.0.4).
+3. Connection list with colours, connection dialogs: next.
 4. Common connection layer, SSH connection, capability detection: open.
 5. Tabs in the connection's colour, each with its own local and remote folder: open.
 6. FTP connection: open.

@@ -63,9 +63,9 @@ Servers are hostile input: odd file names, broken listings, slow or dropped conn
 3. Network errors, timeouts and permission errors are normal events and handled as such.
 4. Every crash fix comes with a regression test built from the input that caused it.
 
-### 4.3 Everything is a command
+### 4.3 Server work stays out of the window
 
-Every user-visible action is a command in the engine, with an id, parameters and tests. The UI contains no business logic. So an AI agent can drive and test every feature without a screen.
+Anything that touches a server is in `connections` and `transfers`, with tests that need no screen. Pure window actions stay in the window.
 
 ### 4.4 Tests are the gate
 

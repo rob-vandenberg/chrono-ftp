@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-ftp"
-version = "0.0.3"
+version = "0.0.4"
 description = "An open-source two-pane file transfer program for Linux: local on the left, remote on the right, a colour per connection."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -31,7 +31,7 @@ chrono-ftp = "chrono_ftp.ui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-chrono_ftp = ["py.typed"]
+chrono_ftp = ["py.typed", "ui/resources/icons/*.svg", "ui/resources/icons/*.txt"]
 
 [tool.pyrefly]
 preset = "strict"

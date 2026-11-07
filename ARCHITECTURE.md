@@ -1,13 +1,13 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.3). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). So far `core` holds the colours and `ui` the main window; the other packages exist so that the layers are in place.
+The design as it stands now (version 0.0.4). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). So far `core` holds the colours and `ui` the main window; the other packages exist so that the layers are in place.
 
 ## 1. Goals that shape the design
 
 1. **The person always knows where they are.** Left is local, right is remote, a colour means a live connection (D-006, D-007).
 2. **Work on a server happens on the server** (D-012, D-015).
 3. **The window never freezes,** whatever a slow connection does (D-019).
-4. **Testable without a screen.** Every action is an engine command (D-022).
+4. **Server work is testable without a screen** (D-022).
 
 ## 2. Package layout
 
@@ -19,8 +19,8 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 | `config` | The connection list (`~/.config/chrono-ftp/connections.json`), settings, the one-time import of a session list. |
 | `connections` | The common connection layer and its two implementations, SSH and FTP; capability detection. |
 | `transfers` | The transfer queue: `rsync` with a speed limit, falling back to SFTP or FTP; progress. |
-| `engine` | The command registry. Every user action is a command here. |
-| `ui` | PySide6 user interface. Thin: calls engine commands only. |
+| `engine` | What the window asks of connections and transfers; empty for now. |
+| `ui` | PySide6 user interface. Pure window actions live here; server work does not. |
 
 There is no separate command-line program (D-022).
 
@@ -58,5 +58,5 @@ Each connection reports what it can do after connecting (D-016): the system, the
 2. Both the folder tree and the file list on the right take the connection's colour; text is black or white by the background's brightness, selected rows too (D-007).
 3. Every tab is one connection and keeps its own local and remote folder: a click on another tab changes both sides (D-008).
 4. Tabs have the connection's colour, inactive tabs slightly dimmed, a dropped connection grey, through a small custom tab bar above both sides (D-007, D-008).
-5. The layout follows the reference program; the buttons use Breeze icons (D-028).
+5. The layout follows the reference program; the buttons use Breeze icons from `ui/resources/icons/`, loaded by `ui/icons.py`: the text colour of the icon follows the theme, its other colours stay, and a disabled icon is one grey shape (D-028).
 6. A local folder that can't be opened is shown as closed: an empty list and "no access" on the path line. The side watches its folder and every folder above it, so a removal or rename moves it up to the nearest folder that is left.
