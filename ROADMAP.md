@@ -1,0 +1,34 @@
+# ROADMAP.md
+
+The milestones and tasks of Chrono FTP. Status: done, next, open, postponed.
+
+## Milestone 0: project start
+
+1. Repository, documents, rules, layers and first tests: done (0.0.1).
+
+## Milestone 1: browse with colours
+
+1. Main window with the fixed left and right side: next. First carry over the window test plugin of Chrono Mail (`tests/ui/uiplugin.py`), because the 20-second limit of `tests/conftest.py` can't stop a test that waits inside Qt.
+2. Connection list with colours, connection dialogs: open.
+3. Common connection layer, SSH connection, capability detection: open.
+4. Tabs in the connection's colour, each with its own local and remote folder: open.
+5. FTP connection: open.
+
+Result: connect to and browse a real machine, with the colours working.
+
+## Milestone 2: everyday copying
+
+1. Speed test of `rsync` over SSH with a large file, against FTP: open. This comes first, because its result shapes the transfer queue.
+2. Transfer queue with progress and throttling: open.
+3. Remote rename, move, copy and delete: open.
+
+Result: replaces the reference program for everyday copying.
+
+## Milestone 3: the rest of the scope
+
+1. Recursive owner, group and permissions, measured on a throwaway folder with a few thousand files: open.
+2. Search on the remote: open.
+3. Terminal launch: open.
+4. One-time import of a session list: open.
+5. The folder `packaging/` for the first installer: open.
+6. Compare local and remote files: postponed, the first thing to drop.

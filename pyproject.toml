@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chrono-ftp"
+version = "0.0.1"
+description = "An open-source two-pane file transfer program for Linux: local on the left, remote on the right, a colour per connection."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+    "asyncssh>=2.21",
+    "keyring>=25.7",
+    "PySide6>=6.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyrefly>=1.3",
+    "pytest>=9.1",
+    "pytest-qt>=4.5",
+    "import-linter>=2.15",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chrono_ftp = ["py.typed"]
+
+[tool.pyrefly]
+preset = "strict"
+project-includes = ["src", "tests"]
+project-excludes = ["tests/data"]
+search-path = ["src", "."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+faulthandler_timeout = 20  # a test that waits longer prints where every thread waits (tests/conftest.py stops it)
+markers = [
+    "live: talks to a real server (opt-in: pytest -m live)",
+]
+
+[tool.importlinter]
+root_package = "chrono_ftp"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers (ARCHITECTURE.md section 3)"
+type = "layers"
+layers = [
+    "chrono_ftp.ui",
+    "chrono_ftp.engine",
+    "chrono_ftp.transfers",
+    "chrono_ftp.config | chrono_ftp.connections",
+    "chrono_ftp.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only ui may import PySide6"
+type = "forbidden"
+source_modules = [
+    "chrono_ftp.core",
+    "chrono_ftp.config",
+    "chrono_ftp.connections",
+    "chrono_ftp.transfers",
+    "chrono_ftp.engine",
+]
+forbidden_modules = ["PySide6", "shiboken6"]

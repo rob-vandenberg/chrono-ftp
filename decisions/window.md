@@ -1,0 +1,8 @@
+# The window, tabs, colours and the connection list
+
+1. [[D-006]] Left is local, right is remote
+2. [[D-007]] Colours
+3. [[D-008]] Tabs
+4. [[D-017]] Connection list
+5. [[D-019]] The two models
+6. [[D-021]] Import of a session list
