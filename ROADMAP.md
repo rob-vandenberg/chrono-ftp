@@ -30,7 +30,7 @@ Result: replaces the reference program for everyday copying.
 1. Recursive owner, group and permissions, measured on a throwaway folder with a few thousand files: done (0.0.5); 5,000 files took under a tenth of a second on this computer.
 2. Search on the remote: done (0.0.5).
 3. Terminal launch: done (0.0.5).
-4. One-time import of a session list: done (0.0.5), but not yet checked against a real export.
+4. One-time import of a session list: done (0.0.5), checked by the owner with a real export.
 5. The folder `packaging/` for the first installer: open.
 6. Compare local and remote files: done (0.0.6), as Synchronize.
 
@@ -43,7 +43,29 @@ Result: replaces the reference program for everyday copying.
 5. Edit of a server file in the person's own program: done (0.0.6).
 6. Rename, delete and new folder on this computer: done (0.0.6).
 7. Leftovers of a dropped transfer tidied; links in a target tree kept; names that are not valid UTF-8: done (0.0.6).
-8. The connection colour in the terminal: done (0.0.6), not yet seen on screen.
+8. The connection colour in the terminal: done (0.0.6).
 9. The most height for the file lists: one top row, one button row per side, the queue under a separator, hidden when idle unless pinned: done (0.0.7).
 10. One login window with user and password: done (0.0.8).
 11. The colour of a connection is optional, off for a new one: done (0.0.9).
+
+## Milestones 5 to 21: the full counterpart
+
+One milestone per block of the private `FEATURES.md` (D-001, OR-13), in this order:
+
+5. FA, the main window split into modules: open.
+6. FB, transfer options: open.
+7. FC, the queue: open.
+8. FD, masks: open.
+9. FE, hashes and sizes without a shell: open.
+10. FF, synchronize: open.
+11. FG, selection and keys: open.
+12. FH, navigation: open.
+13. FI, tabs and workspaces: open.
+14. FJ, the connection list: open.
+15. FK, SSH options: open.
+16. FL, FTP and server details: open.
+17. FM, Properties and server actions: open.
+18. FN, find and edit: open.
+19. FO, shell tools and keeping a folder up to date: open.
+20. FP, program-wide: open.
+21. FQ, looks: open.

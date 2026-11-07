@@ -37,3 +37,7 @@ User and password in one window; a connection without a user asks before its fir
 ## 0.0.9 (2026-11-07): the colour is optional
 
 A new connection has no colour; a tick in the Connections window switches it on. A live connection without a colour looks like the left side, with a neutral tab and the normal terminal colours; not connected stays plain grey.
+
+## 0.0.10 (2026-11-07): FTP listings without OPTS MLST
+
+The listing asked the server for a list of details first, which a real server refused with 500, and that was read as having no MLSD at all. A refusal of that request is now ignored: the listing goes on, and a server that has the option still sends rights and owner.

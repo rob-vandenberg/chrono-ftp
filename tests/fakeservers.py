@@ -14,9 +14,10 @@ from pyftpdlib.handlers import FTPHandler, TLS_FTPHandler
 from pyftpdlib.servers import FTPServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeservers.py 0.0.5"
+__version__ = "fakeservers.py 0.0.10"
 
 # --- Version history ----------------------------------------------------
+# v0.0.10: An FTP server without the listing option
 # v0.0.5: Initial: a real SSH server and a real FTP server inside the test process
 
 USER: str = "anna"
@@ -84,13 +85,18 @@ def ssh_server(root: Path, shell: bool = True) -> Generator[SshServer]:
 
 
 @contextmanager
-def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT") -> Generator[int]:
+def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False) -> Generator[int]:
     """Real FTP on a free local port; with a certificate it offers TLS. trusted: the person already said yes to plain FTP on this port."""
     authorizer = DummyAuthorizer()
     authorizer.add_user(USER, PASSWORD, str(root), perm=rights)
 
     class Handler(FTPHandler):
-        pass
+        @override
+        def ftp_OPTS(self, line: str) -> None:
+            if refuses_listing_options and line.upper().startswith("MLST"):
+                self.respond("500 Don't know this option")  # some servers offer MLSD and have no such option
+            else:
+                super().ftp_OPTS(line)
 
     class TlsHandler(TLS_FTPHandler):
         pass

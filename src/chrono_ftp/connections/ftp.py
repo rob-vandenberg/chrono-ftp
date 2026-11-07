@@ -18,9 +18,10 @@ from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, LoginRefused, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.6"
+__version__ = "ftp.py 0.0.10"
 
 # --- Version history ----------------------------------------------------
+# v0.0.10: A server without the OPTS MLST option still lists: a refusal of that option is no failure
 # v0.0.6: A name that is not valid UTF-8 keeps its real bytes, so it no longer ends the connection
 # v0.0.5: Initial: ftplib, TLS where the server offers it, MLSD for listings (D-011)
 
@@ -34,6 +35,7 @@ CHANGED_TEXT: str = "This server's certificate has changed since you trusted it,
 NOT_ENCRYPTED_TEXT: str = "This server does not offer encryption, so your password and files would travel readable over the network."
 NO_LONGER_ENCRYPTED_TEXT: str = "This server used to offer encryption and no longer does, so Chrono FTP did not connect."
 NAMES_ENCODING: str = "chrono-ftp-names"
+DETAILS_COMMAND: str = "OPTS MLST type;size;modify;unix.mode;unix.owner;unix.group;"
 SIZE_PATTERN: re.Pattern[str] = re.compile(r"[0-9]{1,18}")
 LOST_TEXT: str = "The connection to the server was lost."
 FTP_ERRORS: tuple[type[BaseException], ...] = (ftplib.Error, OSError, EOFError, ValueError)
@@ -119,6 +121,7 @@ class FtpConnection(RemoteConnection):
         self.encrypted: bool = False
         self.must_encrypt: bool = False
         self._ftp: ftplib.FTP | None = None
+        self._asked: ftplib.FTP | None = None  # the session that was asked for its details
         self._lock: threading.Lock = threading.Lock()  # one control connection does one thing at a time
 
     def _prefix(self) -> str:
@@ -218,6 +221,16 @@ class FtpConnection(RemoteConnection):
         if session is not None:
             session.close()
 
+    def _ask_for_details(self, session: ftplib.FTP) -> None:
+        """Rights and owner often come only when asked for. A server without this option simply sends what it has: that is no failure."""
+        if session is self._asked:
+            return
+        try:
+            session.sendcmd(DETAILS_COMMAND)
+        except ftplib.error_perm:
+            pass  # a passing refusal (4xx) goes up and is asked again next time
+        self._asked = session
+
     def _session(self) -> ftplib.FTP:
         if self._ftp is None:
             raise RemoteActionFailed("The connection is closed.")
@@ -248,7 +261,9 @@ class FtpConnection(RemoteConnection):
     def list_folder(self, path: str) -> list[RemoteEntry]:
         with self._lock:
             try:
-                found = list(self._session().mlsd(path, ["type", "size", "modify", "unix.mode", "unix.owner", "unix.group"]))
+                session = self._session()
+                self._ask_for_details(session)
+                found = list(session.mlsd(path))
             except ssl.SSLError as error:
                 self._drop()  # another certificate on the data connection: nothing on this connection can be trusted
                 raise ConnectionLost(LOST_TEXT) from error

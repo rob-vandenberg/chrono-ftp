@@ -15,9 +15,10 @@ from chrono_ftp.core.errors import ConnectionFailed, RemoteActionFailed
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, self_signed_certificate, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_connections.py 0.0.6"
+__version__ = "test_connections.py 0.0.10"
 
 # --- Version history ----------------------------------------------------
+# v0.0.10: A server without the listing option
 # v0.0.5: Initial: both connections against real servers in the test process
 
 
@@ -343,3 +344,26 @@ def test_a_command_with_a_name_that_is_not_utf8_reaches_the_real_file(tmp_path: 
 
 def test_a_plain_command_is_sent_as_it_is() -> None:
     assert sendable("ls -l") == "ls -l"
+
+
+def test_a_server_without_the_listing_option_still_lists_its_folders(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("text", encoding="utf-8")
+    (tmp_path / "inner").mkdir()
+    with ftp_server(tmp_path, refuses_listing_options=True) as port:
+        connection = FtpConnection(Connection(name="T", host="127.0.0.1", port=port, user=USER, protocol=FTP), PASSWORD)
+        connection.connect()
+        found = {entry.name: entry for entry in connection.list_folder("/")}
+        connection.close()
+    assert found["a.txt"].size == 4 and not found["a.txt"].is_folder
+    assert found["inner"].is_folder
+
+
+def test_a_server_with_the_listing_option_still_gives_the_rights(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("text", encoding="utf-8")
+    (tmp_path / "a.txt").chmod(0o640)
+    with ftp_server(tmp_path) as port:
+        connection = FtpConnection(Connection(name="T", host="127.0.0.1", port=port, user=USER, protocol=FTP), PASSWORD)
+        connection.connect()
+        found = {entry.name: entry for entry in connection.list_folder("/")}
+        connection.close()
+    assert found["a.txt"].permissions.endswith("640")  # the test server has no owner to give, so only the rights are checked

@@ -17,6 +17,7 @@ decision-details/
 
 # hand-over notes, working scripts and notes of the sessions (private)
 HANDOVER.md
+HANDOVER-NEXT-CHAT.md
 scratchpad/
 
 # release scripts (private)
@@ -27,3 +28,6 @@ upload_release.sh
 # the owner's rules and short-term list (private)
 OWNER-RULES.md
 TODO.md
+
+# the feature plan (private)
+FEATURES.md
