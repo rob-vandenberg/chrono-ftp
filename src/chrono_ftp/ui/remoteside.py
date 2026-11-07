@@ -13,9 +13,10 @@ from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, butt
 from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, mask_text, summary_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.7"
+__version__ = "remoteside.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: A connection without a colour looks like the left side
 # v0.0.7: One row of buttons
 # v0.0.6: The shared file list; a path travels as an object, so a name that is not valid UTF-8 stays what it is
 # v0.0.5: The folder tree and file list of a live connection in its colour, loaded in the background (D-007, D-019)
@@ -98,15 +99,22 @@ class RemoteSide(QWidget):
         self.file_list.set_show_hidden(show)
 
     def set_colour(self, colour: str | None) -> None:
-        """colour None: no connection, plain grey. Text and selected rows stay readable on any colour (D-007)."""
-        background = colour or colours.NOT_CONNECTED
-        text = colours.readable_text(background) if colour else colours.ON_NOT_CONNECTED
+        """colour None: no connection, plain grey. Empty: a live connection without a colour, neutral like the left side. Text and selected
+        rows stay readable on any colour (D-007)."""
+        if colour == "":
+            background, text, selected, on_selected = colours.PANEL, colours.TEXT, colours.SELECTION, colours.ON_SELECTION
+        elif colour is None:
+            background, text, selected, on_selected = colours.NOT_CONNECTED, colours.ON_NOT_CONNECTED, colours.ON_NOT_CONNECTED, colours.NOT_CONNECTED
+        else:
+            background, text = colour, colours.readable_text(colour)
+            selected, on_selected = text, background
+        self.file_list.setAlternatingRowColors(colour == "")  # as on the left side
         for view in (self.tree, self.file_list):
             palette = QPalette(view.palette())
             palette.setColor(QPalette.ColorRole.Base, QColor(background))
             palette.setColor(QPalette.ColorRole.Text, QColor(text))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor(text))
-            palette.setColor(QPalette.ColorRole.HighlightedText, QColor(background))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(selected))
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor(on_selected))
             view.setPalette(palette)
 
     def _button_pressed(self, name: str) -> None:

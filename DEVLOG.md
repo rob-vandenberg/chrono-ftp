@@ -33,3 +33,7 @@ One top row and one button row per side; the queue under a separator, hidden whe
 ## 0.0.8 (2026-11-07): the login window
 
 User and password in one window; a connection without a user asks before its first try; a typed user is kept once the server accepted it.
+
+## 0.0.9 (2026-11-07): the colour is optional
+
+A new connection has no colour; a tick in the Connections window switches it on. A live connection without a colour looks like the left side, with a neutral tab and the normal terminal colours; not connected stays plain grey.

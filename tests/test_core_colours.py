@@ -7,9 +7,10 @@ from chrono_ftp.engine.terminal import terminal_arguments
 from chrono_ftp.core.connection import Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_core_colours.py 0.0.6"
+__version__ = "test_core_colours.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: The optional colour
 # v0.0.6: Follows the shared file list and the daily-use work
 # v0.0.5: Initial
 
@@ -26,7 +27,7 @@ def test_a_dimmed_colour_is_darker() -> None:
 def test_the_terminal_opens_on_the_right_port_with_the_key_in_the_folder() -> None:
     connection = Connection(name="T", host="host.example.com", user="anna", port=2022, key_file="/keys/id")
     arguments = terminal_arguments(connection, "/srv/my site")
-    assert arguments[0] == "konsole" and arguments[3:5] == ["-e", "ssh"]
+    assert arguments[:3] == ["konsole", "-e", "ssh"]  # no colour: the normal colours of the terminal
     assert arguments[arguments.index("ssh"):].count("-p") == 1 and "2022" in arguments
     assert arguments[arguments.index("-i") + 1] == "/keys/id"
     assert "anna@host.example.com" in arguments

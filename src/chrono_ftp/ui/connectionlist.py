@@ -6,6 +6,7 @@ from dataclasses import replace
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
@@ -29,9 +30,10 @@ from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_
 from chrono_ftp.core.errors import CredentialError
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.8"
+__version__ = "connectionlist.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: A tick switches the colour of a connection on; off for a new one
 # v0.0.8: A user name kept after a login shows here
 # v0.0.5: Initial: the saved connections, each with its colour; the fields of the selected one (D-017)
 
@@ -79,6 +81,7 @@ class ConnectionList(QDialog):
         self.browse_button = QPushButton("Browse")
         self.start_folder = QLineEdit()
         self.colour_button = QPushButton("Choose colour")
+        self.use_colour = QCheckBox("Use a colour")
         self.new_button = QPushButton("New")
         self.save_button = QPushButton("Save")
         self.delete_button = QPushButton("Delete")
@@ -96,7 +99,11 @@ class ConnectionList(QDialog):
         form.addRow("Password", self.password)
         form.addRow("Key file", key_row)
         form.addRow("Starting folder", self.start_folder)
-        form.addRow("Colour", self.colour_button)
+        colour_row = QHBoxLayout()
+        colour_row.addWidget(self.use_colour)
+        colour_row.addWidget(self.colour_button)
+        colour_row.addStretch(1)
+        form.addRow("Colour", colour_row)
         buttons = QHBoxLayout()
         for button in (self.new_button, self.save_button, self.delete_button, self.import_button):
             buttons.addWidget(button)
@@ -116,6 +123,7 @@ class ConnectionList(QDialog):
         self.host.textChanged.connect(self._update_buttons)
         self.browse_button.clicked.connect(self._browse)
         self.colour_button.clicked.connect(self._choose_colour)
+        self.use_colour.toggled.connect(self.colour_button.setEnabled)
         self.new_button.clicked.connect(self.clear_fields)
         self.save_button.clicked.connect(self.save)
         self.delete_button.clicked.connect(self.delete)
@@ -141,7 +149,7 @@ class ConnectionList(QDialog):
         self.list.blockSignals(True)
         self.list.clear()
         for connection in sorted(self.connections, key=lambda item: item.name.casefold()):
-            item = QListWidgetItem(colour_block(connection.colour), connection.name)
+            item = QListWidgetItem(colour_block(connection.colour or colours.NO_COLOUR_TAB), connection.name)
             item.setData(Qt.ItemDataRole.UserRole, connection.name)
             self.list.addItem(item)
         self.list.blockSignals(False)
@@ -180,8 +188,11 @@ class ConnectionList(QDialog):
             self.port.setValue(DEFAULT_PORTS[protocol])
 
     def _set_colour(self, colour: str) -> None:
-        self.colour = colour
-        self.colour_button.setIcon(colour_block(colour))
+        """Empty: no colour. The button then shows the first colour, so ticking the box offers one straight away."""
+        self.use_colour.setChecked(bool(colour))
+        self.colour_button.setEnabled(bool(colour))
+        self.colour = colour or colours.FIRST_CONNECTION
+        self.colour_button.setIcon(colour_block(self.colour))
 
     def _update_buttons(self) -> None:
         self.save_button.setEnabled(bool(self.name.text().strip() and self.host.text().strip()))
@@ -197,7 +208,7 @@ class ConnectionList(QDialog):
         self.password.setPlaceholderText("")
         self.protocol.setCurrentIndex(self.protocol.findData(SFTP))
         self.port.setValue(DEFAULT_PORTS[SFTP])
-        self._set_colour(colours.FIRST_CONNECTION)
+        self._set_colour("")
         self._update_buttons()
 
     def _browse(self) -> None:
@@ -218,7 +229,7 @@ class ConnectionList(QDialog):
             port=self.port.value(),
             protocol=str(self.protocol.currentData()),
             key_file=self.key_file.text().strip(),
-            colour=self.colour,
+            colour=self.colour if self.use_colour.isChecked() else "",
             start_folder=self.start_folder.text().strip(),
         )
 

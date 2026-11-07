@@ -1,11 +1,10 @@
 from dataclasses import dataclass
 
-from chrono_ftp.core import colours
-
 # --- Version ------------------------------------------------------------
-__version__ = "connection.py 0.0.5"
+__version__ = "connection.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: A connection has no colour unless the person gives it one
 # v0.0.5: Initial: a saved connection (D-017)
 
 SFTP: str = "sftp"
@@ -24,5 +23,5 @@ class Connection:
     port: int = DEFAULT_PORTS[SFTP]
     protocol: str = SFTP
     key_file: str = ""
-    colour: str = colours.FIRST_CONNECTION
+    colour: str = ""  # empty: this connection has no colour of its own (D-007)
     start_folder: str = ""

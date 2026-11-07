@@ -11,9 +11,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.5"
+__version__ = "test_ui_connectionlist.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: The optional colour
 # v0.0.5: Initial
 
 
@@ -129,6 +130,7 @@ def test_a_port_of_your_own_stays_when_the_protocol_changes(qtbot: QtBot) -> Non
 def test_the_chosen_colour_is_saved(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     window = window_with(qtbot)
     monkeypatch.setattr(QColorDialog, "getColor", pick_colour)
+    window.use_colour.setChecked(True)
     window.colour_button.click()
     fill(window)
     window.save()
@@ -175,3 +177,29 @@ def test_a_damaged_list_is_told_calmly_and_the_window_opens(qtbot: QtBot, monkey
     qtbot.addWidget(window)
     assert window.list.count() == 0
     assert len(told) == 1 and "kept" in told[0]
+
+
+def test_a_new_connection_has_no_colour_and_its_button_is_greyed(qtbot: QtBot) -> None:
+    window = window_with(qtbot)
+    assert not window.use_colour.isChecked()
+    assert not window.colour_button.isEnabled()
+    fill(window)
+    window.save()
+    assert connections.load().connections[0].colour == ""
+
+
+def test_the_tick_switches_the_colour_on_and_off_again(qtbot: QtBot) -> None:
+    window = window_with(qtbot, Connection(name="Shop", host="h", colour="#aa3355"))
+    window.list.setCurrentRow(0)
+    assert window.use_colour.isChecked() and window.colour_button.isEnabled()
+    window.use_colour.setChecked(False)
+    window.save()
+    assert connections.load().connections[0].colour == ""
+
+
+def test_a_connection_with_a_colour_after_one_without_shows_its_own_state(qtbot: QtBot) -> None:
+    window = window_with(qtbot, Connection(name="A", host="h"), Connection(name="B", host="h", colour="#aa3355"))
+    window.list.setCurrentRow(1)
+    assert window.use_colour.isChecked()
+    window.list.setCurrentRow(0)
+    assert not window.use_colour.isChecked() and not window.colour_button.isEnabled()

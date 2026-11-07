@@ -7,9 +7,10 @@ from chrono_ftp.core import colours
 from chrono_ftp.core.connection import Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "terminal.py 0.0.6"
+__version__ = "terminal.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: A connection without a colour opens with the normal terminal colours
 # v0.0.6: The terminal has the colour of its connection (D-007)
 # v0.0.5: Initial: a terminal on the server, in the folder shown (D-018)
 
@@ -47,4 +48,5 @@ def terminal_arguments(connection: Connection, folder: str) -> list[str]:
     ssh = ["ssh", "-t", "-p", str(connection.port)]
     if connection.key_file:
         ssh += ["-i", connection.key_file]
-    return [TERMINAL_PROGRAM, "-p", f"ColorScheme={scheme_for(connection.colour)}", "-e", *ssh, "--", login, f"cd {shlex.quote(folder)} && exec \"$SHELL\" -l"]
+    colours_of_terminal = ["-p", f"ColorScheme={scheme_for(connection.colour)}"] if connection.colour else []
+    return [TERMINAL_PROGRAM, *colours_of_terminal, "-e", *ssh, "--", login, f"cd {shlex.quote(folder)} && exec \"$SHELL\" -l"]

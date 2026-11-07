@@ -2,9 +2,10 @@
 written as "#rrggbb". The colours a person chooses for a connection are theirs: they are kept with the connection, not in this file."""
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.0.5"
+__version__ = "colours.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: The tab of a connection without a colour
 # v0.0.5: The colour a new connection starts with
 # v0.0.3: Initial: the neutral colours of the window and the grey of no connection
 
@@ -28,7 +29,8 @@ BEVEL_SHADOW: str = "#0c0e0f"
 NOT_CONNECTED: str = "#8a8f94"  # the plain grey of the right side: a colour always means a live connection (OR-3)
 ON_NOT_CONNECTED: str = "#101214"
 
-FIRST_CONNECTION: str = "#2e7d4f"  # what a new connection starts with, until the person chooses its colour
+FIRST_CONNECTION: str = "#2e7d4f"  # what the colour button offers first
+NO_COLOUR_TAB: str = "#3a4146"  # the tab of a live connection without a colour of its own
 DARK_TEXT: str = "#101214"  # the text on a light connection colour
 LIGHT_TEXT: str = "#ffffff"  # the text on a dark connection colour
 DIM_FACTOR: float = 0.72  # an inactive tab is slightly dimmed

@@ -29,9 +29,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.8"
+__version__ = "test_ui_sessions.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: The optional colour
 # v0.0.8: The login window
 # v0.0.6: Drag and drop, edit, odd names, the buttons of the sides, the status bar, synchronize
 # v0.0.5: Initial: the real window against real servers in the test process
@@ -1447,3 +1448,14 @@ def test_another_login_on_the_same_server_is_another_place(qtbot: QtBot, window:
     assert not _same_server(first, second)
     first.worker.stop()
     second.worker.stop()
+
+
+def test_a_live_connection_without_a_colour_looks_like_the_left_side_and_drops_to_grey(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    with ssh_server(tmp_path) as server:
+        trust_server(server)
+        connected(qtbot, window, replace(ssh_settings(server), colour=""))
+        assert base_of(window) == QColor(colours.PANEL)
+        assert window.tab_bar.background_of(0) == colours.NO_COLOUR_TAB
+        window._mark_lost(window.sessions[0])
+        assert base_of(window) == QColor(colours.NOT_CONNECTED)
+        assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED

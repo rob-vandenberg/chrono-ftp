@@ -5,9 +5,10 @@ from chrono_ftp.core import colours
 from chrono_ftp.core.connection import FTP, SFTP
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config_sessionimport.py 0.0.5"
+__version__ = "test_config_sessionimport.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: The optional colour
 # v0.0.5: Initial, with made-up data
 
 SAMPLE: str = r"""[Configuration]
@@ -57,7 +58,7 @@ def test_an_ftp_session_gets_the_ftp_port(tmp_path: Path) -> None:
 
 def test_bad_numbers_give_the_standard_values(tmp_path: Path) -> None:
     bad = [item for item in sessionimport.read_sessions(write(tmp_path, SAMPLE)) if item.name == "Bad Port"][0]
-    assert bad.port == 22 and bad.colour == colours.FIRST_CONNECTION
+    assert bad.port == 22 and bad.colour == ""
 
 
 def test_a_file_that_is_no_session_list_gives_nothing(tmp_path: Path) -> None:

@@ -7,9 +7,10 @@ from chrono_ftp.config import connections
 from chrono_ftp.core.connection import FTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config_connections.py 0.0.8"
+__version__ = "test_config_connections.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: The optional colour
 # v0.0.8: A user name the server accepted
 # v0.0.5: Initial
 
@@ -105,3 +106,8 @@ def test_a_list_with_a_damaged_entry_is_left_as_it_is_by_a_kept_user() -> None:
     path.write_text(damaged, encoding="utf-8")
     connections.remember_user("A", "anna")
     assert path.read_text(encoding="utf-8") == damaged
+
+
+def test_a_connection_without_a_colour_stays_without_one_and_a_colour_stays_a_colour() -> None:
+    connections.save([Connection(name="A", host="a"), Connection(name="B", host="b", colour="#aa3355")])
+    assert [item.colour for item in connections.load().connections] == ["", "#aa3355"]

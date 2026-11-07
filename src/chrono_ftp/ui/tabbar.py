@@ -7,9 +7,10 @@ from PySide6.QtWidgets import QStyleOptionTab, QStylePainter, QTabBar, QWidget
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "tabbar.py 0.0.5"
+__version__ = "tabbar.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: A live connection without a colour has a neutral tab
 # v0.0.5: Initial: each tab in its connection's colour, inactive tabs dimmed, a dropped connection grey (D-007, D-008)
 
 TEXT_MARGIN: int = 8
@@ -24,13 +25,13 @@ class ConnectionTabBar(QTabBar):
         self.setExpanding(False)
 
     def set_colour(self, index: int, colour: str | None) -> None:
-        """colour None is a dropped connection: grey, because a colour always means a live connection (OR-3)."""
+        """colour None is a dropped connection: grey. An empty colour is a live connection without a colour of its own (D-007)."""
         self.setTabData(index, colour)
         self.update()
 
     def background_of(self, index: int) -> str:
         colour: object = self.tabData(index)
-        base = colour if isinstance(colour, str) else colours.NOT_CONNECTED
+        base = (colour or colours.NO_COLOUR_TAB) if isinstance(colour, str) else colours.NOT_CONNECTED
         return base if index == self.currentIndex() else colours.dimmed(base)
 
     @override

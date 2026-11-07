@@ -4,13 +4,13 @@ from pathlib import Path
 from typing import override
 from urllib.parse import unquote
 
-from chrono_ftp.core import colours
 from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_PORT, SFTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "sessionimport.py 0.0.5"
+__version__ = "sessionimport.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: A session without a colour stays without one
 # v0.0.5: Initial: the one-time import of an exported session list (D-021); the layout of the file is from memory, not checked yet against a real export
 
 IMPORT_BUTTON_TEXT: str = "Import from WinSCP"
@@ -31,10 +31,10 @@ def _number(text: str) -> int | None:
 
 
 def colour_from(text: str) -> str:
-    """The file keeps a colour as one number with blue first; a number that is no colour gives the starting colour."""
+    """The file keeps a colour as one number with blue first; a number that is no colour gives no colour."""
     number = _number(text)
     if number is None or number > 0xFFFFFF:
-        return colours.FIRST_CONNECTION
+        return ""
     blue, green, red = (number >> 16) & 255, (number >> 8) & 255, number & 255
     return f"#{red:02x}{green:02x}{blue:02x}"
 
@@ -59,6 +59,6 @@ def read_sessions(path: Path) -> list[Connection]:
         port = _number(values.get("PortNumber", "")) or DEFAULT_PORTS[protocol]
         if not LOWEST_PORT <= port <= HIGHEST_PORT:
             port = DEFAULT_PORTS[protocol]
-        colour = colour_from(values["Color"]) if "Color" in values else colours.FIRST_CONNECTION
+        colour = colour_from(values["Color"]) if "Color" in values else ""
         found.append(Connection(name=name, host=host, user=values.get("UserName", "").strip(), port=port, protocol=protocol, key_file=unquote(values.get("PublicKeyFile", "")).strip(), colour=colour, start_folder=unquote(values.get("RemoteDirectory", "")).strip()))
     return found

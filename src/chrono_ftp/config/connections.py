@@ -8,9 +8,10 @@ from typing import cast
 from chrono_ftp.core.connection import DEFAULT_PORTS, HIGHEST_PORT, LOWEST_PORT, PROTOCOLS, SFTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "connections.py 0.0.8"
+__version__ = "connections.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: An empty colour stays empty
 # v0.0.8: A user name the server accepted is kept (D-040)
 # v0.0.5: Initial: the connection list in one file, written atomically; a damaged file is kept aside (D-017, OR-15)
 
@@ -51,8 +52,7 @@ def _connection_from(entry: object) -> Connection | None:
         if not isinstance(value, str):
             return None
         texts[field] = value
-    start = Connection(name=name, host=host, user=texts["user"], port=port, protocol=protocol, key_file=texts["key_file"], start_folder=texts["start_folder"])
-    return start if not texts["colour"] else Connection(**{**asdict(start), "colour": texts["colour"]})
+    return Connection(name=name, host=host, user=texts["user"], port=port, protocol=protocol, key_file=texts["key_file"], colour=texts["colour"], start_folder=texts["start_folder"])
 
 
 def _set_aside(path: Path) -> Path | None:
