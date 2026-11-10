@@ -35,9 +35,10 @@ from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.21"
+__version__ = "connectionlist.py 0.0.25"
 
 # --- Version history ----------------------------------------------------
+# v0.0.25: Connect with unsaved changes asks "Save changes?" first: Save, Don't Save or Cancel
 # v0.0.21: An eye in the password field while it holds typed text
 # v0.0.20: The labels of the fields keep the style's margin from the splitter again
 # v0.0.19: Import… and Export… next to each other on the left
@@ -62,6 +63,7 @@ IMPORT_TEXT: str = "Import…"
 EXPORT_TEXT: str = "Export…"
 EXPORT_LATER_TEXT: str = "Export comes in a later version."
 COPY_NAME: str = "{name} (copy)"
+SAVE_CHANGES_TEXT: str = "Save changes to {name}?"
 NEXT_COPY_NAME: str = "{name} (copy {number})"
 PROTOCOL_LABELS: dict[str, str] = {SFTP: "SFTP", FTP: "FTP"}
 
@@ -382,8 +384,30 @@ class ConnectionList(QDialog):
         self._fill_list()
         QMessageBox.information(self, WINDOW_TITLE, box_text(f"{len(new)} connections were added."))
 
+    def has_changes(self) -> bool:
+        """The fields differ from the selected connection as saved, or a password was typed."""
+        connection = self.selected()
+        return connection is not None and (self.from_fields() != connection or bool(self.password.text()))
+
     def _connect(self, *_ignored: object) -> None:
         connection = self.selected()
+        if connection is not None and self.has_changes():
+            answer = QMessageBox.question(
+                self,
+                WINDOW_TITLE,
+                box_text(SAVE_CHANGES_TEXT.format(name=connection.name)),
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if answer == QMessageBox.StandardButton.Save:
+                self.save()
+                if self.has_changes():
+                    return  # not saved (a name already taken was told): the window stays, the edits too
+                connection = self.selected()
+            elif answer == QMessageBox.StandardButton.Discard:
+                self._row_changed()  # the fields show the saved connection again
+            else:
+                return
         if connection is not None:
             self.connect_requested.emit(connection)
             self.hide()

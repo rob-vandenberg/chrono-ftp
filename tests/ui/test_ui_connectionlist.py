@@ -11,9 +11,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.20"
+__version__ = "test_ui_connectionlist.py 0.0.25"
 
 # --- Version history ----------------------------------------------------
+# v0.0.25: Connect with unsaved changes asks Save changes?: Save, Don't Save, Cancel; none without changes
 # v0.0.20: The labels of the fields are not against the splitter
 # v0.0.19: Export… stands right next to Import…
 # v0.0.18: The buttons under the list and under the fields stand on one line
@@ -282,3 +283,67 @@ def test_the_labels_of_the_fields_are_not_against_the_splitter(qtbot: QtBot) -> 
     assert fields is not None
     assert window.name.parentWidget() is fields
     assert min(child.geometry().left() for child in fields.findChildren(QLabel)) >= 6
+
+
+def answering(button: QMessageBox.StandardButton, asked: list[str]) -> Callable[..., QMessageBox.StandardButton]:
+    def answer(*args: object) -> QMessageBox.StandardButton:
+        asked.append(str(args[2]))
+        return button
+
+    return answer
+
+
+def edited_window(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, button: QMessageBox.StandardButton, asked: list[str]) -> tuple[ConnectionList, list[Connection]]:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
+    window.list.setCurrentRow(0)
+    window.host.setText("new.example.com")
+    monkeypatch.setattr(QMessageBox, "question", answering(button, asked))
+    handed: list[Connection] = []
+    window.connect_requested.connect(handed.append)
+    return window, handed
+
+
+def test_connect_with_changes_and_save_saves_then_connects(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    window, handed = edited_window(qtbot, monkeypatch, QMessageBox.StandardButton.Save, asked)
+    window.connect_button.click()
+    assert len(asked) == 1 and "Save changes to Shop?" in asked[0]
+    assert connections.load().connections[0].host == "new.example.com"
+    assert [connection.host for connection in handed] == ["new.example.com"]
+
+
+def test_connect_with_changes_and_dont_save_connects_with_the_saved_one(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    window, handed = edited_window(qtbot, monkeypatch, QMessageBox.StandardButton.Discard, asked)
+    window.connect_button.click()
+    assert connections.load().connections[0].host == "shop.example.com"
+    assert [connection.host for connection in handed] == ["shop.example.com"]
+    assert window.host.text() == "shop.example.com"
+
+
+def test_connect_with_changes_and_cancel_changes_nothing(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    window, handed = edited_window(qtbot, monkeypatch, QMessageBox.StandardButton.Cancel, asked)
+    window.connect_button.click()
+    assert handed == []
+    assert window.host.text() == "new.example.com"
+    assert connections.load().connections[0].host == "shop.example.com"
+
+
+def test_a_typed_password_counts_as_a_change(qtbot: QtBot) -> None:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
+    window.list.setCurrentRow(0)
+    window.password.setText("typed")
+    assert window.has_changes()
+
+
+def test_connect_without_changes_asks_nothing(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
+    window.list.setCurrentRow(0)
+    asked: list[str] = []
+    monkeypatch.setattr(QMessageBox, "question", answering(QMessageBox.StandardButton.Cancel, asked))
+    handed: list[Connection] = []
+    window.connect_requested.connect(handed.append)
+    window.connect_button.click()
+    assert asked == []
+    assert len(handed) == 1

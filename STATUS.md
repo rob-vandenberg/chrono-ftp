@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.24: the tabs and New Tab share one centre line.
+Version 0.0.25: one Chrono FTP at a time: a second start brings the running one to the front (D-051); opening a connection that already has a tab switches to it; Connect with unsaved changes in the connections window asks "Save changes?" first.
+
+Before that, 0.0.24: the tabs and New Tab share one centre line.
 
 Before that, 0.0.23: the icons of the side bars (walking through folders and the actions of each side) are 24 pixels instead of 18, drawn at that size.
 

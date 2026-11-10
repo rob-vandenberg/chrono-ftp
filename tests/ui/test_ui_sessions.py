@@ -38,9 +38,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.13"
+__version__ = "test_ui_sessions.py 0.0.25"
 
 # --- Version history ----------------------------------------------------
+# v0.0.25: A connection that already has a tab switches to it
 # v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
 # v0.0.12: Uploads, downloads and drops answer the transfer window, which must really come with the right folder; a file that is there
 #          already gets the overwrite question; Synchronize asks it too, with the default options; after a drop the window comes once
@@ -1546,3 +1547,19 @@ def test_the_path_of_a_copy_with_unsent_changes_is_shown_whole_and_fits_the_scre
     room = (screen.availableGeometry().width() if screen is not None else 1024) * NAME_SHARE
     path_lines = [line for line in text.split("\n") if line and " " not in line]
     assert len(path_lines) > 1 and all(window.fontMetrics().horizontalAdvance(line) <= room for line in path_lines)
+
+
+def test_opening_a_connection_that_has_a_tab_switches_to_it(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    one, two = tmp_path / "one", tmp_path / "two"
+    for folder in (one, two):
+        folder.mkdir()
+    with ssh_server(one) as first, ssh_server(two) as second:
+        trust_server(first)
+        trust_server(second)
+        connected(qtbot, window, ssh_settings(first, "Shop", GREEN))
+        connected(qtbot, window, ssh_settings(second, "Other", MAGENTA))
+        assert window.tab_bar.currentIndex() == 1
+        window.open_connection(ssh_settings(first, "Shop", GREEN))
+        assert window.tab_bar.count() == 2
+        assert len(window.sessions) == 2
+        assert window.tab_bar.currentIndex() == 0

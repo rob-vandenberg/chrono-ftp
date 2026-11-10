@@ -24,9 +24,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.16"
+__version__ = "windowtabs.py 0.0.25"
 
 # --- Version history ----------------------------------------------------
+# v0.0.25: A connection that already has a tab switches to it; a second start of the program brings the window to the front
 # v0.0.16: Also with its splitter where it was
 # v0.0.15: The connections window opens with the size and place it had last time
 # v0.0.13: Closing a tab also stops its paused transfers, and counts every transfer of the tab whatever connection it holds; after a
@@ -58,7 +59,18 @@ class TabsPart(WindowBase):
         self.connection_list.show()
         self.connection_list.raise_()
 
+    def come_forward(self) -> None:
+        """Another start of Chrono FTP: this window comes to the front instead (D-051)."""
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def open_connection(self, connection: Connection) -> None:
+        for index, open_session in enumerate(self.sessions):
+            if open_session.connection.name == connection.name:
+                self.tab_bar.setCurrentIndex(index)  # already open: its tab, never a second one
+                return
         session = Session(connection, Worker(self.bridge.deliver), self.local_side.folder)
         self.sessions.append(session)
         index = self.tab_bar.addTab(connection.name)

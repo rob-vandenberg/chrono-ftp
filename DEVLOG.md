@@ -107,3 +107,7 @@ The icons of the navigation and action bars of both sides are 24 pixels instead 
 ## 0.0.24 (2026-11-10): the tabs and New Tab on one line
 
 The tab bar had a fixed height of two text lines and drew its tabs at its top, while New Tab stood centred in the row, so New Tab sat lower than the tabs. The tab bar now has its own height and stands centred in the row; the row keeps the height of two lines. A test checks that a tab and New Tab share one centre line.
+
+## 0.0.25 (2026-11-10): one Chrono FTP, one tab per connection, and Save changes?
+
+A second start of Chrono FTP brings the running one to the front through a local socket per user and ends; a socket left behind by a crash is removed (D-051). A connection that already has a tab is switched to instead of opened again. Connect in the connections window with unsaved changes, or a typed password, asks "Save changes to …?": Save saves and connects, Don't Save connects with the saved connection and shows it again, Cancel changes nothing. Tests for each.
