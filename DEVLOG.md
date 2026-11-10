@@ -67,3 +67,7 @@ Still open: the known limits of the transfers in `STATUS.md`; the live test on t
 Chrono FTP has its own icon, made by the owner in the style of the Chrono programs: a blue square, a white folder with the letters FTP and the orange clock. The program ships it (`src/chrono_ftp/ui/resources/chrono-ftp.svg`, in the package data) and sets it for every window, the taskbar and Alt+Tab; the windows tell the desktop they belong to the start-menu entry `chrono-ftp`. A test checks that the icon draws its blue, white and orange.
 
 Still open: the first installer must install the icon (`packaging/` does not exist yet).
+
+## 0.0.15 (2026-11-10): the connections window keeps its size and place
+
+The size and place of the connections window are kept in the window file with the main window's sizes, when the main window closes; a run that does not open it keeps the place it had. A saved place on a screen that is gone is brought back onto a screen by Qt. Two tests: after a restart, and after a run without the window.

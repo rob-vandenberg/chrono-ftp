@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QFile, QItemSelectionModel, QMimeData, QPointF, Qt, QUrl
+from PySide6.QtCore import QByteArray, QFile, QItemSelectionModel, QMimeData, QPointF, QRect, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QDropEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialogButtonBox, QMessageBox, QPushButton, QToolBar
@@ -20,9 +20,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.13"
+__version__ = "test_ui_filelist.py 0.0.15"
 
 # --- Version history ----------------------------------------------------
+# v0.0.15: The connections window opens with the size and place it had last time, also after a run without it
 # v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
 # v0.0.11: Imports from the split main window
 # v0.0.8: The login window
@@ -552,3 +553,30 @@ def test_the_login_window_has_room(qtbot: QtBot) -> None:
     dialog = shown_login(qtbot, "anna")
     assert dialog.width() >= WIDTH
     assert dialog.password.width() > WIDTH // 2
+
+
+def connection_list_of(window: MainWindow) -> QRect:
+    window.show_connection_list()
+    assert window.connection_list is not None
+    return window.connection_list.geometry()
+
+
+def test_the_connections_window_opens_where_it_was_with_its_size_after_a_restart(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    window.show_connection_list()
+    assert window.connection_list is not None
+    window.connection_list.setGeometry(QRect(40, 30, 600, 450))
+    placed = window.connection_list.geometry()
+    window.close()
+    assert connection_list_of(shown_window(qtbot)) == placed
+
+
+def test_the_connections_window_keeps_its_place_after_a_run_that_did_not_open_it(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    window.show_connection_list()
+    assert window.connection_list is not None
+    window.connection_list.setGeometry(QRect(30, 50, 620, 470))
+    placed = window.connection_list.geometry()
+    window.close()
+    shown_window(qtbot).close()
+    assert connection_list_of(shown_window(qtbot)) == placed

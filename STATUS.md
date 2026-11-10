@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.14: the program icon. Chrono FTP has its own icon (a folder with FTP and the orange clock of the Chrono programs, `src/chrono_ftp/ui/resources/chrono-ftp.svg`) on every window, the taskbar and Alt+Tab; the windows belong to the start-menu entry `chrono-ftp`.
+Version 0.0.15: the connections window opens with the size and place it had last time, also after a run in which it was not opened.
+
+Before that, 0.0.14: the program icon. Chrono FTP has its own icon (a folder with FTP and the orange clock of the Chrono programs, `src/chrono_ftp/ui/resources/chrono-ftp.svg`) on every window, the taskbar and Alt+Tab; the windows belong to the start-menu entry `chrono-ftp`.
 
 Before that, 0.0.13: block FC, the queue. Every item can be paused and resumed without losing what arrived, moved, run now, retried where it can continue, stopped, deleted and given a speed limit of its own that holds at once; done items leave the list after a while, and an error goes on or pauses the queue, as Settings say (D-046). A choice in the queue says what happens when it is done: disconnect, close Chrono FTP, suspend or shut down, once, after a countdown that can be cancelled, and never while edited files are not on the server yet (D-047). Several items run at once ("Transfers at once", default 2), never two on the same place, one question at a time, the speed limit shared, and a server that takes no more logins makes an item wait calmly instead of failing (D-048). A large file can go over several connections at once, as one item, where the person chooses it (D-049).
 

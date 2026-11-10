@@ -5,6 +5,7 @@ import time
 from dataclasses import replace
 from typing import override
 
+from PySide6.QtCore import QByteArray
 from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.config import connections as saved_connections
@@ -19,13 +20,14 @@ from chrono_ftp.transfers.queue import LINE, State
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.session import Session
-from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
+from chrono_ftp.ui.windowbase import CONNECTION_LIST_SIZE, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.13"
+__version__ = "windowtabs.py 0.0.15"
 
 # --- Version history ----------------------------------------------------
+# v0.0.15: The connections window opens with the size and place it had last time
 # v0.0.13: Closing a tab also stops its paused transfers, and counts every transfer of the tab whatever connection it holds; after a
 #          reconnect the tab's transfers that are still to run, or may run again, go over the new connection; "1 transfer ... is"
 # v0.0.12: Names in message boxes are shown as written, never read as HTML; the paths of unsent copies are in the box's details
@@ -46,6 +48,8 @@ class TabsPart(WindowBase):
     def show_connection_list(self) -> None:
         if self.connection_list is None:
             self.connection_list = ConnectionList(self)
+            saved = self.saved_sizes.get(CONNECTION_LIST_SIZE, "")
+            self.connection_list.restoreGeometry(QByteArray.fromBase64(saved.encode("ascii", "replace")))  # nothing or a damaged value: the default size stays
             self.connection_list.connect_requested.connect(self.open_connection)
         self.connection_list.show()
         self.connection_list.raise_()

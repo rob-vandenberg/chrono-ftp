@@ -33,9 +33,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.13"
+__version__ = "mainwindow.py 0.0.15"
 
 # --- Version history ----------------------------------------------------
+# v0.0.15: The connections window keeps its size and place (saved_sizes)
 # v0.0.13: The queue's buttons, its choice when done, and the power of the computer (FC-02 to FC-04); a paused transfer is not finished;
 #          the toolbar's Stop is Stop All, as the queue has its own Stop for the selected items; closing chosen as the step after the
 #          queue asks nothing when nothing is left unsent; "1 transfer is not finished"; the mark of a step chosen for when the queue
@@ -75,6 +76,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.countdown = None
         self.closing_when_done = False
         self.connection_list = None
+        self.saved_sizes = {}
         self.tab_bar = ConnectionTabBar()
         self.tab_bar.setFixedHeight(self.fontMetrics().height() * EMPTY_TAB_BAR_LINES)
         self.new_tab_button = QToolButton()

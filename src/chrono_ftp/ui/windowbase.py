@@ -22,9 +22,10 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.13"
+__version__ = "windowbase.py 0.0.15"
 
 # --- Version history ----------------------------------------------------
+# v0.0.15: The name under which the size and place of the connections window are kept
 # v0.0.13: The power of the computer and the countdown after the queue (FC-04); the queue's own buttons and settings are shared;
 #          whether closing was chosen as the step after the queue; the tab a job belongs to
 # v0.0.12: _add_job takes the options of a transfer and the answers its action shares; _failed is shared; the jobs whose end was shown;
@@ -49,6 +50,7 @@ CENTRE_MARGIN: int = 2
 GENERAL_ICON_SIZE: int = 18
 QUEUE_LINGER_MILLISECONDS: int = 5000  # the queue stays this long after the last transfer, so the result can be seen
 HIGHEST_QUEUE_HEIGHT: int = 4000  # a number from a file is input
+CONNECTION_LIST_SIZE: str = "connection_list"  # the size and place of the connections window in the window file
 EDIT_SETTLE_MILLISECONDS: int = 500  # a program saves in steps: the copy is sent when it has settled
 EDIT_WAIT_TRIES: int = 20  # a copy that stays away this often was removed
 SETTINGS_NOT_KEPT_TEXT: str = "These settings apply now, but could not be kept for next time."
@@ -65,6 +67,7 @@ class WindowBase(QMainWindow):
     shown: Session | None
     queue: TransferQueue
     connection_list: ConnectionList | None
+    saved_sizes: dict[str, str]  # the window file as it was read at the start
     tab_bar: ConnectionTabBar
     new_tab_button: QToolButton
     top_row: QWidget
