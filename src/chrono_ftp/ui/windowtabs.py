@@ -20,11 +20,13 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
+from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.11"
+__version__ = "windowtabs.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Names in message boxes are shown as written, never read as HTML; the paths of unsent copies are in the box's details
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
@@ -152,7 +154,7 @@ class TabsPart(WindowBase):
         if session not in self.sessions:
             return
         if isinstance(error, UnknownServer):
-            answer = QMessageBox.question(self, WINDOW_TITLE, f"{error}\n\nServer: {session.connection.host}\nFingerprint: {error.fingerprint}\n\nDo you trust this server?")
+            answer = QMessageBox.question(self, WINDOW_TITLE, box_text(f"{error}\n\nServer: {session.connection.host}\nFingerprint: {error.fingerprint}\n\nDo you trust this server?"))
             if answer == QMessageBox.StandardButton.Yes:
                 (trust.remember_host_key if error.kind == "host key" else trust.remember_certificate)(error.to_remember)
                 self._connect(session)
@@ -167,7 +169,7 @@ class TabsPart(WindowBase):
                 self.update_actions()
             return
         self.status.showMessage(str(error))
-        QMessageBox.information(self, WINDOW_TITLE, f"{session.connection.name}: {error}")
+        QMessageBox.information(self, WINDOW_TITLE, box_text(f"{session.connection.name}: {error}"))
         self.update_actions()
 
     def _store_user(self, session: Session) -> None:
@@ -225,9 +227,9 @@ class TabsPart(WindowBase):
         open_here = self._edits_of(session)
         if running:
             text = f"{len(running)} transfers on {session.connection.name} are not finished. Stop them and close the tab?"
-            if QMessageBox.question(self, WINDOW_TITLE, text) != QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
                 return
-        if open_here and QMessageBox.question(self, WINDOW_TITLE, self._edits_text(open_here) + " Close the tab?") != QMessageBox.StandardButton.Yes:
+        if open_here and not asked(self, WINDOW_TITLE, self._edits_text(open_here) + " Close the tab?", self._unsent_paths(open_here)):
             return
         for job in running:  # only now: every question came first
             self.queue.stop(job)

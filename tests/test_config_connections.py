@@ -5,11 +5,13 @@ import pytest
 
 from chrono_ftp.config import connections
 from chrono_ftp.core.connection import FTP, Connection
+from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config_connections.py 0.0.9"
+__version__ = "test_config_connections.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: A test that needs a refusal by the rights of a file skips as root
 # v0.0.9: The optional colour
 # v0.0.8: A user name the server accepted
 # v0.0.5: Initial
@@ -87,6 +89,7 @@ def test_a_connection_removed_in_the_meantime_stays_removed() -> None:
     assert [item.name for item in connections.load().connections] == ["A"]
 
 
+@NOT_AS_ROOT
 def test_a_file_that_can_not_be_read_is_never_replaced_by_a_kept_user() -> None:
     connections.save([Connection(name="A", host="a"), Connection(name="B", host="b")])
     path = connections.list_path()

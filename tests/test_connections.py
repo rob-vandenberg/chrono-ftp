@@ -1,8 +1,10 @@
+import ftplib
 import os
 import shlex
 import subprocess
 from collections.abc import Generator
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -12,12 +14,15 @@ from chrono_ftp.connections.ftp import FtpConnection, _TlsFtp, entry_from
 from chrono_ftp.connections.ssh import SshConnection, sendable
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import ConnectionFailed, RemoteActionFailed
+from tests.conftest import REAL_DATA, REAL_FOLDERS_BEFORE, REAL_HOME, REAL_SETTINGS, _snapshot
 from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, self_signed_certificate, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_connections.py 0.0.10"
+__version__ = "test_connections.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: No test reads this computer's own known hosts; the run's guard sees a real folder of Chrono FTP appear; SITE CHMOD is
+#          known by its own word in SITE HELP
 # v0.0.10: A server without the listing option
 # v0.0.5: Initial: both connections against real servers in the test process
 
@@ -367,3 +372,37 @@ def test_a_server_with_the_listing_option_still_gives_the_rights(tmp_path: Path)
         found = {entry.name: entry for entry in connection.list_folder("/")}
         connection.close()
     assert found["a.txt"].permissions.endswith("640")  # the test server has no owner to give, so only the rights are checked
+
+
+def test_no_test_reads_this_computers_own_known_hosts() -> None:
+    """Whether a test's server is trusted depends on the test alone: the home folder of a test is one of the run."""
+    files = SshConnection(Connection(name="T", host="127.0.0.1", user=USER))._host_key_files()
+    assert Path.home() != REAL_HOME
+    assert not any(Path(name).is_relative_to(REAL_HOME / ".ssh") for name in files), files
+
+
+def test_the_runs_guard_watches_the_real_settings_and_data_folders_and_sees_one_appear(tmp_path: Path) -> None:
+    assert set(REAL_FOLDERS_BEFORE) == {REAL_SETTINGS, REAL_DATA}
+    folder = tmp_path / "chrono-ftp"
+    before = _snapshot(folder)
+    folder.mkdir()
+    assert _snapshot(folder) != before  # an empty folder that appears is a change too
+
+
+class Answering(ftplib.FTP):
+    """An FTP session that answers FEAT and SITE HELP with the given texts, and nothing else."""
+
+    def __init__(self, site_help: str) -> None:
+        super().__init__()
+        self.site_help: str = site_help
+
+    @override
+    def sendcmd(self, cmd: str) -> str:
+        return "211-Features:\n REST STREAM\n211 End" if cmd == "FEAT" else self.site_help
+
+
+def test_site_chmod_is_known_by_its_own_word_in_site_help() -> None:
+    connection = FtpConnection(Connection(name="T", host="127.0.0.1", user=USER, protocol=FTP), PASSWORD)
+    assert connection._abilities(Answering("214-The following SITE commands are recognized:\n CHMOD HELP\n214 Help OK.")).rights
+    assert not connection._abilities(Answering("214-The following SITE commands are recognized:\n XCHMODX HELP\n214 Help OK.")).rights
+

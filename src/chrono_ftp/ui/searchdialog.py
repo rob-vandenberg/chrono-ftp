@@ -2,11 +2,13 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from chrono_ftp.connections.base import shown_name
+from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchdialog.py 0.0.6"
+__version__ = "searchdialog.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The folder in the status line is shown as written, never read as HTML
 # v0.0.6: A result keeps its real path, whatever the screen can show of it
 # v0.0.5: Initial: search for files on the server; the search itself runs there (D-015)
 
@@ -25,7 +27,7 @@ class SearchDialog(QDialog):
         self.resize(WIDTH, HEIGHT)
         self.pattern = QLineEdit("*")
         self.find_button = QPushButton("Find")
-        self.status = QLabel(f"Searching below {shown_name(folder)}")
+        self.status = plain_label(f"Searching below {shown_name(folder)}")
         self.paths: list[str] = []
         self.results = QListWidget()
         row = QHBoxLayout()

@@ -4,10 +4,12 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QInputDialog, QLabel, QLineEdit, QMainWindow, QSpinBox, QSplitter, QStatusBar, QToolBar, QToolButton, QWidget
+from PySide6.QtWidgets import QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QSpinBox, QSplitter, QStatusBar, QToolBar, QToolButton, QWidget
 
 from chrono_ftp.config.settings import Settings
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry
+from chrono_ftp.core.transferoptions import TransferOptions
+from chrono_ftp.transfers.options import Answers
 from chrono_ftp.transfers.queue import Job, TransferQueue
 from chrono_ftp.ui.bridge import Bridge
 from chrono_ftp.ui.connectionlist import ConnectionList
@@ -16,14 +18,20 @@ from chrono_ftp.ui.queueview import QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
 from chrono_ftp.ui.session import EditedFile, Session
 from chrono_ftp.ui.tabbar import ConnectionTabBar
+from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.11"
+__version__ = "windowbase.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: _add_job takes the options of a transfer and the answers its action shares; _failed is shared; the jobs whose end was shown;
+#          a box for a connection lost meanwhile, or a tab closed meanwhile; the paths of unsent copies; those boxes are true for
+#          downloads too
 # v0.0.11: Initial: the shared part of mainwindow.py, so each group of actions can live in a module of its own (D-041)
 
 WINDOW_TITLE: str = "Chrono FTP"
+LOST_MEANWHILE_TEXT: str = "The connection was lost meanwhile, so nothing was transferred. Reconnect and try again."  # uploads and downloads
+TAB_CLOSED_MEANWHILE_TEXT: str = "Its tab was closed meanwhile, so nothing was transferred."
 START_WIDTH: int = 1280
 START_HEIGHT: int = 800
 EMPTY_TAB_BAR_LINES: int = 2  # an empty tab bar has no height of its own: it keeps the height of a tab
@@ -65,6 +73,7 @@ class WindowBase(QMainWindow):
     queue_panel: QueuePanel
     queue_height: int
     failure_unseen: bool
+    ends_shown: set[int]  # the jobs (by id) whose end was taken in: each end refreshes the screen once
     queue_closed: bool
     body: QSplitter
     queue_linger: QTimer
@@ -101,6 +110,9 @@ class WindowBase(QMainWindow):
     def _edits_text(self, copies: list[str]) -> str:
         raise NotImplementedError
 
+    def _unsent_paths(self, copies: list[str]) -> str:
+        raise NotImplementedError
+
     def _forget_edits(self, copies: list[str]) -> None:
         raise NotImplementedError
 
@@ -110,8 +122,18 @@ class WindowBase(QMainWindow):
     def load_folder(self, session: Session, folder: str) -> None:
         raise NotImplementedError
 
+    def _failed(self, session: Session, error: Exception) -> None:
+        raise NotImplementedError
+
     def _reload(self, session: Session) -> None:
         raise NotImplementedError
+
+    def _lost_meanwhile(self, session: Session) -> None:
+        """The person confirmed a transfer, but its connection was lost meanwhile: a box says that nothing was transferred, and why, as the person
+        expects something to happen; the status bar says it too."""
+        text = f"{session.connection.name}: {LOST_MEANWHILE_TEXT if session in self.sessions else TAB_CLOSED_MEANWHILE_TEXT}"
+        self.status.showMessage(text)
+        QMessageBox.information(self, WINDOW_TITLE, box_text(text))
 
     def update_actions(self) -> None:
         raise NotImplementedError
@@ -140,7 +162,7 @@ class WindowBase(QMainWindow):
     def _move_into(self, session: Session, folder: str, chosen: list[RemoteEntry], target: str) -> None:
         raise NotImplementedError
 
-    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str) -> Job | None:
+    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str, options: TransferOptions | None = None, answers: Answers | None = None) -> Job | None:
         raise NotImplementedError
 
     def _edit_job_ended(self, job: Job) -> None:

@@ -1,3 +1,4 @@
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -11,9 +12,10 @@ from chrono_ftp.engine import commands
 from chrono_ftp.engine.jobs import Worker
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine.py 0.0.5"
+__version__ = "test_engine.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Scripted takes the offset, append and exclusive of a transfer, and knows the size of what was uploaded
 # v0.0.5: Initial
 
 
@@ -46,8 +48,11 @@ def test_modes_are_checked(mode: str, good: bool) -> None:
 
 
 class Scripted(RemoteConnection):
+    """A server that answers every command with result; an upload only notes the size that arrived, so a transfer can check it."""
+
     def __init__(self, result: CommandResult) -> None:
         self.result: CommandResult = result
+        self.sizes: dict[str, int] = {}
 
     def connect(self) -> None: ...
     def close(self) -> None: ...
@@ -61,8 +66,14 @@ class Scripted(RemoteConnection):
     def rename(self, old: str, new: str) -> None: ...
     def make_folder(self, path: str) -> None: ...
     def delete(self, path: str, is_folder: bool) -> None: ...
-    def download(self, remote: str, local: str, progress: Progress, limit: int = 0) -> None: ...
-    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0) -> None: ...
+    def download(self, remote: str, local: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None: ...
+    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+        self.sizes[remote] = os.path.getsize(local)
+
+    @override
+    def file_size(self, path: str) -> int:
+        return self.sizes.get(path, 0)
+
     @override
     def run(self, command: str) -> CommandResult:
         return self.result

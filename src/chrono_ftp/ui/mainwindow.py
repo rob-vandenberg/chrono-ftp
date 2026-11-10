@@ -29,11 +29,15 @@ from chrono_ftp.ui.windowqueue import QueuePart
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowtabs import TabsPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
+from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.11"
+__version__ = "mainwindow.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The queue asks the overwrite question through the bridge (FB-03); the question on closing shows names as written; what the
+#          queue tells in passing (a broken-off append set back) shows in the status bar; no job's end is shown twice; the paths of unsent
+#          copies are in the closing question's details
 # v0.0.11: Split: each group of actions moved, unchanged, into a part module of its own; this file puts them together (D-041, OR-8); closing closes the bridge, so a late answer goes nowhere
 # v0.0.8: One login window with user and password; no login goes out without a user name (D-040)
 # v0.0.7: One top row; the queue under a separator, hidden when idle unless pinned, open after a failure
@@ -52,7 +56,11 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.bridge = Bridge(self)
         self.sessions = []
         self.shown = None
-        self.queue = TransferQueue(lambda job: self.bridge.deliver(lambda: self._job_changed(job)))
+        self.queue = TransferQueue(
+            lambda job: self.bridge.deliver(lambda: self._job_changed(job)),
+            ask=lambda job, conflict, reply: self.bridge.deliver(lambda: self._overwrite_question(job, conflict, reply)),  # a closed window answers nothing: close() stops the job
+            told=lambda job, text: self.bridge.deliver(lambda: self.status.showMessage(f"{job.connection.name}: {text}")),
+        )
         self.connection_list = None
         self.tab_bar = ConnectionTabBar()
         self.tab_bar.setFixedHeight(self.fontMetrics().height() * EMPTY_TAB_BAR_LINES)
@@ -83,6 +91,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.queue_panel = QueuePanel(self.queue_view)
         self.queue_height = QUEUE_HEIGHT
         self.failure_unseen = False  # a failed transfer keeps the queue open until the person closes it
+        self.ends_shown = set()
         self.queue_closed = False  # closed by hand during these transfers: it stays closed until they end, unless one fails
         self.body = QSplitter(Qt.Orientation.Vertical)  # the separator above the queue
         self.body.setChildrenCollapsible(False)
@@ -222,7 +231,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         lines = f"{len(running)} transfers are not finished.\n\n" if running else ""
         if self.edited:
             lines += self._edits_text(list(self.edited))
-        if lines and QMessageBox.question(self, WINDOW_TITLE, lines + "Close Chrono FTP?") != QMessageBox.StandardButton.Yes:
+        if lines and not asked(self, WINDOW_TITLE, lines + "Close Chrono FTP?", self._unsent_paths(list(self.edited))):
             event.ignore()
             return
         self.bridge.close()  # from here on nothing happens in this window: what its threads still answer goes nowhere

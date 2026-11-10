@@ -4,11 +4,13 @@ from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QHeaderVi
 from chrono_ftp.connections.base import RemoteEntry, joined, shown_name
 from chrono_ftp.engine.compare import LEFT_ALONE, Difference, Found
 from chrono_ftp.ui.filelist import date_text, size_text
+from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "comparedialog.py 0.0.6"
+__version__ = "comparedialog.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The folders in the status line are shown as written, never read as HTML
 # v0.0.6: Initial: what differs between the two folders; the person ticks what is copied, nothing is ever deleted
 
 WINDOW_TITLE: str = "Synchronize"
@@ -40,7 +42,7 @@ class CompareDialog(QDialog):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WIDTH, HEIGHT)
         self.found: list[Found] = []
-        self.status = QLabel(f"Comparing {shown_name(local_folder)} with {shown_name(remote_folder)}")
+        self.status = plain_label(f"Comparing {shown_name(local_folder)} with {shown_name(remote_folder)}")
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(list(COLUMNS))
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

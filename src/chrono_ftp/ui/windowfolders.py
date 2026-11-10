@@ -7,14 +7,18 @@ from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry, shown_name
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost
-from chrono_ftp.transfers.queue import State, tidy
+from chrono_ftp.transfers.queue import Owned, State, tidy
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
+from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowfolders.py 0.0.11"
+__version__ = "windowfolders.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Tidying keeps a part file only while the next transfer of that file can continue it, and a part it removes loses its note
+#          (FB-02); _failed is declared in the base
+#          names are shown as written, never read as HTML; tidying touches only the leftovers this program made itself
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
@@ -42,6 +46,7 @@ class FoldersPart(WindowBase):
             self._set_tab(session)
         self.update_actions()
 
+    @override
     def _failed(self, session: Session, error: Exception) -> None:
         if session not in self.sessions:
             return
@@ -51,7 +56,7 @@ class FoldersPart(WindowBase):
         self.status.showMessage(text)
         if not isinstance(error, ChronoFtpError):
             raise error
-        QMessageBox.information(self, WINDOW_TITLE, f"{session.connection.name}: {text}")
+        QMessageBox.information(self, WINDOW_TITLE, box_text(f"{session.connection.name}: {text}"))
 
     def check_connections(self) -> None:
         for session in self.sessions:
@@ -73,7 +78,8 @@ class FoldersPart(WindowBase):
 
         def read(remote: RemoteConnection) -> list[RemoteEntry]:
             found = remote.list_folder(folder)
-            return found if busy else tidy(remote, folder, found, session.leftovers)  # a running transfer has its temporary files in use
+            owned = Owned(session.connection, self.settings.transfer_options)
+            return found if busy else tidy(remote, folder, found, session.leftovers, owned)  # a running transfer has its temporary files in use
 
         def show(found: object) -> None:
             assert isinstance(found, list)

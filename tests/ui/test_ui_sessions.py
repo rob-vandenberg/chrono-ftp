@@ -1,5 +1,7 @@
+import os
 import shutil
 import stat
+import tempfile
 import threading
 from collections.abc import Callable, Generator
 from dataclasses import replace
@@ -8,8 +10,8 @@ from typing import cast
 
 import pytest
 from PySide6.QtCore import QByteArray, QItemSelectionModel, QMimeData, QPointF, Qt
-from PySide6.QtGui import QColor, QDropEvent, QPalette
-from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
+from PySide6.QtGui import QColor, QDropEvent, QGuiApplication, QPalette
+from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import connections as saved_connections
@@ -18,6 +20,7 @@ from chrono_ftp.connections.base import RemoteConnection, UnknownServer
 from chrono_ftp.connections.ssh import SshConnection
 from chrono_ftp.core import colours
 from chrono_ftp.core.connection import FTP, Connection
+from chrono_ftp.transfers.options import Answer, Choice
 from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.changedialog import ChangeDialog
 from chrono_ftp.ui.comparedialog import CompareDialog
@@ -25,15 +28,24 @@ from chrono_ftp.ui.filelist import DRAG_MARK, LOCAL_FILES, REMOTE_FILES, FileLis
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.mainwindow import MainWindow
+from chrono_ftp.ui.overwritedialog import OverwriteDialog
 from chrono_ftp.ui.session import Session, same_server
+from chrono_ftp.ui.transferdialog import TransferDialog
 from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES
+from chrono_ftp.ui.windowedit import EDIT_FOLDER_PREFIX
+from chrono_ftp.ui.plaintext import NAME_SHARE
 from tests.conftest import MemoryStore
-from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, ssh_server
+from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.11"
+__version__ = "test_ui_sessions.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Uploads, downloads and drops answer the transfer window, which must really come with the right folder; a file that is there
+#          already gets the overwrite question; Synchronize asks it too, with the default options; after a drop the window comes once
+#          the drop has finished; the target folder is noted while the window is open, as it goes after use; the edit folders a test's
+#          window made go with the test; tests that need a refusal by the rights of a folder skip as root; the path of a copy with unsent
+#          changes is shown whole, and unbroken in the box's details
 # v0.0.11: Imports from the split main window; a test with a transfer waits for its end, not for the file, so nothing runs on after it
 # v0.0.9: The optional colour
 # v0.0.8: The login window
@@ -46,6 +58,19 @@ MAGENTA: str = "#aa00aa"
 
 def yes(*args: object) -> QMessageBox.StandardButton:
     return QMessageBox.StandardButton.Yes
+
+
+def transfer_window_accepted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The transfer window comes before every upload, download and drop: the person clicks its Upload or Download button. What it
+    showed as the target folder is noted then: the window itself goes once it is used."""
+    shown: list[str] = []
+
+    def accept(dialog: TransferDialog) -> int:
+        shown.append(dialog.folder())
+        return QDialog.DialogCode.Accepted.value
+
+    monkeypatch.setattr(TransferDialog, "exec", accept)
+    return shown
 
 
 def trust_server(server: SshServer) -> None:
@@ -61,10 +86,20 @@ def ssh_settings(server: SshServer, name: str = "Shop", colour: str = GREEN) -> 
 
 
 @pytest.fixture
-def window(qtbot: QtBot, memory_store: MemoryStore) -> Generator[MainWindow]:
+def window(qtbot: QtBot, memory_store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> Generator[MainWindow]:
     memory_store.passwords["Shop"] = PASSWORD
     memory_store.passwords["Other"] = PASSWORD
     made = MainWindow()
+    folders: list[str] = []  # the edit folders this test's window made, and only those
+    real_mkdtemp = tempfile.mkdtemp
+
+    def noted(suffix: str | None = None, prefix: str | None = None, dir: str | None = None) -> str:
+        folder = real_mkdtemp(suffix, prefix, dir)
+        if prefix == EDIT_FOLDER_PREFIX:
+            folders.append(folder)
+        return folder
+
+    monkeypatch.setattr(tempfile, "mkdtemp", noted)
 
     def let_go(_widget: QWidget) -> None:
         made._forget_edits(list(made.edited))  # the test is over: closing has no one to ask about them
@@ -72,6 +107,8 @@ def window(qtbot: QtBot, memory_store: MemoryStore) -> Generator[MainWindow]:
     qtbot.addWidget(made, before_close_func=let_go)
     yield made
     made.close()
+    for folder in folders:
+        shutil.rmtree(folder, ignore_errors=True)  # a copy the program keeps on purpose (unsent changes) is the test's own here
 
 
 def connected(qtbot: QtBot, window: MainWindow, connection: Connection) -> None:
@@ -319,7 +356,8 @@ def test_no_means_no_command_runs(qtbot: QtBot, window: MainWindow, tmp_path: Pa
         assert stat.S_IMODE((tmp_path / "a.txt").stat().st_mode) == before
 
 
-def test_a_download_lands_on_the_left_and_shows_in_the_queue(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+def test_a_download_lands_on_the_left_and_shows_in_the_queue(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shown = transfer_window_accepted(monkeypatch)
     server_side, local = tmp_path / "server", tmp_path / "local"
     server_side.mkdir()
     local.mkdir()
@@ -332,6 +370,7 @@ def test_a_download_lands_on_the_left_and_shows_in_the_queue(qtbot: QtBot, windo
         window.actions_by_name["download"].trigger()
         qtbot.waitUntil(lambda: bool(window.queue.jobs) and window.queue.jobs[0].state == State.DONE)
         assert (local / "report.txt").read_text(encoding="utf-8") == "hello"
+        assert len(shown) == 1 and shown[0] == str(local)
         qtbot.waitUntil(lambda: window.queue_view.rowCount() == 1)
 
 
@@ -620,6 +659,7 @@ def test_a_selected_link_can_not_get_a_recursive_change(qtbot: QtBot, window: Ma
 
 
 def test_a_download_asks_before_it_replaces_a_local_file(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shown = transfer_window_accepted(monkeypatch)
     server_side, local = tmp_path / "server", tmp_path / "local"
     server_side.mkdir()
     local.mkdir()
@@ -627,19 +667,23 @@ def test_a_download_asks_before_it_replaces_a_local_file(qtbot: QtBot, window: M
     (local / "a.txt").write_text("old", encoding="utf-8")
     asked: list[str] = []
 
-    def no(*args: object) -> QMessageBox.StandardButton:
-        asked.append(str(args[2]))
-        return QMessageBox.StandardButton.No
+    def no(dialog: OverwriteDialog) -> int:
+        asked.append(dialog.conflict.name)
+        dialog.answer = Answer(Choice.NO)
+        return QDialog.DialogCode.Accepted.value
 
-    monkeypatch.setattr(QMessageBox, "question", no)
+    monkeypatch.setattr(OverwriteDialog, "exec", no)
     with ftp_server(server_side) as port:
         window.local_side.go_to(str(local))
         connected(qtbot, window, Connection(name="Shop", host="127.0.0.1", port=port, user=USER, protocol=FTP, start_folder="/"))
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
         window.actions_by_name["download"].trigger()
-    assert "a.txt" in asked[0]
-    assert window.queue.jobs == []
+        qtbot.waitUntil(lambda: transfers_ended(window))
+    assert asked == ["a.txt"]
+    assert len(shown) == 1 and shown[0] == str(local)
+    assert [job.state for job in window.queue.jobs] == [State.DONE]  # the one job the transfer window started; No adds none and fetches nothing
+    assert sorted(path.name for path in local.iterdir()) == ["a.txt"]  # no part file either
     assert (local / "a.txt").read_text(encoding="utf-8") == "old"
 
 
@@ -696,7 +740,8 @@ def pick_local(window: MainWindow, *names: str) -> None:
         selection.select(window.local_side.file_list.index_of(name), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
 
 
-def test_a_file_dragged_to_the_right_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+def test_a_file_dragged_to_the_right_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shown = transfer_window_accepted(monkeypatch)
     root, here = tmp_path / "server", tmp_path / "here"
     (root / "inner").mkdir(parents=True)
     here.mkdir()
@@ -708,11 +753,14 @@ def test_a_file_dragged_to_the_right_lands_in_the_folder_it_fell_on(qtbot: QtBot
         qtbot.waitUntil(lambda: "inner" in names_on_the_right(window))
         pick_local(window, "a.txt")
         dropped(window.remote_side.file_list, LOCAL_FILES, "inner")
+        assert shown == []  # the window comes once the drop has finished, never inside it
         qtbot.waitUntil(lambda: transfers_ended(window))
         assert (root / "inner" / "a.txt").exists()
+        assert len(shown) == 1 and shown[0] == "/inner"
 
 
-def test_a_file_dragged_to_the_left_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+def test_a_file_dragged_to_the_left_lands_in_the_folder_it_fell_on(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shown = transfer_window_accepted(monkeypatch)
     root, here = tmp_path / "server", tmp_path / "here"
     root.mkdir()
     (here / "inner").mkdir(parents=True)
@@ -724,8 +772,10 @@ def test_a_file_dragged_to_the_left_lands_in_the_folder_it_fell_on(qtbot: QtBot,
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
         dropped(window.local_side.file_list, REMOTE_FILES, "inner")
+        assert shown == []  # the window comes once the drop has finished, never inside it
         qtbot.waitUntil(lambda: transfers_ended(window))
         assert (here / "inner" / "a.txt").exists()
+        assert len(shown) == 1 and shown[0] == str(here / "inner")
 
 
 def test_a_drag_within_the_right_side_moves_on_the_server(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -767,6 +817,7 @@ def test_a_name_that_is_not_utf8_can_be_copied_and_deleted_on_a_real_server(qtbo
     name = "b\udcffd.txt"
     Path(root, name).write_text("content", encoding="utf-8")
     monkeypatch.setattr(QMessageBox, "question", yes)
+    shown = transfer_window_accepted(monkeypatch)
     with ssh_server(root) as server:
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
@@ -774,8 +825,9 @@ def test_a_name_that_is_not_utf8_can_be_copied_and_deleted_on_a_real_server(qtbo
         qtbot.waitUntil(lambda: "b\ufffdd.txt" in names_on_the_right(window))
         select(window, name)
         window.actions_by_name["download"].trigger()
-        qtbot.waitUntil(lambda: Path(here, name).exists())
+        qtbot.waitUntil(lambda: transfers_ended(window))
         assert Path(here, name).read_text(encoding="utf-8") == "content"
+        assert len(shown) == 1 and shown[0] == str(here)
         window.actions_by_name["delete"].trigger()
         qtbot.waitUntil(lambda: not Path(root, name).exists())
 
@@ -1051,18 +1103,19 @@ def editing(qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch, n
     return opened[0]
 
 
+@NOT_AS_ROOT
 def test_a_refused_send_asks_and_try_again_sends_it(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "server"
     root.mkdir()
     (root / "a.txt").write_text("old", encoding="utf-8")
     asked: list[str] = []
 
-    def again(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
-        asked.append(text)
+    def again(box: QMessageBox) -> int:
+        asked.append(box.detailedText())  # the copy's path, whole, to copy
         root.chmod(0o755)  # the person put the server right
-        return QMessageBox.StandardButton.Yes
+        return QMessageBox.StandardButton.Yes.value
 
-    monkeypatch.setattr(QMessageBox, "question", again)
+    monkeypatch.setattr(QMessageBox, "exec", again)
     with ssh_server(root) as server:
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
@@ -1073,7 +1126,7 @@ def test_a_refused_send_asks_and_try_again_sends_it(qtbot: QtBot, window: MainWi
             qtbot.waitUntil(lambda: text_of(root / "a.txt") == "new")
         finally:
             root.chmod(0o755)
-        assert copy in asked[0]
+        assert asked[0] == copy
         qtbot.waitUntil(lambda: not window.edited[copy].pending)
 
 
@@ -1092,6 +1145,7 @@ def test_a_copy_that_never_reached_the_server_is_kept_when_its_edit_ends(qtbot: 
         shutil.rmtree(Path(copy).parent)
 
 
+@NOT_AS_ROOT
 def test_a_refused_rename_leaves_the_edit_going(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "server"
     root.mkdir()
@@ -1168,18 +1222,18 @@ def test_closing_a_tab_says_when_a_save_is_not_on_the_server_yet(qtbot: QtBot, w
     (root / "a.txt").write_text("old", encoding="utf-8")
     asked: list[str] = []
 
-    def no(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
-        asked.append(text)
-        return QMessageBox.StandardButton.No
+    def no(box: QMessageBox) -> int:
+        asked.append(box.detailedText())
+        return QMessageBox.StandardButton.No.value
 
     with ssh_server(root) as server:
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         copy = editing(qtbot, window, monkeypatch)
         window.edited[copy].unsent = True
-        monkeypatch.setattr(QMessageBox, "question", no)
+        monkeypatch.setattr(QMessageBox, "exec", no)
         window.close_tab(0)
-        assert copy in asked[0]
+        assert asked[0] == copy
         window.edited[copy].unsent = False
 
 
@@ -1258,6 +1312,7 @@ def test_a_copy_that_stays_away_ends_the_waiting(qtbot: QtBot, window: MainWindo
         window.edited[copy].waited = EDIT_WAIT_TRIES - 1
         window._send_edited_files()
         assert window.edited == {}
+        assert not os.path.lexists(os.path.dirname(copy))  # nothing is left in its folder, so the folder goes too
 
 
 def test_a_save_never_makes_a_renamed_file_again(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1346,11 +1401,11 @@ def test_no_to_try_again_waits_for_its_own_save_and_other_saves_do_not_bring_it_
         edited.job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, copy, "/", True, "a.txt", state=State.FAILED, message="refused")
         asked: list[str] = []
 
-        def no(_parent: object, _title: str, text: str) -> QMessageBox.StandardButton:
-            asked.append(text)
-            return QMessageBox.StandardButton.No
+        def no(box: QMessageBox) -> int:
+            asked.append(box.detailedText())
+            return QMessageBox.StandardButton.No.value
 
-        monkeypatch.setattr(QMessageBox, "question", no)
+        monkeypatch.setattr(QMessageBox, "exec", no)
         window._edit_job_ended(edited.job)
         window._send_edited_files()
         assert len(asked) == 1 and edited.job is None and edited.unsent
@@ -1471,3 +1526,22 @@ def test_a_live_connection_without_a_colour_looks_like_the_left_side_and_drops_t
         window._mark_lost(window.sessions[0])
         assert base_of(window) == QColor(colours.NOT_CONNECTED)
         assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED
+
+
+def test_the_path_of_a_copy_with_unsent_changes_is_shown_whole_and_fits_the_screen(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """It may be the only copy of the changes: every character of its path is there, broken over lines, none too long for the screen."""
+    long_name = "x" * 250  # no space anywhere to break at
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / long_name).write_text("old", encoding="utf-8")
+    with ssh_server(root) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server))
+        copy = editing(qtbot, window, monkeypatch, long_name)
+        window.edited[copy].unsent = True
+        text = window._edits_text([copy])
+    assert copy in text.replace("\n", "")  # whole
+    screen = QGuiApplication.primaryScreen()
+    room = (screen.availableGeometry().width() if screen is not None else 1024) * NAME_SHARE
+    path_lines = [line for line in text.split("\n") if line and " " not in line]
+    assert len(path_lines) > 1 and all(window.fontMetrics().horizontalAdvance(line) <= room for line in path_lines)

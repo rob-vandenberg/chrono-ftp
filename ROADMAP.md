@@ -53,8 +53,8 @@ Result: replaces the reference program for everyday copying.
 One milestone per block of the private `FEATURES.md` (D-001, OR-13), in this order:
 
 5. FA, the main window split into modules: done in 0.0.11.
-6. FB, transfer options: open.
-7. FC, the queue: open.
+6. FB, transfer options: done in 0.0.12.
+7. FC, the queue: next.
 8. FD, masks: open.
 9. FE, hashes and sizes without a shell: open.
 10. FF, synchronize: open.

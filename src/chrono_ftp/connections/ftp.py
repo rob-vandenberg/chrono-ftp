@@ -6,21 +6,39 @@ import hashlib
 import re
 import socket
 import ssl
+import stat
 import threading
 import time
-from collections.abc import Buffer
+from collections.abc import Buffer, Callable
+from dataclasses import replace
 from pathlib import Path
-from typing import override
+from typing import BinaryIO, cast, override
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import Capabilities, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, safe_name
+from chrono_ftp.connections.base import GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, parent_of, safe_name
 from chrono_ftp.core.connection import Connection
-from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, LoginRefused, RemoteActionFailed
+from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.10"
+__version__ = "ftp.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: What the server can do for a transfer is read from FEAT and SITE HELP; resume with REST and APPE, append, dates with MFMT,
+#          rights with SITE CHMOD, sizes and empty folders (FB-02, FB-05, FB-06, FB-08); a SIZE reply that is no number counts as
+#          unknown; a name with a line break fails only that item, in plain words; a resume of an upload is REST with STOR; the details
+#          of one file by MLST; a size the server does not give is unknown; a refused RMD says why; a dropped data connection is an
+#          interrupted transfer of that one file (only a lost control connection stops the job), 450 and 452 a refusal of that one file;
+#          every step on this computer's file goes through LocalFile, so a problem there is this computer's, and a broken-off append of
+#          a download is cut back; whether a name is taken in a folder that can't be read; a login the server closed while idle is
+#          made again; in a folder that can't be read, a file is told by its size, and anything else's kind is unknown; SIZE is asked in
+#          binary mode, so a server that tells sizes only there tells them, also of the file a link leads to; one name is looked up by
+#          MLST or RNFR, never by a listing, and a transfer reads each folder once and keeps it up with its own changes; a name is checked
+#          right before a new file takes it, with no RNFR twice; every check of whether a file changed asks the server this moment
+#          (MLST, or SIZE and MDTM, or a fresh listing), never a kept listing; only a refusal of a continuation itself is told as one, and
+#          450 and 452 as a refusal for now; a temporary file's name is asked of the server right before it is stored; a listing says
+#          which names it left out; binary mode is asked only when the session is not in it, and whether a name is taken by one RNFR;
+#          a part is continued only while it has exactly the length it is continued from; a kept listing is changed in place; a
+#          pipe, socket or device is marked as such where the listing tells it; a unix.mode that holds the kind gives the rights alone
 # v0.0.10: A server without the OPTS MLST option still lists: a refusal of that option is no failure
 # v0.0.6: A name that is not valid UTF-8 keeps its real bytes, so it no longer ends the connection
 # v0.0.5: Initial: ftplib, TLS where the server offers it, MLSD for listings (D-011)
@@ -38,8 +56,21 @@ NAMES_ENCODING: str = "chrono-ftp-names"
 DETAILS_COMMAND: str = "OPTS MLST type;size;modify;unix.mode;unix.owner;unix.group;"
 SIZE_PATTERN: re.Pattern[str] = re.compile(r"[0-9]{1,18}")
 LOST_TEXT: str = "The connection to the server was lost."
+INTERRUPTED_TEXT: str = "The data connection for this file broke off on the way."
+PART_NOT_AS_LEFT_TEXT: str = "The unfinished copy on the server is not as it was left, so it starts again from the beginning."
+BUSY_TEXT: str = "The server can't use this file right now ({reply}). The other files go on; you can send this one again later."
 FTP_ERRORS: tuple[type[BaseException], ...] = (ftplib.Error, OSError, EOFError, ValueError)
 LOST_ERRORS: tuple[type[BaseException], ...] = (EOFError, ConnectionError, TimeoutError)
+
+
+ODD_NAME_TEXT: str = "This name holds a line break, which FTP can't carry, so this item was left as it is."
+
+
+def _refusal(error: BaseException, fallback: str) -> str:
+    """The server's own words; ftplib's refusal of a line break in a name is said plainly, as only that item fails (OR-15)."""
+    if isinstance(error, ValueError) and "newline" in str(error):
+        return ODD_NAME_TEXT
+    return str(error) or fallback
 
 
 class _NamesDecoder(encodings.utf_8.IncrementalDecoder):
@@ -106,11 +137,33 @@ def entry_from(name: str, facts: dict[str, str]) -> RemoteEntry | None:
     kind = facts.get("type", "").lower()
     if kind in ("cdir", "pdir") or not safe_name(name):
         return None
-    size_text = facts.get("size", "0")
-    size = int(size_text) if SIZE_PATTERN.fullmatch(size_text) else 0
+    size_text = facts.get("size", "")
+    size_known = SIZE_PATTERN.fullmatch(size_text) is not None
+    size = int(size_text) if size_known else 0
     is_link = kind.startswith("os.unix=slink") or kind.startswith("os.unix=symlink")
-    permissions = facts.get("unix.mode", "")
-    return RemoteEntry(name, kind == "dir", size, _time_of(facts.get("modify", "")), permissions, facts.get("unix.owner", ""), facts.get("unix.group", ""), is_link)
+    mode = facts.get("unix.mode", "")
+    special = (kind.startswith("os.") and not is_link) or _special_mode(mode)  # a server's own type that is no link: no plain file
+    permissions = _rights_only(mode)
+    return RemoteEntry(name, kind == "dir", size, _time_of(facts.get("modify", "")), permissions, facts.get("unix.owner", ""), facts.get("unix.group", ""), is_link, size_known=size_known, special=special)
+
+
+def _rights_only(mode: str) -> str:
+    """The rights of a unix.mode, as a server that gives the rights alone writes them: 0100644 (with the kind) is 0644. A mode that holds
+    only rights, or is no number, stays as the server wrote it."""
+    try:
+        value = int(mode, 8)
+    except ValueError:
+        return mode
+    return format(value & 0o7777, "04o") if value > 0o7777 else mode
+
+
+def _special_mode(mode: str) -> bool:
+    """A unix.mode that holds the kind as well (a pipe, a socket or a device); one with the rights alone tells nothing of it."""
+    try:
+        value = int(mode, 8)
+    except ValueError:
+        return False
+    return stat.S_IFMT(value) in (stat.S_IFIFO, stat.S_IFSOCK, stat.S_IFCHR, stat.S_IFBLK)
 
 
 class FtpConnection(RemoteConnection):
@@ -123,6 +176,9 @@ class FtpConnection(RemoteConnection):
         self._ftp: ftplib.FTP | None = None
         self._asked: ftplib.FTP | None = None  # the session that was asked for its details
         self._lock: threading.Lock = threading.Lock()  # one control connection does one thing at a time
+        self._mlst: bool | None = None  # whether the server knows MLST: learnt from its first answer
+        self._binary: bool = False  # the session is in binary mode now: SIZE needs it, a listing leaves it
+        self._listings: dict[str, dict[str, RemoteEntry]] | None = None  # a transfer's folders (by name), each read once and kept up with its own changes
 
     def _prefix(self) -> str:
         return f"{self.connection.host}:{self.connection.port} "
@@ -198,12 +254,30 @@ class FtpConnection(RemoteConnection):
                 session.prot_p()
             session.set_pasv(True)
             session.voidcmd("TYPE I")
+            self._binary = True
         except ftplib.error_perm as error:
             raise LoginRefused(LOGIN_TEXT) from error
         except FTP_ERRORS as error:
             raise ConnectionFailed(NOT_REACHED_TEXT) from error
+        try:
+            abilities = self._abilities(session)  # FTP has no shell
+        except FTP_ERRORS as error:
+            session.close()
+            raise ConnectionFailed(NOT_REACHED_TEXT) from error
         self._ftp = session
-        self.capabilities = Capabilities()  # FTP has no shell
+        self.capabilities = abilities
+
+    def _abilities(self, session: ftplib.FTP) -> Capabilities:
+        """What this server offers for a transfer, as it says itself: nothing is assumed (D-016). A refusal of a question means no."""
+        try:
+            features = {line.strip().split(" ")[0].upper() for line in session.sendcmd("FEAT").splitlines()[1:-1] if line.strip()}
+        except ftplib.Error:
+            features = set[str]()
+        try:
+            site = session.sendcmd("SITE HELP").upper()
+        except ftplib.Error:
+            site = ""
+        return Capabilities(resume="REST" in features, timestamps="MFMT" in features, rights="CHMOD" in site.split())
 
     @override
     def close(self) -> None:
@@ -218,6 +292,7 @@ class FtpConnection(RemoteConnection):
     def _drop(self) -> None:
         session = self._ftp
         self._ftp = None
+        self._binary = False
         if session is not None:
             session.close()
 
@@ -259,10 +334,15 @@ class FtpConnection(RemoteConnection):
 
     @override
     def list_folder(self, path: str) -> list[RemoteEntry]:
+        return self.list_folder_all(path)[0]
+
+    @override
+    def list_folder_all(self, path: str) -> tuple[list[RemoteEntry], list[str]]:
         with self._lock:
             try:
                 session = self._session()
                 self._ask_for_details(session)
+                self._binary = False  # a listing goes in ASCII mode, and leaves the session so
                 found = list(session.mlsd(path))
             except ssl.SSLError as error:
                 self._drop()  # another certificate on the data connection: nothing on this connection can be trusted
@@ -274,7 +354,9 @@ class FtpConnection(RemoteConnection):
                 raise ConnectionLost(LOST_TEXT) from error
             except FTP_ERRORS as error:
                 raise RemoteActionFailed("The server did not answer.") from error
-        return [entry for name, facts in found if (entry := entry_from(name, facts)) is not None]
+        entries = [entry for name, facts in found if (entry := entry_from(name, facts)) is not None]
+        left_out = [name for name, facts in found if facts.get("type", "").lower() not in ("cdir", "pdir") and name not in (".", "..") and not safe_name(name)]
+        return entries, left_out
 
     def _do(self, *commands: tuple[str, str]) -> None:
         with self._lock:
@@ -285,7 +367,7 @@ class FtpConnection(RemoteConnection):
             except LOST_ERRORS as error:
                 raise ConnectionLost(LOST_TEXT) from error
             except FTP_ERRORS as error:
-                raise RemoteActionFailed(str(error) or "The server refused this action.") from error
+                raise RemoteActionFailed(_refusal(error, "The server refused this action.")) from error
 
     @override
     def rename(self, old: str, new: str) -> None:
@@ -295,16 +377,48 @@ class FtpConnection(RemoteConnection):
             except LOST_ERRORS as error:
                 raise ConnectionLost(LOST_TEXT) from error
             except FTP_ERRORS as error:
-                raise RemoteActionFailed(str(error) or "The server refused this action.") from error
+                raise RemoteActionFailed(_refusal(error, "The server refused this action.")) from error
+        moved = self._kept(old)
+        self._keep(old, None)
+        name = new.rsplit("/", 1)[-1]
+        self._keep(new, replace(moved, name=name) if moved is not None else RemoteEntry(name, False, size_known=False))
+
+    def _listed(self, folder: str, fresh: bool = False) -> list[RemoteEntry]:
+        """A folder's listing: for a transfer read once and then kept up with what it changes there itself, so placing many files costs
+        no listing each; for browsing, and where fresh is asked for, read afresh."""
+        if not fresh and self._listings is not None and folder in self._listings:
+            return list(self._listings[folder].values())
+        found = self.list_folder(folder)
+        if self._listings is not None:
+            self._listings[folder] = {entry.name: entry for entry in found}
+        return found
+
+    def _kept(self, path: str) -> RemoteEntry | None:
+        parent, name = parent_of(path), path.rsplit("/", 1)[-1]
+        if self._listings is None or parent not in self._listings:
+            return None
+        return self._listings[parent].get(name)
+
+    def _keep(self, path: str, entry: RemoteEntry | None) -> None:
+        """What this connection changed at path, in a listing it keeps: entry, or None for gone."""
+        parent, name = parent_of(path), path.rsplit("/", 1)[-1]
+        if self._listings is None or parent not in self._listings:
+            return
+        if entry is None:
+            self._listings[parent].pop(name, None)
+        else:
+            self._listings[parent][name] = entry  # in place: placing many files in one folder costs no rebuild of its listing each
 
     @override
     def make_folder(self, path: str) -> None:
         self._do(("mkd", path))
+        self._keep(path, RemoteEntry(path.rsplit("/", 1)[-1], True))
 
     @override
     def delete(self, path: str, is_folder: bool) -> None:
         if not is_folder:
             self._do(("delete", path))
+            self._keep(path, None)
             return
         for entry in self.list_folder(path):
             self.delete(joined(path, entry.name), entry.is_folder and not entry.is_link)
@@ -327,9 +441,187 @@ class FtpConnection(RemoteConnection):
                 pass  # many servers can't: the file is there, only its permissions could not be set
 
     @override
-    def download(self, remote: str, local: str, progress: Progress, limit: int = 0) -> None:
+    def set_rights(self, path: str, mode: str) -> None:
+        self._do(("voidcmd", f"SITE CHMOD {mode} {path}"))
+
+    @override
+    def set_time(self, path: str, modified: float) -> None:
+        try:
+            moment = time.strftime("%Y%m%d%H%M%S", time.gmtime(modified))
+        except (OverflowError, OSError, ValueError) as error:
+            raise RemoteActionFailed(NO_TIME_TEXT) from error  # a date from input that no clock can hold (OR-15)
+        self._do(("voidcmd", f"MFMT {moment} {path}"))
+
+    @override
+    def file_size(self, path: str) -> int | None:
+        """SIZE where the server knows it; else the size MLST or the folder listing gives; None when nothing tells it."""
+        with self._lock:
+            try:
+                self._binary_mode()  # many servers tell a size only in binary mode, and a listing leaves ASCII on
+                size = self._session().size(path)
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except (ftplib.error_perm, ftplib.error_reply, ValueError):
+                size = None  # refused, or a reply that is no number ("213 abc"): the size is unknown here, the listing tells it
+            except FTP_ERRORS as error:
+                raise RemoteActionFailed(_refusal(error, GONE_TEXT)) from error
+        if not isinstance(size, int) or size < 0:
+            return super().file_size(path)  # no size, or one no file can have: unknown here
+        return size
+
+    @override
+    def details(self, path: str) -> RemoteEntry | None:
+        """MLST of this one file; a refusal of it (not there, or not to be read) is looked into with RNFR, never with a listing. Where the
+        server has no MLST, the folder's listing tells it (for a transfer read once per folder): what is there, never whether it changed."""
+        return self._details(path, False)
+
+    @override
+    def fresh_details(self, path: str) -> RemoteEntry | None:
+        """As the server has it this moment, for every check of whether something changed: MLST; where the server has no MLST, SIZE and
+        MDTM of a file, else a fresh listing of its folder."""
+        if self._mlst is False:
+            sized = self._sized(path)
+            if sized is not None:
+                return sized
+        return self._details(path, True)
+
+    def _sized(self, path: str) -> RemoteEntry | None:
+        """A file's size and date by SIZE and MDTM, each asked this moment; None where the server can't tell both (also for a folder)."""
+        with self._lock:
+            try:
+                self._binary_mode()  # many servers tell a size only in binary mode
+                size = self._session().size(path)
+                reply = self._session().sendcmd(f"MDTM {path}")
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except FTP_ERRORS:
+                return None
+        moment = _time_of(reply[4:].strip()) if reply.startswith("213") else None
+        if not isinstance(size, int) or size < 0 or moment is None:
+            return None
+        return RemoteEntry(path.rsplit("/", 1)[-1], False, size, moment)
+
+    def _details(self, path: str, fresh: bool) -> RemoteEntry | None:
+        name = path.rsplit("/", 1)[-1]
+        reply: str | None = None
+        if self._mlst is not False:
+            with self._lock:
+                try:
+                    reply = self._session().sendcmd(f"MLST {path}")
+                    self._mlst = True
+                except LOST_ERRORS as error:
+                    raise ConnectionLost(LOST_TEXT) from error
+                except ftplib.error_perm as error:
+                    if not str(error).startswith(("500", "502")):
+                        self._mlst = True
+                    elif self._mlst is None:
+                        self._mlst = False  # the server does not know it: the listing tells it from now on
+                except FTP_ERRORS as error:
+                    raise RemoteActionFailed(_refusal(error, GONE_TEXT)) from error
+            if reply is None and self._mlst:
+                probed = self._probe(path)  # not there (no listing needed), or there but not to be read with MLST
+                if probed is None or probed.kind_known:
+                    return probed
+                try:
+                    listed = next((entry for entry in self._listed(parent_of(path), fresh) if entry.name == name), None)
+                except ConnectionLost:
+                    raise
+                except RemoteActionFailed:
+                    return probed  # its folder can't be read either: whether it is a file or a folder stays unknown
+                return listed if listed is not None else probed
+        if reply is None:
+            try:
+                return next((entry for entry in self._listed(parent_of(path), fresh) if entry.name == name), None)
+            except ConnectionLost:
+                raise
+            except RemoteActionFailed:
+                return self._probe(path)  # a folder that can't be read: whether the name is taken is all that can be learnt
+        lines = reply.splitlines()[1:-1]
+        if not lines:
+            return None
+        facts_text = lines[0].strip().partition(" ")[0]
+        facts = {key.lower(): value for key, _equals, value in (fact.partition("=") for fact in facts_text.split(";") if fact)}
+        return entry_from(name, facts)
+
+    def _binary_mode(self) -> None:
+        """Binary mode for SIZE, asked only when the session is not in it already. Called under the lock."""
+        if not self._binary:
+            self._session().voidcmd("TYPE I")
+            self._binary = True
+
+    def _exists(self, path: str) -> bool:
+        """Whether something has this name this moment: RNFR alone answers 350 for it, also in a folder that can't be read. One command."""
+        with self._lock:
+            try:
+                self._session().sendcmd(f"RNFR {path}")
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except ftplib.error_perm:
+                return False
+            except FTP_ERRORS as error:
+                raise RemoteActionFailed(_refusal(error, GONE_TEXT)) from error
+        return True
+
+    @override
+    def name_taken(self, path: str) -> bool:
+        """RNFR this moment, or what the kept listing knows of it (no command): never MLST and RNFR for the same check."""
+        return self._kept(path) is not None or self._exists(path)
+
+    def _probe(self, path: str) -> RemoteEntry | None:
+        """RNFR answers 350 for a name that is there, also in a folder that can't be read; no RNTO follows, so nothing is renamed. SIZE
+        then tells a file by its size, where the server answers it there; else whether it is a file or a folder is unknown."""
+        name = path.rsplit("/", 1)[-1]
+        with self._lock:
+            try:
+                self._session().sendcmd(f"RNFR {path}")
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except ftplib.error_perm:
+                return None
+            except FTP_ERRORS as error:
+                raise RemoteActionFailed(_refusal(error, GONE_TEXT)) from error
+            try:
+                self._binary_mode()  # many servers tell a size only in binary mode
+                size = self._session().size(path)
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except FTP_ERRORS:
+                size = None  # refused (a folder, or no SIZE here): nothing more can be learnt
+        if isinstance(size, int) and size >= 0:
+            return RemoteEntry(name, False, size)  # only a file has a size
+        return RemoteEntry(name, False, size_known=False, kind_known=False)
+
+    @override
+    def revive(self) -> None:
+        """A control connection the server closed while it was idle (a question took long) logs in again with what it has."""
+        try:
+            self.check()
+            if self._ftp is not None:
+                return
+        except RemoteActionFailed:
+            pass  # gone: a new login follows
+        with self._lock:
+            self._start_afresh()
+        if self._ftp is None:
+            raise ConnectionLost(LOST_TEXT)
+
+    @override
+    def remove_empty_folder(self, path: str) -> None:
+        try:
+            self._do(("rmd", path))
+        except ConnectionLost:
+            raise
+        except RemoteActionFailed as error:
+            raise RemoteActionFailed(NOT_EMPTY_TEXT) from error
+
+    @override
+    def download(self, remote: str, local: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         pause = BLOCK_SIZE / (limit * 1024) if limit else 0.0
-        with self._lock, Path(local).open("wb") as file:
+        with self._lock, LocalFile(local, "ab" if append else "r+b" if offset else "xb" if exclusive else "wb", True) as file:  # every step here is this computer's
+            if offset:
+                file.truncate(offset)  # a continued part: whatever is after offset goes
+                file.seek(offset)
+            before = file.seek(0, 2)
 
             def take(block: bytes) -> None:
                 file.write(block)
@@ -337,38 +629,82 @@ class FtpConnection(RemoteConnection):
                 time.sleep(pause)
 
             try:
-                self._session().retrbinary(f"RETR {remote}", take, BLOCK_SIZE)
-            except LOST_ERRORS as error:
-                raise ConnectionLost(LOST_TEXT) from error
-            except FTP_ERRORS as error:
-                raise RemoteActionFailed(str(error) or "The transfer did not finish.") from error
+                self._data(lambda: self._session().retrbinary(f"RETR {remote}", take, BLOCK_SIZE, rest=offset or None), bool(offset))  # REST: from offset
             except BaseException:
-                self._start_afresh()
+                if append:
+                    try:
+                        file.truncate(before)  # an append is all or nothing: the file is the one it was
+                    except LocalActionFailed:
+                        pass  # the first problem is the one to tell
                 raise
 
     @override
-    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0) -> None:
+    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+        """An append can't be undone here (FTP can't cut a file back), so the overwrite question does not offer it over FTP. exclusive: FTP
+        can't make a file only where nothing is, so the name is asked of the server right before (RNFR), as for a new file's name."""
+        if exclusive and not offset and not append and self._exists(remote):
+            raise NameTaken(NAME_TAKEN_TEXT)
+        if offset and not append and self.file_size(remote) != offset:
+            raise ContinuationRefused(PART_NOT_AS_LEFT_TEXT)  # REST would write after a gap, or into bytes that are not ours: from the start
         pause = BLOCK_SIZE / (limit * 1024) if limit else 0.0
 
         def sent(block: bytes) -> None:
-            progress(len(block))
+            progress(len(block))  # sent: the server holds what it got of it in order, so at most this
             time.sleep(pause)
 
-        with self._lock, Path(local).open("rb") as file:
-            try:
-                self._session().storbinary(f"STOR {remote}", file, BLOCK_SIZE, sent)
-            except LOST_ERRORS as error:
+        try:
+            with self._lock, LocalFile(local, "rb", False) as file:  # a read that fails is this computer's problem, never a broken line
+                file.seek(offset)
+                if append:
+                    self._data(lambda: self._session().storbinary(f"APPE {remote}", file, BLOCK_SIZE, sent))  # after what is there
+                else:
+                    self._data(lambda: self._session().storbinary(f"STOR {remote}", file, BLOCK_SIZE, sent, rest=offset or None), bool(offset))  # REST: from offset
+        finally:
+            self._keep(remote, RemoteEntry(remote.rsplit("/", 1)[-1], False, size_known=False))  # there now, of a size only SIZE tells
+
+    def _data(self, transfer: Callable[[], object], continued: bool = False) -> None:
+        """One transfer over a data connection. Only a control connection that is gone stops the whole job. A data connection that drops
+        (425, 426, a reset, a broken TLS session) interrupts this one file; 450 and 452 are the server's refusal of this one file, now; a
+        5xx is its refusal, of the continuation itself where it continues a part (continued). After anything but a clean end the control connection starts afresh, so no later answer belongs to the
+        wrong command; when that fails, the login is gone."""
+        self._binary = True  # ftplib asks for binary mode itself before every file
+        try:
+            transfer()
+        except EOFError as error:
+            self._start_afresh()
+            raise ConnectionLost(LOST_TEXT) from error  # the control connection closed
+        except ftplib.error_temp as error:
+            reply = str(error).strip()
+            if reply.startswith(("450", "452")):
+                raise RefusedForNow((NO_ROOM_TEXT if reply.startswith("452") else BUSY_TEXT).format(reply=reply)) from error
+            self._start_afresh()
+            if self._ftp is None or reply.startswith("421"):
                 raise ConnectionLost(LOST_TEXT) from error
-            except FTP_ERRORS as error:
-                raise RemoteActionFailed(str(error) or "The transfer did not finish.") from error
-            except BaseException:
-                self._start_afresh()
-                raise
+            raise TransferInterrupted(INTERRUPTED_TEXT) from error
+        except (ssl.SSLError, OSError) as error:  # a reset or a timeout of the data connection
+            self._start_afresh()
+            if self._ftp is None:
+                raise ConnectionLost(LOST_TEXT) from error
+            raise TransferInterrupted(INTERRUPTED_TEXT) from error
+        except FTP_ERRORS as error:
+            raise (ContinuationRefused if continued else RemoteActionFailed)(_refusal(error, "The transfer did not finish.")) from error
+        except BaseException:
+            self._start_afresh()
+            raise
 
     @override
     def for_a_transfer(self) -> "FtpConnection":
-        """FTP does one thing at a time, so a transfer gets a login of its own and browsing goes on."""
+        """FTP does one thing at a time, so a transfer gets a login of its own and browsing goes on. It keeps the listings it read."""
         other = FtpConnection(self.connection, self.password)
         other.must_encrypt = self.encrypted  # a transfer never travels with less protection than the browsing
+        other._listings = {}
         other.connect()
         return other
+
+    @override
+    def place_new(self, temporary: str, target: str) -> None:
+        """FTP's rename replaces what has the name: right before it, RNFR asks whether something has it, which needs no listing. Something
+        that takes it in that last moment is replaced all the same, a limit of FTP."""
+        if self.name_taken(target):
+            raise NameTaken(NAME_TAKEN_TEXT)
+        self.rename(temporary, target)

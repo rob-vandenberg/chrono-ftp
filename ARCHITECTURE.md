@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.11; sections 2 to 5 date from 0.0.5). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.12; sections 3 to 5 date from 0.0.5). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -15,10 +15,10 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 
 | Module | Responsibility |
 |---|---|
-| `core` | Pure data model: Connection, remote file entry, capabilities, error types, colours (`core/colours.py`), the thin door to the credential store. No other I/O. |
-| `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list. |
+| `core` | Pure data model: Connection, remote file entry, capabilities, error types, colours (`core/colours.py`), the thin door to the credential store, the transfer options (`core/transferoptions.py`). No other I/O. |
+| `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list, the settings, and the notes of part files, aside copies and appends (`config/parts.py`). |
 | `connections` | The common connection layer (`base.py`), its two implementations (`ssh.py`, `ftp.py`), capability detection, and the servers the person trusted (`trust.py`). |
-| `transfers` | The transfer queue: `rsync` with a speed limit, falling back to SFTP or FTP; progress. |
+| `transfers` | The transfer queue (`queue.py`) and its two ways: `rsync` (`rsyncway.py`) and file by file over SFTP or FTP (`filebyfile.py`); a job and its progress (`job.py`); the overwrite question's answers and what a connection can do (`options.py`). |
 | `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`), actions on this computer (`localfiles.py`), comparing two folders (`compare.py`). |
 | `ui` | PySide6 user interface. Pure window actions live here; server work does not. |
 
@@ -73,3 +73,23 @@ Each connection reports what it can do after connecting (D-016): the system, the
    10. `ui/windowserver.py`: actions on the server;
    11. `ui/windowtransfers.py`: upload, download, drag and drop, the speed limit and stop.
 8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).
+
+## 7. Transfers (block FB, version 0.0.12)
+
+The modules of the transfer options, one line each:
+
+1. `core/transferoptions.py`: the options of one transfer (resume, ask, only newer, dates, rights, count first, move) and the rights rules (D-043).
+2. `config/parts.py`: the notes on this computer of part files, aside copies and appends; each note is input and checked when read (D-044).
+3. `transfers/job.py`: one job, its state and its progress meter, which leaves out the time a question waits.
+4. `transfers/options.py`: the overwrite question's answers and what each means, and which options a connection can carry out (D-043, D-045).
+5. `transfers/filebyfile.py`: the file by file way over SFTP or FTP: part files, resume, the overwrite question, the checks right before a replace, moves, appends and their set-back (D-044, D-045).
+6. `transfers/rsyncway.py`: the rsync way: the exact list to send, the check of agreed files right before it starts, progress, and the process group that a stop or the end ends whole.
+7. `transfers/queue.py`: runs the jobs one after the other, picks the way for each, asks the questions through the window, and tidies leftovers.
+8. `ui/transferdialog.py`: the transfer window before each upload, download and drop (D-043).
+9. `ui/transferoptionsform.py`: the options as the person sets them, in Transfer settings and in Settings, greyed by what the connection can do.
+10. `ui/overwritedialog.py`: the overwrite question (D-045).
+11. `ui/remotefolderpicker.py`: Browse on the server, from the transfer window.
+12. `ui/plaintext.py`: names and server texts shown as plain text, fitted to the screen.
+
+**How the two ways fit together.** The queue takes rsync where it can work: an SFTP connection with a key login, rsync on both sides, a target folder that can be read, no link in the target (rsync would replace it by a file), and no upload that sets rights. Where the job asks anything of a file (ask before replacing, only newer, a move, an answer for all, a file and a folder meeting, a link or a pipe in the source, a pipe in the target), the file by file way first looks the job over without sending: it asks the questions and records the exact list of files rsync is to send, and does itself what rsync can't (a rename, an append, a continued part). Right before rsync starts, every file agreed to be replaced is looked at again. Where rsync can't log in at all, the file by file way does the whole job, with each answer holding only for the file as the person saw it, and nobody is asked twice. Without rsync, the file by file way does the job on its own.
+

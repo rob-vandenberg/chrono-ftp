@@ -28,11 +28,13 @@ from chrono_ftp.config import sessionimport
 from chrono_ftp.core import colours, credentials
 from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_PORT, SFTP, Connection
 from chrono_ftp.core.errors import CredentialError
+from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.9"
+__version__ = "connectionlist.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Names in message boxes are shown as written, never read as HTML
 # v0.0.9: A tick switches the colour of a connection on; off for a new one
 # v0.0.8: A user name kept after a login shows here
 # v0.0.5: Initial: the saved connections, each with its colour; the fields of the selected one (D-017)
@@ -137,7 +139,7 @@ class ConnectionList(QDialog):
         self.connections = list(loaded.connections)
         self._fill_list()
         if loaded.set_aside is not None:
-            QMessageBox.information(self, WINDOW_TITLE, f"{SET_ASIDE_TEXT}\n{loaded.set_aside}")
+            QMessageBox.information(self, WINDOW_TITLE, box_text(f"{SET_ASIDE_TEXT}\n{loaded.set_aside}"))
 
     def user_accepted(self, name: str, user: str) -> None:
         """A login kept this user name; the fields follow, so Save can't put back the old one."""
@@ -237,7 +239,7 @@ class ConnectionList(QDialog):
         edited = self.selected()
         connection = self.from_fields()
         if any(other.name == connection.name and other is not edited for other in self.connections):
-            QMessageBox.information(self, WINDOW_TITLE, SAME_NAME_TEXT)
+            QMessageBox.information(self, WINDOW_TITLE, box_text(SAME_NAME_TEXT))
             return
         try:
             if edited is not None and edited.name != connection.name:
@@ -248,7 +250,7 @@ class ConnectionList(QDialog):
             if self.password.text():
                 credentials.store.write(connection.name, self.password.text())
         except CredentialError as error:
-            QMessageBox.information(self, WINDOW_TITLE, str(error))
+            QMessageBox.information(self, WINDOW_TITLE, box_text(str(error)))
         self.connections = [other for other in self.connections if other is not edited] + [connection]
         saved.save(self.connections)
         self._fill_list()
@@ -264,7 +266,7 @@ class ConnectionList(QDialog):
         connection = self.selected()
         if connection is None:
             return
-        answer = QMessageBox.question(self, WINDOW_TITLE, DELETE_TEXT.format(name=connection.name))
+        answer = QMessageBox.question(self, WINDOW_TITLE, box_text(DELETE_TEXT.format(name=connection.name)))
         if answer != QMessageBox.StandardButton.Yes:
             return
         self.connections = [other for other in self.connections if other is not connection]
@@ -272,7 +274,7 @@ class ConnectionList(QDialog):
         try:
             credentials.store.remove(connection.name)
         except CredentialError as error:
-            QMessageBox.information(self, WINDOW_TITLE, str(error))
+            QMessageBox.information(self, WINDOW_TITLE, box_text(str(error)))
         self._fill_list()
         self.clear_fields()
 
@@ -285,7 +287,7 @@ class ConnectionList(QDialog):
         self.connections.extend(new)
         saved.save(self.connections)
         self._fill_list()
-        QMessageBox.information(self, WINDOW_TITLE, f"{len(new)} connections were added.")
+        QMessageBox.information(self, WINDOW_TITLE, box_text(f"{len(new)} connections were added."))
 
     def _connect(self, *_ignored: object) -> None:
         connection = self.selected()

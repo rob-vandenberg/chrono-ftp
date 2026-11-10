@@ -1,6 +1,8 @@
 import os
+import shutil
 import signal
 import sys
+import tempfile
 from collections.abc import Generator
 from pathlib import Path
 from types import FrameType
@@ -10,9 +12,12 @@ import pytest
 from chrono_ftp.core import credentials
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 0.0.6"
+__version__ = "conftest.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The whole run has settings folders of its own, so a thread that outlives its test never reaches the real ones; the run fails
+#          when the real settings folder of Chrono FTP gained or changed anything; nor the real data folder, also when it appears; each
+#          test has a home folder of the run, so no test reads this computer's own known hosts
 # v0.0.6: Nor the real data folder
 # v0.0.5: No test touches the real connection list or credential store
 # v0.0.3: The window tests get their plugin (tests/ui/uiplugin.py)
@@ -22,6 +27,43 @@ pytest_plugins = ["tests.ui.uiplugin"]
 
 # Qt runs without a screen in the tests; set before anything creates the application object.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# The real settings and data folders of Chrono FTP, as the person's environment names them: only looked at, never written.
+REAL_HOME: Path = Path.home()
+REAL_SETTINGS: Path = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "chrono-ftp"
+REAL_DATA: Path = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "chrono-ftp"
+THERE: tuple[int, int] = (-1, -1)  # what a snapshot notes for the folder itself, so a folder that appears, even empty, is a change
+
+
+def _snapshot(folder: Path) -> dict[str, tuple[int, int]]:
+    """The folder itself and every file under it with its size and change time; empty when the folder is not there."""
+    found: dict[str, tuple[int, int]] = {".": THERE} if os.path.lexists(folder) else {}
+    for path in sorted(folder.rglob("*")) if folder.is_dir() else []:
+        details = path.lstat()
+        found[str(path.relative_to(folder))] = (details.st_size, details.st_mtime_ns)
+    return found
+
+
+REAL_FOLDERS_BEFORE: dict[Path, dict[str, tuple[int, int]]] = {folder: _snapshot(folder) for folder in (REAL_SETTINGS, REAL_DATA)}
+
+# Settings folders of this run, set before any test or thread can ask for one: a test sets its own on top, and what it puts back when it
+# ends is this, never the real one, also for a transfer thread that is still ending after its test.
+RUN_SETTINGS: Path = Path(tempfile.mkdtemp(prefix="chrono-ftp-tests-"))
+os.environ["XDG_CONFIG_HOME"] = str(RUN_SETTINGS / "config")
+os.environ["XDG_DATA_HOME"] = str(RUN_SETTINGS / "data")
+RUN_HOME: Path = RUN_SETTINGS / "home"  # the home folder of every test but the live ones: no ~/.ssh/known_hosts of this computer
+RUN_HOME.mkdir()
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """The run fails when a real folder of Chrono FTP appeared, went, or gained, lost or changed a file while it ran."""
+    shutil.rmtree(RUN_SETTINGS, ignore_errors=True)
+    for folder, before in REAL_FOLDERS_BEFORE.items():
+        after = _snapshot(folder)
+        if after != before:
+            changed = sorted(name for name in set(after) | set(before) if after.get(name) != before.get(name))
+            sys.stderr.write(f"\nThe real folder {folder} changed during the tests: {', '.join(changed)}\n")
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 TEST_TIME_LIMIT_SECONDS: int = 20  # no test should ever need longer; a test may never hang
 
@@ -72,3 +114,11 @@ def memory_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MemoryStore
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     return store
+
+
+@pytest.fixture(autouse=True)
+def home_of_the_run(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whether a test's server is trusted depends on the test alone, never on this computer's ~/.ssh/known_hosts. The live tests keep
+    the real home folder: they reach a real server with this computer's own key and known hosts."""
+    if request.node.get_closest_marker("live") is None:
+        monkeypatch.setenv("HOME", str(RUN_HOME))

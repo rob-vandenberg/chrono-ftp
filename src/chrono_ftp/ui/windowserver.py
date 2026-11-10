@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import override
 
@@ -18,11 +19,15 @@ from chrono_ftp.ui.comparedialog import CompareDialog, uploads
 from chrono_ftp.ui.searchdialog import SearchDialog
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WindowBase
+from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowserver.py 0.0.11"
+__version__ = "windowserver.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Synchronize does exactly the ticked rows: no overwrite question and no "only newer", with the dates, rights and resume of
+#          Settings; names in message boxes are shown as plain text, long ones shortened in their middle; a Synchronize whose connection
+#          was lost meanwhile queues nothing and says so in a box
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
@@ -36,7 +41,7 @@ class ServerPart(WindowBase):
         session, folder, _chosen = screen
         name = self._ask_text("New folder", "Name of the new folder")
         if name and not safe_name(name):
-            QMessageBox.information(self, "New folder", NOT_A_NAME_TEXT)
+            QMessageBox.information(self, "New folder", box_text(NOT_A_NAME_TEXT))
         elif name:
             path = joined(folder, name)
             self._ask(session, lambda remote: remote.make_folder(path), self._then_refresh(session))
@@ -50,10 +55,10 @@ class ServerPart(WindowBase):
         if name == shown_name(chosen[0].name).strip():
             return
         if name and not safe_name(name):
-            QMessageBox.information(self, "Rename", NOT_A_NAME_TEXT)
+            QMessageBox.information(self, "Rename", box_text(NOT_A_NAME_TEXT))
             return
         if name and name in {entry.name for entry in session.entries}:
-            QMessageBox.information(self, "Rename", commands.TARGET_EXISTS_TEXT)
+            QMessageBox.information(self, "Rename", box_text(commands.TARGET_EXISTS_TEXT))
             return
         if name:
             old, new = joined(folder, chosen[0].name), joined(folder, name)
@@ -102,8 +107,8 @@ class ServerPart(WindowBase):
         if screen is None or not screen[2]:
             return
         session, folder, chosen = screen
-        names = ", ".join(shown_name(entry.name) for entry in chosen)
-        if QMessageBox.question(self, "Delete", f"Delete in {shown_name(folder)} on the server: {names}?") != QMessageBox.StandardButton.Yes:
+        names = ", ".join(fitting(shown_name(entry.name), self) for entry in chosen)
+        if QMessageBox.question(self, "Delete", box_text(f"Delete in {fitting(shown_name(folder), self)} on the server: {names}?")) != QMessageBox.StandardButton.Yes:
             return
 
         finished: list[str] = []  # a refusal halfway: what went before it is gone all the same
@@ -126,7 +131,7 @@ class ServerPart(WindowBase):
             return
         lines = dialog.commands_for(paths)
         text = "This will run on the server:\n\n" + "\n".join(shown_name(line) for line in lines) + "\n\nGo ahead?"  # OR-6: the exact command, first
-        if QMessageBox.question(self, "Owner and permissions", text) != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "Owner and permissions", box_text(text)) != QMessageBox.StandardButton.Yes:
             return
 
         def work(remote: RemoteConnection) -> None:
@@ -185,13 +190,18 @@ class ServerPart(WindowBase):
             dialog.show_failure(shown_name(str(error)))
 
         def copy(rows: list[Found]) -> None:
+            # The ticked rows are the decision: no overwrite question and no "only newer"; dates, rights and resume as in Settings.
+            if session not in self.sessions or not session.alive or session.remote is not remote:
+                self._lost_meanwhile(session)  # nothing is queued: the tab is grey, and Reconnect brings it back
+                return
+            options = replace(self.settings.transfer_options, ask_before_replacing=False, only_newer=False)
             for row in rows:
                 here = os.path.join(local_folder, row.folder) if row.folder else local_folder
                 there = joined(folder, row.folder) if row.folder else folder
                 if uploads(row):
-                    self._add_job(session, os.path.join(here, row.name), there, True, row.name)
+                    self._add_job(session, os.path.join(here, row.name), there, True, row.name, options)
                 else:
-                    self._add_job(session, here, joined(there, row.name), False, row.name)
+                    self._add_job(session, here, joined(there, row.name), False, row.name, options)
 
         dialog.copy_requested.connect(copy)
         session.worker.submit(lambda: compare_folders(remote, local_folder, folder), show, failed)

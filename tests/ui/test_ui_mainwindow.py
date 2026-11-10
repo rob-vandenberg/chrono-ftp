@@ -15,11 +15,13 @@ from chrono_ftp.ui.localside import NO_ACCESS_TEXT, LocalSide
 from chrono_ftp.ui.mainwindow import MainWindow
 from chrono_ftp.ui.remoteside import NOT_CONNECTED_TEXT, RemoteSide
 from chrono_ftp.ui.settingsdialog import SettingsDialog
+from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.11"
+__version__ = "test_ui_mainwindow.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Tests that need a refusal by the rights of a folder skip as root
 # v0.0.11: An answer of a thread after the window closed goes nowhere
 # v0.0.7: One row of buttons
 # v0.0.6: The shared file list
@@ -191,6 +193,7 @@ def test_a_closed_folder_is_shown_as_closed(qtbot: QtBot, tmp_path: Path, rights
         closed.chmod(0o755)
 
 
+@NOT_AS_ROOT
 def test_the_arrow_keys_pass_through_a_closed_folder_in_the_tree(qtbot: QtBot, tmp_path: Path) -> None:
     for name in ("a", "b", "c"):
         (tmp_path / name).mkdir()
@@ -299,6 +302,7 @@ def test_a_folder_removed_and_made_again_is_watched_again(qtbot: QtBot, tmp_path
     qtbot.waitUntil(lambda: local.folder == str(tmp_path))
 
 
+@NOT_AS_ROOT
 def test_a_folder_opened_while_shown_shows_its_files(qtbot: QtBot, tmp_path: Path) -> None:
     folder = tmp_path / "f"
     folder.mkdir()
@@ -316,6 +320,7 @@ def test_a_folder_opened_while_shown_shows_its_files(qtbot: QtBot, tmp_path: Pat
         folder.chmod(0o755)
 
 
+@NOT_AS_ROOT
 def test_a_folder_closed_while_shown_is_shown_as_closed(qtbot: QtBot, tmp_path: Path) -> None:
     folder = tmp_path / "f"
     folder.mkdir()
@@ -332,6 +337,7 @@ def test_a_folder_closed_while_shown_is_shown_as_closed(qtbot: QtBot, tmp_path: 
         folder.chmod(0o755)
 
 
+@NOT_AS_ROOT
 def test_a_closed_folder_read_earlier_shows_nothing(qtbot: QtBot, tmp_path: Path) -> None:
     folder = tmp_path / "f"
     folder.mkdir()
@@ -366,6 +372,7 @@ def test_another_folder_renamed_to_the_same_name_is_read_anew(qtbot: QtBot, tmp_
     assert local.folder == str(old)
 
 
+@NOT_AS_ROOT
 def test_a_closed_folder_keeps_the_column_names(qtbot: QtBot, tmp_path: Path) -> None:
     closed = tmp_path / "closed"
     closed.mkdir()

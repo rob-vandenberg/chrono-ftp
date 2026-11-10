@@ -11,11 +11,13 @@ from chrono_ftp.connections.base import RemoteEntry, joined, parent_of, shown_na
 from chrono_ftp.core import colours
 from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, button_row
 from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, mask_text, summary_text
+from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.9"
+__version__ = "remoteside.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The count line is shown as written, never read as HTML
 # v0.0.9: A connection without a colour looks like the left side
 # v0.0.7: One row of buttons
 # v0.0.6: The shared file list; a path travels as an object, so a name that is not valid UTF-8 stays what it is
@@ -52,7 +54,7 @@ class RemoteSide(QWidget):
         self.navigation = NavigationBar()
         self.actions_bar = action_bar()
         self.path_line = QLineEdit(NOT_CONNECTED_TEXT)
-        self.count_label = QLabel()
+        self.count_label = plain_label()
         self.history = FolderHistory()
         self.home_folder: str = ""
         self.folder: str = ""

@@ -1,9 +1,12 @@
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
+from chrono_ftp.ui.plaintext import plain_label
+
 # --- Version ------------------------------------------------------------
-__version__ = "logindialog.py 0.0.8"
+__version__ = "logindialog.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The name of the connection is shown as written, never read as HTML
 # v0.0.8: Initial: user and password in one window; the cursor stands where the person has to type (D-040)
 
 WINDOW_TITLE: str = "Log in"
@@ -32,7 +35,7 @@ class LoginDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        heading = QLabel(connection_name)
+        heading = plain_label(connection_name)
         font = heading.font()
         font.setBold(True)
         heading.setFont(font)

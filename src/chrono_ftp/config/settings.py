@@ -1,14 +1,16 @@
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import cast
 
 from chrono_ftp.config.connections import config_folder
+from chrono_ftp.core.transferoptions import RESUME_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.6"
+__version__ = "settings.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: The default transfer options and whether the transfer window shows (FB-01, FB-09); each value is checked on load
 # v0.0.6: Hidden files; the window's sizes are remembered
 # v0.0.5: Initial: the settings of the program; a bad value gives the standard one (OR-15)
 
@@ -24,6 +26,32 @@ TREE_PLACES: tuple[str, ...] = (TREE_LEFT, TREE_ABOVE, TREE_HIDDEN)
 class Settings:
     tree_place: str = TREE_LEFT
     show_hidden: bool = True
+    transfer_options: TransferOptions = field(default_factory=TransferOptions)
+    show_transfer_window: bool = True
+
+
+def _transfer_options(data: object) -> TransferOptions:
+    """Each value on its own: a bad one gives its standard value, the others stay (OR-15). A move is never a default."""
+    standard = TransferOptions()
+    found = cast(dict[str, object], data) if isinstance(data, dict) else {}
+
+    def flag(name: str, default: bool) -> bool:
+        value = found.get(name)
+        return value if isinstance(value, bool) else default
+
+    resume = found.get("resume")
+    rights = found.get("rights")
+    return TransferOptions(
+        resume=resume if isinstance(resume, str) and resume in RESUME_MODES else standard.resume,
+        ask_before_replacing=flag("ask_before_replacing", standard.ask_before_replacing),
+        only_newer=flag("only_newer", standard.only_newer),
+        keep_timestamps=flag("keep_timestamps", standard.keep_timestamps),
+        set_rights=flag("set_rights", standard.set_rights),
+        rights=rights if isinstance(rights, str) and rights_valid(rights) else standard.rights,
+        add_x_to_folders=flag("add_x_to_folders", standard.add_x_to_folders),
+        ignore_rights_errors=flag("ignore_rights_errors", standard.ignore_rights_errors),
+        count_first=flag("count_first", standard.count_first),
+    )
 
 
 def _read(name: str) -> dict[str, object]:
@@ -49,11 +77,21 @@ def load() -> Settings:
     data = _read(FILE_NAME)
     place = data.get("tree_place")
     hidden = data.get("show_hidden")
-    return Settings(place if isinstance(place, str) and place in TREE_PLACES else TREE_LEFT, hidden if isinstance(hidden, bool) else True)
+    window = data.get("show_transfer_window")
+    return Settings(
+        place if isinstance(place, str) and place in TREE_PLACES else TREE_LEFT,
+        hidden if isinstance(hidden, bool) else True,
+        _transfer_options(data.get("transfer_options")),
+        window if isinstance(window, bool) else True,
+    )
 
 
 def save(settings: Settings) -> None:
-    _write(FILE_NAME, json.dumps(asdict(settings), indent=2))
+    data = asdict(settings)
+    options = data["transfer_options"]
+    if isinstance(options, dict):
+        options.pop("delete_source", None)  # a move is chosen for one transfer, never kept
+    _write(FILE_NAME, json.dumps(data, indent=2))
 
 
 def load_window() -> dict[str, str]:

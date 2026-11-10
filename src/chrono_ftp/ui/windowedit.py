@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable
+from dataclasses import replace
 from typing import override
 
 from PySide6.QtWidgets import QMessageBox
@@ -12,12 +13,19 @@ from chrono_ftp.connections.base import joined, RemoteConnection, RemoteEntry, s
 from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.session import EditedFile, is_at_or_below, login_of, no_progress, same_server, Session
 from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES, NOT_OPENABLE_TEXT, WINDOW_TITLE, WindowBase
+from chrono_ftp.ui.plaintext import asked, box_text, fitting, told, wrapped
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowedit.py 0.0.11"
+__version__ = "windowedit.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: A save goes with the default transfer options, never asks the overwrite question, is never skipped as not newer, and never
+#          changes the rights of the file on the server; names in message boxes are shown as written; a pending edit whose copy is gone
+#          leaves no empty folder behind; long names in its message boxes are shortened in their middle, but the path of a copy with
+#          unsent changes is shown whole, over several lines, and unbroken in the box's details, to copy
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
+
+EDIT_FOLDER_PREFIX: str = "chrono-ftp-edit-"
 
 
 class EditPart(WindowBase):
@@ -28,26 +36,37 @@ class EditPart(WindowBase):
         return [copy for copy, edited in self.edited.items() if edited.session is session]
 
     @override
+    def _unsent_paths(self, copies: list[str]) -> str:
+        """The paths of the copies whose changes are not on the server yet, each whole on a line of its own: the box's details."""
+        return "\n".join(copy for copy in copies if copy in self.edited and self.edited[copy].pending)
+
+    @override
     def _edits_text(self, copies: list[str]) -> str:
         """What the person should know before these files lose their way back to the server."""
         known = [copy for copy in copies if copy in self.edited]
         waiting = [copy for copy in known if self.edited[copy].pending]
-        others = [shown_name(self.edited[copy].name) for copy in known if not self.edited[copy].pending]
+        others = [fitting(shown_name(self.edited[copy].name), self) for copy in known if not self.edited[copy].pending]
         lines: list[str] = []
         if waiting:
-            lines.append(f"Saved, but not on the server yet. Your copy stays here:\n{chr(10).join(waiting)}")
+            lines.append(f"Saved, but not on the server yet. Your copy stays here:\n{chr(10).join(wrapped(copy, self) for copy in waiting)}")
         if others:
             lines.append(f"Open for editing: {', '.join(others)}. What you save after this no longer goes to the server.")
         return "\n\n".join(lines) + "\n\n"
 
     @override
     def _forget_edits(self, copies: list[str]) -> None:
-        """A copy with changes that never reached the server stays on the disk: it may be the only one."""
+        """A copy with changes that never reached the server stays on the disk: it may be the only one. When that copy is gone itself
+        (its program removed or moved it), its folder goes once nothing else is in it."""
         for copy in copies:
             edited = self.edited.pop(copy, None)
             self.edit_watcher.removePath(copy)
             if edited is None or not edited.pending:
                 shutil.rmtree(os.path.dirname(copy), ignore_errors=True)
+            elif not os.path.lexists(copy):
+                try:
+                    os.rmdir(os.path.dirname(copy))
+                except OSError:
+                    pass  # something else is in it, perhaps the program's own copy: it stays
 
     def _remote_file_opened(self, entry: RemoteEntry) -> None:
         screen = self._on_screen()
@@ -62,7 +81,7 @@ class EditPart(WindowBase):
 
     def _edit_entry(self, session: Session, folder: str, name: str) -> None:
         if shown_name(name) != name:
-            QMessageBox.information(self, WINDOW_TITLE, NOT_OPENABLE_TEXT)
+            QMessageBox.information(self, WINDOW_TITLE, box_text(NOT_OPENABLE_TEXT))
             return
         already = next((copy for copy, edited in self.edited.items() if same_server(edited.session, session) and edited.folder == folder and edited.name == name), None)
         if already is not None and self.edited[already].pending:
@@ -73,7 +92,7 @@ class EditPart(WindowBase):
             return
         self.fetching.add(place)
         saves_before = self.edited[already].saves if already is not None else 0
-        temporary = tempfile.mkdtemp(prefix="chrono-ftp-edit-")
+        temporary = tempfile.mkdtemp(prefix=EDIT_FOLDER_PREFIX)
         copy = os.path.join(temporary, name)
 
         def fetch(connection: RemoteConnection) -> None:
@@ -129,7 +148,9 @@ class EditPart(WindowBase):
                 continue  # one on its way: its end looks again
             if edited.session.alive:
                 edited.unsent = False
-                edited.job = self._add_job(edited.session, copy, edited.folder, True, edited.name)
+                # The save is what the person wants there: no question, never skipped as not newer, and the file keeps its own rights.
+                options = replace(self.settings.transfer_options, ask_before_replacing=False, only_newer=False, set_rights=False)
+                edited.job = self._add_job(edited.session, copy, edited.folder, True, edited.name, options)
                 self.status.showMessage(f"Sending {shown_name(edited.name)} back to the server")
             else:
                 self.status.showMessage(f"{shown_name(edited.name)} goes to the server when the connection is back")
@@ -145,8 +166,9 @@ class EditPart(WindowBase):
                 if job is not None:
                     self.queue.stop(job)
             text = self._edits_text(gone)
+            detail = self._unsent_paths(gone)
             self._forget_edits(gone)
-            QMessageBox.information(self, WINDOW_TITLE, f"This file changed its place on the server, so saving no longer sends it there.\n\n{text}".strip())
+            told(self, WINDOW_TITLE, f"This file changed its place on the server, so saving no longer sends it there.\n\n{text}".strip(), detail)
 
     @override
     def _gone_and_refresh(self, session: Session, folder: str, names: list[str]) -> Callable[[object], None]:
@@ -174,10 +196,10 @@ class EditPart(WindowBase):
         edited.after_reconnect = job.state == State.FAILED
         if job.state == State.STOPPED:
             return
-        name = shown_name(edited.name)
+        name = fitting(shown_name(edited.name), self)
         self.status.showMessage(f"{name} is not on the server yet")
         copy = next(path for path, item in self.edited.items() if item is edited)
-        text = f"{name} could not go to the server: {shown_name(job.message)}\n\nYour changes are kept here:\n{copy}\n\nTry again now?"
-        if QMessageBox.question(self, WINDOW_TITLE, text) == QMessageBox.StandardButton.Yes:
+        text = f"{name} could not go to the server: {shown_name(job.message)}\n\nYour changes are kept here:\n{wrapped(copy, self)}\n\nTry again now?"
+        if asked(self, WINDOW_TITLE, text, copy):  # the path also whole, to copy, in the details
             edited.held = False
             self._send_edited_files()

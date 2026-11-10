@@ -12,11 +12,13 @@ from chrono_ftp.connections.base import shown_name
 from chrono_ftp.core.errors import LocalActionFailed
 from chrono_ftp.engine import localfiles
 from chrono_ftp.ui.windowbase import NOT_OPENABLE_TEXT, WINDOW_TITLE, WindowBase
+from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlocal.py 0.0.11"
+__version__ = "windowlocal.py 0.0.12"
 
 # --- Version history ----------------------------------------------------
+# v0.0.12: Names in message boxes are shown as written, never read as HTML, long ones shortened in their middle
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
@@ -27,13 +29,13 @@ class LocalPart(WindowBase):
         try:
             work()
         except LocalActionFailed as error:
-            QMessageBox.information(self, WINDOW_TITLE, str(error))
+            QMessageBox.information(self, WINDOW_TITLE, box_text(str(error)))
         self.local_side.refresh()
 
     @override
     def _open_local_file(self, path: str) -> None:
         if shown_name(path) != path:  # Qt would change the name, and open another file
-            QMessageBox.information(self, WINDOW_TITLE, NOT_OPENABLE_TEXT)
+            QMessageBox.information(self, WINDOW_TITLE, box_text(NOT_OPENABLE_TEXT))
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
@@ -61,10 +63,10 @@ class LocalPart(WindowBase):
         paths = self.local_side.selected_paths()
         if not paths:
             return
-        names = ", ".join(shown_name(Path(path).name) for path in paths)
-        if QMessageBox.question(self, "Delete", f"Move to the Trash from {shown_name(self.local_side.folder)}: {names}?") != QMessageBox.StandardButton.Yes:
+        names = ", ".join(fitting(shown_name(Path(path).name), self) for path in paths)
+        if QMessageBox.question(self, "Delete", box_text(f"Move to the Trash from {fitting(shown_name(self.local_side.folder), self)}: {names}?")) != QMessageBox.StandardButton.Yes:
             return
-        left = [shown_name(Path(path).name) for path in paths if not cast(object, QFile.moveToTrash(path)) is True]  # a plain bool, whatever the stub says
+        left = [fitting(shown_name(Path(path).name), self) for path in paths if not cast(object, QFile.moveToTrash(path)) is True]  # a plain bool, whatever the stub says
         if left:
-            QMessageBox.information(self, "Delete", f"These could not go to the Trash and are still here: {', '.join(left)}")
+            QMessageBox.information(self, "Delete", box_text(f"These could not go to the Trash and are still here: {', '.join(left)}"))
         self.local_side.refresh()
