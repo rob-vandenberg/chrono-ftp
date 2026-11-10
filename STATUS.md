@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.18: the buttons under the list and under the fields of the connections window stand on one line.
+Version 0.0.19: Import… and Export… stand next to each other on the left under the list of the connections window.
+
+Before that, 0.0.18: the buttons under the list and under the fields of the connections window stand on one line.
 
 Before that, 0.0.17: the connections window is laid out as the reference program: Import… and Export… (greyed for now) under the list; Connect, Duplicate and Delete in the right-click menu of a connection; New, Save and Connect under the fields, which can now be made narrow. Duplicate saves a copy with its password, ready to be renamed (D-050).
 

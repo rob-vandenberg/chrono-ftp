@@ -33,9 +33,10 @@ from chrono_ftp.core.errors import CredentialError
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.18"
+__version__ = "connectionlist.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: Import… and Export… next to each other on the left
 # v0.0.18: The buttons under the list and under the fields stand on one line, as the two sides have the same top and bottom
 # v0.0.17: Laid out as the reference program: Import… and Export… under the list; Connect, Duplicate and Delete in the right-click
 #          menu of a connection; New, Save and Connect under the fields; Duplicate copies a connection with its password
@@ -137,8 +138,8 @@ class ConnectionList(QDialog):
         self.parts.setChildrenCollapsible(False)
         list_buttons = QHBoxLayout()
         list_buttons.addWidget(self.import_button)
-        list_buttons.addStretch(1)
         list_buttons.addWidget(self.export_button)
+        list_buttons.addStretch(1)
         list_side = QVBoxLayout()
         list_side.setContentsMargins(0, 0, 0, 0)
         list_side.addWidget(self.list)

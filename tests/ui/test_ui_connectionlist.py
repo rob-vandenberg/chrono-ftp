@@ -11,9 +11,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.18"
+__version__ = "test_ui_connectionlist.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: Export… stands right next to Import…
 # v0.0.18: The buttons under the list and under the fields stand on one line
 # v0.0.17: Delete is in the right-click menu; Duplicate; Import… and a greyed Export… under the list; the fields can be made narrow
 # v0.0.9: The optional colour
@@ -262,3 +263,11 @@ def test_the_buttons_under_the_list_and_under_the_fields_stand_on_one_line(qtbot
         window.show()
     bottoms = {button.mapTo(window, button.rect().bottomLeft()).y() for button in (window.import_button, window.export_button, window.new_button, window.save_button, window.connect_button)}
     assert len(bottoms) == 1
+
+
+def test_export_stands_right_next_to_import(qtbot: QtBot) -> None:
+    window = window_with(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    gap = window.export_button.geometry().left() - window.import_button.geometry().right()
+    assert 0 < gap < window.import_button.width() // 4  # the layout's own spacing, never the stretch

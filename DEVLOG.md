@@ -83,3 +83,7 @@ Import… and Export… (greyed until export exists, with a hover text) under th
 ## 0.0.18 (2026-11-10): the buttons of the connections window on one line
 
 The fields side had its own top and bottom margin and the list side none, so its buttons stood higher than Import… and Export…. Both sides now start and end at the same height; a test checks that all five buttons stand on one line.
+
+## 0.0.19 (2026-11-10): Import… and Export… side by side
+
+Export… stands right next to Import… on the left under the list of the connections window, instead of at the right edge; a test checks it.
