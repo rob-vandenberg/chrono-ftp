@@ -36,9 +36,10 @@ from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.29"
+__version__ = "connectionlist.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: start_on: the window starts on the connection that was last live, in view; the top one when it is gone (D-053)
 # v0.0.29: The right-click menu opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.27: select_connection, for Edit in the right-click menu of a tab
 # v0.0.25: Connect with unsaved changes asks "Save changes?" first: Save, Don't Save or Cancel
@@ -329,6 +330,13 @@ class ConnectionList(QDialog):
         """Selects this connection, its fields shown and ready to change."""
         self._select(name)
         self.name.setFocus()
+
+    def start_on(self, name: str) -> None:
+        """Selects this connection and scrolls it into view; a name that is not in the list leaves the window as it was."""
+        self._select(name)
+        item = self.list.currentItem()
+        if item is not None:
+            self.list.scrollToItem(item)
 
     def _select(self, name: str) -> None:
         for row in range(self.list.count()):

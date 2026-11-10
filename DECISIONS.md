@@ -9,7 +9,7 @@ The design decisions of Chrono FTP, and how they are kept ([[D-024]]):
 
 **Read only what your task needs.** Read this file in full; then open only the topics and decisions that concern your task.
 
-**A new decision** gets the next number (next: **D-053**). Write its two files, add it to its topic files, and to the core decisions below only when it binds all work. The short version says what is decided and why, in two or three sentences. **When a decision changes,** first copy its old wording, dated, to the end of its details file, then rewrite both. A decision that no longer holds becomes "→" and the number of the decision that replaced it. References are written inside double square brackets, so Obsidian can draw the graph.
+**A new decision** gets the next number (next: **D-054**). Write its two files, add it to its topic files, and to the core decisions below only when it binds all work. The short version says what is decided and why, in two or three sentences. **When a decision changes,** first copy its old wording, dated, to the end of its details file, then rewrite both. A decision that no longer holds becomes "→" and the number of the decision that replaced it. References are written inside double square brackets, so Obsidian can draw the graph.
 
 ## Core decisions (they bind all work)
 

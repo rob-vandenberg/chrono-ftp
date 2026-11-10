@@ -2,7 +2,7 @@
 
 ## Now
 
-Version 0.0.30: the right side shows the connection colour again: the menu style is given to each menu, not to the whole program, where it kept the right side grey; the menu border is a visible grey (D-052). Before that, version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
+Version 0.0.31: the connection that last went live is remembered, and at start the connections window opens on it, selected and in view; when it is gone, the window starts as before (D-053). Before that, version 0.0.30: the right side shows the connection colour again: the menu style is given to each menu, not to the whole program, where it kept the right side grey; the menu border is a visible grey (D-052). Before that, version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
 
 Before that, 0.0.28: the menu of a tab is a menu of normal width with an icon, and its entry says "Edit settings…".
 

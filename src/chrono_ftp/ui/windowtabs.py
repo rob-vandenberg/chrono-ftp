@@ -10,6 +10,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QMessageBox
 
 from chrono_ftp.config import connections as saved_connections
+from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import RemoteConnection, UnknownServer
 from chrono_ftp.connections.factory import remote_connection
@@ -27,9 +28,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.29"
+__version__ = "windowtabs.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: The connection that goes live is kept as the last one; at start the connections window opens on it (D-053)
 # v0.0.29: The menu of a tab opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.28: The menu of a tab is a full-width menu with an icon; Edit settings…
 # v0.0.27: The right-click menu of a tab: Edit opens the connections window on that connection
@@ -70,6 +72,22 @@ class TabsPart(WindowBase):
             self.connection_list.connect_requested.connect(self.open_connection)
         self.connection_list.show()
         self.connection_list.raise_()
+
+    def show_connection_list_at_start(self) -> None:
+        """The connections window at start, on the connection that was last live (D-053); the top one when that is gone."""
+        self.show_connection_list()
+        assert self.connection_list is not None
+        self.connection_list.start_on(self.settings.last_connection)
+
+    def _keep_as_last(self, session: Session) -> None:
+        name = session.connection.name
+        if name == self.settings.last_connection:
+            return
+        self.settings = replace(self.settings, last_connection=name)
+        try:
+            saved_settings.save(self.settings)
+        except OSError:
+            pass  # a convenience: the connection itself goes on
 
     def tab_menu_for(self, place: QPoint) -> QMenu | None:
         """The right-click menu of the tab at this place in the tab bar; nothing beside the tabs."""
@@ -204,6 +222,7 @@ class TabsPart(WindowBase):
         if session is self.current():
             self.remote_side.home_folder = session.home_folder
         self.status.showMessage(f"Connected to {session.connection.host}")
+        self._keep_as_last(session)
         if session.typed_password and session.password:
             self._store_password(session, session.password)
             session.typed_password = False

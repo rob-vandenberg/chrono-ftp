@@ -131,3 +131,7 @@ On X11 an open menu held the whole keyboard, so the owner's screenshot shortcut 
 ## 0.0.30 (2026-11-10): the connection colour is back, and a visible menu border
 
 Since 0.0.29 the right side stayed grey on a live connection, with the text in the colour's readable shade: the menu style sheet was set on the whole program, and with it the file list kept its first background. `open_menu` in `src/chrono_ftp/ui/menus.py` now gives the style to each menu; `theme.apply` sets none. The menu border was the bevel colour, almost the colour of the window; it is now `MENU_BORDER` (#4a5157) in `src/chrono_ftp/core/colours.py` (D-052). Two tests, both failing on 0.0.29. Still open: the window sizes that come back at their defaults after a restart.
+
+## 0.0.31 (2026-11-10): the connections window starts on the last connection
+
+The connections window started on the top item of its list. The connection that goes live is now written at once to `last_connection` in `settings.json`, and at start the window selects it, scrolls it into view and shows its fields; a deleted or renamed one leaves the window as before, and the settings window keeps the value (D-053). Four tests, all failing on 0.0.30. Still open: the window sizes that come back at their defaults after a restart.

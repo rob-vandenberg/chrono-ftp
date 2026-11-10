@@ -7,9 +7,10 @@ from chrono_ftp.config.connections import config_folder
 from chrono_ftp.core.transferoptions import RESUME_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.13"
+__version__ = "settings.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: The connection that was last live, so the connections window starts on it (D-053)
 # v0.0.13: The queue: whether items start by themselves, how long a finished item stays in the list, and whether an error pauses the
 #          queue (FC-02, FC-03); each value is checked on load; how many transfers run at once (FC-01); splitting large files (FC-05)
 # v0.0.12: The default transfer options and whether the transfer window shows (FB-01, FB-09); each value is checked on load
@@ -39,6 +40,7 @@ class Settings:
     keep_done_seconds: int = KEEP_DONE_SECONDS
     pause_on_error: bool = False  # on: a failed item pauses the items still waiting; off: the queue goes on with the next
     transfers_at_once: int = AT_ONCE
+    last_connection: str = ""  # the name of the connection that was last live; the connections window starts on it (D-053)
 
 
 def keep_done_valid(value: object) -> bool:
@@ -102,6 +104,7 @@ def load() -> Settings:
     keep = data.get("keep_done_seconds")
     pause = data.get("pause_on_error")
     at_once = data.get("transfers_at_once")
+    last = data.get("last_connection")
     return Settings(
         place if isinstance(place, str) and place in TREE_PLACES else TREE_LEFT,
         hidden if isinstance(hidden, bool) else True,
@@ -111,6 +114,7 @@ def load() -> Settings:
         keep if isinstance(keep, int) and keep_done_valid(keep) else KEEP_DONE_SECONDS,
         pause if isinstance(pause, bool) else False,
         at_once if isinstance(at_once, int) and at_once_valid(at_once) else AT_ONCE,
+        last if isinstance(last, str) else "",  # a name that is no longer there selects nothing (OR-15)
     )
 
 

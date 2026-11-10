@@ -1,5 +1,6 @@
 """The right-click menus, the filter, the settings and the remembered sizes of the main window."""
 
+from dataclasses import replace
 from collections.abc import Callable
 
 from PySide6.QtCore import QByteArray, QPoint
@@ -13,9 +14,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.29"
+__version__ = "windowlayout.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: The settings window keeps the last connection, which it does not show (D-053)
 # v0.0.29: The menus of the file lists open through open_menu, which lets go of the keyboard (D-052)
 # v0.0.16: Also the splitter of the connections window
 # v0.0.15: The size and place of the connections window are kept, also when it was not opened this time
@@ -97,7 +99,7 @@ class LayoutPart(WindowBase):
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
         if dialog.exec() == SettingsDialog.DialogCode.Accepted.value:
-            self.settings = dialog.chosen()
+            self.settings = replace(dialog.chosen(), last_connection=self.settings.last_connection)  # not in the settings window
             self._apply_settings()
             try:
                 saved_settings.save(self.settings)

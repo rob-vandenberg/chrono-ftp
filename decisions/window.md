@@ -20,3 +20,4 @@
 18. [[D-050]] The connections window
 19. [[D-051]] One Chrono FTP at a time
 20. [[D-052]] Menus hold the mouse, not the keyboard
+21. [[D-053]] The connections window starts on the last connection
