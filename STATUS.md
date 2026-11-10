@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.17: the connections window is laid out as the reference program: Import… and Export… (greyed for now) under the list; Connect, Duplicate and Delete in the right-click menu of a connection; New, Save and Connect under the fields, which can now be made narrow. Duplicate saves a copy with its password, ready to be renamed (D-050).
+Version 0.0.18: the buttons under the list and under the fields of the connections window stand on one line.
+
+Before that, 0.0.17: the connections window is laid out as the reference program: Import… and Export… (greyed for now) under the list; Connect, Duplicate and Delete in the right-click menu of a connection; New, Save and Connect under the fields, which can now be made narrow. Duplicate saves a copy with its password, ready to be renamed (D-050).
 
 Before that, 0.0.16: the connections window has a splitter between its list and the fields of the selected connection, and the splitter is where it was last time.
 

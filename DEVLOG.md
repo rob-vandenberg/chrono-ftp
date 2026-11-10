@@ -79,3 +79,7 @@ The list of connections and the fields of the selected connection have a splitte
 ## 0.0.17 (2026-11-10): the connections window as the reference program
 
 Import… and Export… (greyed until export exists, with a hover text) under the list; Connect, Duplicate and Delete in the right-click menu of a connection; New, Save and Connect under the fields. The row of five buttons under the fields is gone, so the fields side shrinks to about 300 pixels instead of 492. Duplicate saves a copy named "… (copy)" with its password, selected and ready to be renamed (D-050). Tests for Duplicate, the menu, the buttons under the list and the narrow fields.
+
+## 0.0.18 (2026-11-10): the buttons of the connections window on one line
+
+The fields side had its own top and bottom margin and the list side none, so its buttons stood higher than Import… and Export…. Both sides now start and end at the same height; a test checks that all five buttons stand on one line.

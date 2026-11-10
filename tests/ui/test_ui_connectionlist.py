@@ -11,9 +11,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.17"
+__version__ = "test_ui_connectionlist.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: The buttons under the list and under the fields stand on one line
 # v0.0.17: Delete is in the right-click menu; Duplicate; Import… and a greyed Export… under the list; the fields can be made narrow
 # v0.0.9: The optional colour
 # v0.0.5: Initial
@@ -253,3 +254,11 @@ def test_the_fields_side_can_be_made_narrow(qtbot: QtBot) -> None:
     window = window_with(qtbot)
     fields = window.parts.widget(1)
     assert fields is not None and fields.minimumSizeHint().width() < 400
+
+
+def test_the_buttons_under_the_list_and_under_the_fields_stand_on_one_line(qtbot: QtBot) -> None:
+    window = window_with(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    bottoms = {button.mapTo(window, button.rect().bottomLeft()).y() for button in (window.import_button, window.export_button, window.new_button, window.save_button, window.connect_button)}
+    assert len(bottoms) == 1
