@@ -31,12 +31,14 @@ from chrono_ftp.config import sessionimport
 from chrono_ftp.core import colours, credentials
 from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_PORT, SFTP, Connection
 from chrono_ftp.core.errors import CredentialError
+from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.20"
+__version__ = "connectionlist.py 0.0.21"
 
 # --- Version history ----------------------------------------------------
+# v0.0.21: An eye in the password field while it holds typed text
 # v0.0.20: The labels of the fields keep the style's margin from the splitter again
 # v0.0.19: Import… and Export… next to each other on the left
 # v0.0.18: The buttons under the list and under the fields stand on one line, as the two sides have the same top and bottom
@@ -92,6 +94,7 @@ class ConnectionList(QDialog):
         self.user = QLineEdit()
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_eye = PasswordEye(self.password)
         self.key_file = QLineEdit()
         self.browse_button = QPushButton("Browse")
         self.start_folder = QLineEdit()

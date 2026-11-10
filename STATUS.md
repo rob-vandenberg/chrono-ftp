@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.20: the labels of the connections window keep their room from the splitter again.
+Version 0.0.21: the password fields of the connections window and the login window have an eye that shows or hides what was typed; it shows only while the field holds typed text, so a stored password is never shown.
+
+Before that, 0.0.20: the labels of the connections window keep their room from the splitter again.
 
 Before that, 0.0.19: Import… and Export… stand next to each other on the left under the list of the connections window.
 

@@ -91,3 +91,7 @@ Export… stands right next to Import… on the left under the list of the conne
 ## 0.0.20 (2026-11-10): room between the splitter and the labels
 
 0.0.18 meant to keep the left margin of the fields side, but read it before the layout was on its widget, where it is 0, so the labels touched the splitter. The margin is now the style's own; top and bottom stay 0, so the buttons stay on one line. A test checks the room.
+
+## 0.0.21 (2026-11-10): an eye in the password fields
+
+The password fields of the connections window and the login window have an eye (the Breeze icons view-visible and view-hidden) that shows or hides what was typed. It appears only while the field holds typed text; an emptied field, also when another connection is chosen, hides the password again. A stored password is never in the field, so it can never be shown. Tests in `tests/ui/test_ui_passwordeye.py`.

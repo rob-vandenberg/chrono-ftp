@@ -1,11 +1,13 @@
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
+from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "logindialog.py 0.0.12"
+__version__ = "logindialog.py 0.0.21"
 
 # --- Version history ----------------------------------------------------
+# v0.0.21: An eye in the password field while it holds typed text
 # v0.0.12: The name of the connection is shown as written, never read as HTML
 # v0.0.8: Initial: user and password in one window; the cursor stands where the person has to type (D-040)
 
@@ -25,6 +27,7 @@ class LoginDialog(QDialog):
         self.user = QLineEdit(user)
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_eye = PasswordEye(self.password)
         form = QFormLayout()
         form.setVerticalSpacing(ROW_GAP)
         form.setHorizontalSpacing(ROW_GAP)
