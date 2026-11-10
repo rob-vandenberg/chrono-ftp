@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -33,9 +34,10 @@ from chrono_ftp.core.errors import CredentialError
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.19"
+__version__ = "connectionlist.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: The labels of the fields keep the style's margin from the splitter again
 # v0.0.19: Import… and Export… next to each other on the left
 # v0.0.18: The buttons under the list and under the fields stand on one line, as the two sides have the same top and bottom
 # v0.0.17: Laid out as the reference program: Import… and Export… under the list; Connect, Duplicate and Delete in the right-click
@@ -128,7 +130,8 @@ class ConnectionList(QDialog):
         buttons.addStretch(1)
         buttons.addWidget(self.connect_button)
         right = QVBoxLayout()
-        right.setContentsMargins(right.contentsMargins().left(), 0, 0, 0)  # the list side has none: both sides start and end at the same height
+        margin = self.style().pixelMetric(QStyle.PixelMetric.PM_LayoutLeftMargin)
+        right.setContentsMargins(margin, 0, 0, 0)  # room from the splitter; no top or bottom, as the list side: both start and end at one height
         right.addLayout(form)
         right.addStretch(1)
         right.addLayout(buttons)

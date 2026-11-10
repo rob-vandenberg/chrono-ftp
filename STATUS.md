@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.19: Import… and Export… stand next to each other on the left under the list of the connections window.
+Version 0.0.20: the labels of the connections window keep their room from the splitter again.
+
+Before that, 0.0.19: Import… and Export… stand next to each other on the left under the list of the connections window.
 
 Before that, 0.0.18: the buttons under the list and under the fields of the connections window stand on one line.
 

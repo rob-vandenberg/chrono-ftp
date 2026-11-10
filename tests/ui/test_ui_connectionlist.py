@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import pytest
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QMessageBox
+from PySide6.QtWidgets import QColorDialog, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import connections
@@ -11,9 +11,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.19"
+__version__ = "test_ui_connectionlist.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: The labels of the fields are not against the splitter
 # v0.0.19: Export… stands right next to Import…
 # v0.0.18: The buttons under the list and under the fields stand on one line
 # v0.0.17: Delete is in the right-click menu; Duplicate; Import… and a greyed Export… under the list; the fields can be made narrow
@@ -271,3 +272,13 @@ def test_export_stands_right_next_to_import(qtbot: QtBot) -> None:
         window.show()
     gap = window.export_button.geometry().left() - window.import_button.geometry().right()
     assert 0 < gap < window.import_button.width() // 4  # the layout's own spacing, never the stretch
+
+
+def test_the_labels_of_the_fields_are_not_against_the_splitter(qtbot: QtBot) -> None:
+    window = window_with(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    fields = window.parts.widget(1)
+    assert fields is not None
+    assert window.name.parentWidget() is fields
+    assert min(child.geometry().left() for child in fields.findChildren(QLabel)) >= 6

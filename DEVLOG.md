@@ -87,3 +87,7 @@ The fields side had its own top and bottom margin and the list side none, so its
 ## 0.0.19 (2026-11-10): Import… and Export… side by side
 
 Export… stands right next to Import… on the left under the list of the connections window, instead of at the right edge; a test checks it.
+
+## 0.0.20 (2026-11-10): room between the splitter and the labels
+
+0.0.18 meant to keep the left margin of the fields side, but read it before the layout was on its widget, where it is 0, so the labels touched the splitter. The margin is now the style's own; top and bottom stay 0, so the buttons stay on one line. A test checks the room.
