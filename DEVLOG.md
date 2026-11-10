@@ -71,3 +71,7 @@ Still open: the first installer must install the icon (`packaging/` does not exi
 ## 0.0.15 (2026-11-10): the connections window keeps its size and place
 
 The size and place of the connections window are kept in the window file with the main window's sizes, when the main window closes; a run that does not open it keeps the place it had. A saved place on a screen that is gone is brought back onto a screen by Qt. Two tests: after a restart, and after a run without the window.
+
+## 0.0.16 (2026-11-10): a splitter in the connections window
+
+The list of connections and the fields of the selected connection have a splitter between them; a wider window widens the fields. Its place is kept in the window file with the size and place of the window. A test: the splitter is where it was after a restart.

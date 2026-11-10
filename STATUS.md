@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.15: the connections window opens with the size and place it had last time, also after a run in which it was not opened.
+Version 0.0.16: the connections window has a splitter between its list and the fields of the selected connection, and the splitter is where it was last time.
+
+Before that, 0.0.15: the connections window opens with the size and place it had last time, also after a run in which it was not opened.
 
 Before that, 0.0.14: the program icon. Chrono FTP has its own icon (a folder with FTP and the orange clock of the Chrono programs, `src/chrono_ftp/ui/resources/chrono-ftp.svg`) on every window, the taskbar and Alt+Tab; the windows belong to the start-menu entry `chrono-ftp`.
 

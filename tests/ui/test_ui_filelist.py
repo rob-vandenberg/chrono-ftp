@@ -20,9 +20,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.15"
+__version__ = "test_ui_filelist.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: The splitter of the connections window is where it was after a restart
 # v0.0.15: The connections window opens with the size and place it had last time, also after a run without it
 # v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
 # v0.0.11: Imports from the split main window
@@ -580,3 +581,16 @@ def test_the_connections_window_keeps_its_place_after_a_run_that_did_not_open_it
     window.close()
     shown_window(qtbot).close()
     assert connection_list_of(shown_window(qtbot)) == placed
+
+
+def test_the_splitter_of_the_connections_window_is_where_it_was_after_a_restart(qtbot: QtBot) -> None:
+    window = shown_window(qtbot)
+    window.show_connection_list()
+    assert window.connection_list is not None
+    window.connection_list.parts.setSizes([330, 400])
+    placed = window.connection_list.parts.sizes()
+    window.close()
+    reopened = shown_window(qtbot)
+    reopened.show_connection_list()
+    assert reopened.connection_list is not None
+    assert reopened.connection_list.parts.sizes() == placed

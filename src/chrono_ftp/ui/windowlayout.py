@@ -9,12 +9,13 @@ from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.ui.filelist import FileList
 from chrono_ftp.ui.queueview import LOWEST_HEIGHT
 from chrono_ftp.ui.settingsdialog import SettingsDialog
-from chrono_ftp.ui.windowbase import CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
+from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.15"
+__version__ = "windowlayout.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Also the splitter of the connections window
 # v0.0.15: The size and place of the connections window are kept, also when it was not opened this time
 # v0.0.13: The settings of the queue apply at once (FC-02, FC-03)
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
@@ -67,8 +68,11 @@ class LayoutPart(WindowBase):
         state["queue_pinned"] = "yes" if self.queue_panel.pin.isChecked() else "no"
         if self.connection_list is not None:
             state[CONNECTION_LIST_SIZE] = bytes(self.connection_list.saveGeometry().toBase64().data()).decode("ascii")
-        elif CONNECTION_LIST_SIZE in self.saved_sizes:
-            state[CONNECTION_LIST_SIZE] = self.saved_sizes[CONNECTION_LIST_SIZE]  # not opened this time: the place it had stays
+            state[CONNECTION_LIST_PARTS] = bytes(self.connection_list.parts.saveState().toBase64().data()).decode("ascii")
+        else:
+            for name in (CONNECTION_LIST_SIZE, CONNECTION_LIST_PARTS):
+                if name in self.saved_sizes:
+                    state[name] = self.saved_sizes[name]  # not opened this time: what it had stays
         try:
             saved_settings.save_window(state)
         except OSError:

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -31,9 +32,10 @@ from chrono_ftp.core.errors import CredentialError
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.12"
+__version__ = "connectionlist.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: A splitter between the list and the fields of the selected connection
 # v0.0.12: Names in message boxes are shown as written, never read as HTML
 # v0.0.9: A tick switches the colour of a connection on; off for a new one
 # v0.0.8: A user name kept after a login shows here
@@ -67,7 +69,6 @@ class ConnectionList(QDialog):
         self.stored_password: bool = False
         self.connections: list[Connection] = []
         self.list = QListWidget()
-        self.list.setFixedWidth(LIST_WIDTH)
         self.name = QLineEdit()
         self.protocol = QComboBox()
         for protocol, label in PROTOCOL_LABELS.items():
@@ -115,9 +116,16 @@ class ConnectionList(QDialog):
         right.addLayout(form)
         right.addStretch(1)
         right.addLayout(buttons)
+        fields = QWidget()
+        fields.setLayout(right)
+        self.parts = QSplitter(Qt.Orientation.Horizontal)
+        self.parts.setChildrenCollapsible(False)
+        self.parts.addWidget(self.list)
+        self.parts.addWidget(fields)
+        self.parts.setStretchFactor(1, 1)  # a wider window widens the fields, the list keeps its width
+        self.parts.setSizes([LIST_WIDTH, WINDOW_WIDTH - LIST_WIDTH])
         layout = QHBoxLayout(self)
-        layout.addWidget(self.list)
-        layout.addLayout(right, 1)
+        layout.addWidget(self.parts)
         self.list.currentRowChanged.connect(self._row_changed)
         self.list.itemDoubleClicked.connect(self._connect)
         self.protocol.currentIndexChanged.connect(self._protocol_changed)
