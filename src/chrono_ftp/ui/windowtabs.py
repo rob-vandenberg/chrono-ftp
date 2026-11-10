@@ -18,6 +18,7 @@ from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ConnectionLost, CredentialError, LoginRefused, RemoteActionFailed
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.transfers.queue import LINE, State
+from chrono_ftp.ui import icons
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.session import Session
@@ -25,9 +26,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.27"
+__version__ = "windowtabs.py 0.0.28"
 
 # --- Version history ----------------------------------------------------
+# v0.0.28: The menu of a tab is a full-width menu with an icon; Edit settings…
 # v0.0.27: The right-click menu of a tab: Edit opens the connections window on that connection
 # v0.0.26: Connect on a connection that has a tab: changed settings log in again in that tab, asking first about its running
 #          transfers; unchanged and dropped reconnects; unchanged and live only switches (D-051)
@@ -41,7 +43,8 @@ __version__ = "windowtabs.py 0.0.27"
 
 
 RECONNECT_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and reconnect?", "{count} transfers on {name} are not finished. Stop them and reconnect?")
-EDIT_TEXT: str = "Edit"
+EDIT_TEXT: str = "Edit settings…"
+MENU_WIDTH_CHARACTERS: int = 22  # a menu of normal width, also with one short entry
 EDIT_GONE_TEXT: str = "This connection is no longer in your connection list."
 TAB_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and close the tab?", "{count} transfers on {name} are not finished. Stop them and close the tab?")
 
@@ -73,7 +76,8 @@ class TabsPart(WindowBase):
             return None
         name = self.sessions[index].connection.name
         menu = QMenu(self)
-        edit = QAction(EDIT_TEXT, menu)
+        menu.setMinimumWidth(menu.fontMetrics().averageCharWidth() * MENU_WIDTH_CHARACTERS)
+        edit = QAction(icons.icon("document-properties"), EDIT_TEXT, menu)
         if name in {connection.name for connection in saved_connections.load().connections}:
             edit.triggered.connect(lambda: self.edit_connection(name))
         else:

@@ -32,9 +32,10 @@ from tests.ui.test_ui_sessions import connected, window
 from tests.ui.test_ui_transfers import settled
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_queue.py 0.0.27"
+__version__ = "test_ui_queue.py 0.0.28"
 
 # --- Version history ----------------------------------------------------
+# v0.0.28: The menu of a tab says Edit settings…, has an icon and a normal width
 # v0.0.27: The right-click menu of a tab: Edit opens the connections window on its connection; greyed when the connection is gone
 # v0.0.26: Connect on a connection that has a tab: new settings log in again there, the same settings only switch or reconnect a
 #          dropped one, and running transfers are asked about first
@@ -949,7 +950,9 @@ def test_the_menu_of_a_tab_has_edit_which_opens_its_connection(qtbot: QtBot, win
         menu = window.tab_menu_for(window.tab_bar.tabRect(0).center())
         assert menu is not None
         actions = menu.actions()
-        assert [action.text() for action in actions] == ["Edit"]
+        assert [action.text() for action in actions] == ["Edit settings…"]
+        assert not actions[0].icon().isNull()
+        assert menu.minimumWidth() >= 10 * menu.fontMetrics().averageCharWidth()
         assert actions[0].isEnabled()
         actions[0].trigger()
         assert window.connection_list is not None and window.connection_list.isVisible()

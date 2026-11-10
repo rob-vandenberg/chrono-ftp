@@ -119,3 +119,7 @@ A second start of Chrono FTP brings the running one to the front through a local
 ## 0.0.27 (2026-11-10): Edit in the right-click menu of a tab
 
 A right-click on a tab shows a menu with Edit, which opens the connections window with that tab's connection selected; Save and Connect there log in again with the new settings (0.0.26). Edit is greyed with a hover text when the connection is no longer in the list; beside the tabs there is no menu. Two tests.
+
+## 0.0.28 (2026-11-10): a proper menu on a tab
+
+The right-click menu of a tab was as narrow as its one short entry. It now has the width of a normal menu (22 average characters), its entry has the Breeze icon document-properties, and it says "Edit settings…".
