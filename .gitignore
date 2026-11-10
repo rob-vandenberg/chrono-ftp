@@ -23,6 +23,8 @@ scratchpad/
 # release scripts (private)
 gitpush.sh
 build-release.sh
+chrono-ftp.sh
+install.sh
 upload_release.sh
 
 # the owner's rules and short-term list (private)

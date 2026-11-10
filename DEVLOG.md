@@ -139,3 +139,7 @@ The connections window started on the top item of its list. The connection that 
 ## 0.0.32 (2026-11-10): Enter connects
 
 In the connections window Enter did not connect, and a focused button such as Import… took Enter itself. Connect is now the default button and no other button takes Enter, so Enter in the list, in a field or on a focused button connects the selected connection (D-050). Four tests, all failing on 0.0.31. Still open: the window sizes that come back at their defaults after a restart.
+
+## 0.0.33 (2026-11-10): a dark right side while not connected
+
+Without a connection the right side was light grey (#8a8f94) with dark text. It is now plain dark grey, the darker row colour of the left side (#151c1c), without alternating rows, with light text and the usual selection; the tab of a dropped connection keeps its light grey as `NOT_CONNECTED_TAB` (D-007). One test changed, failing on 0.0.32; the tab tests follow the new name. Still open: the window sizes that come back at their defaults after a restart.

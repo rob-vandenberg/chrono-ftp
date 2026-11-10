@@ -14,9 +14,10 @@ from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOT
 from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.12"
+__version__ = "remoteside.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Not connected: the darker row colour of the left side, light text and the usual selection (D-007)
 # v0.0.12: The count line is shown as written, never read as HTML
 # v0.0.9: A connection without a colour looks like the left side
 # v0.0.7: One row of buttons
@@ -106,7 +107,7 @@ class RemoteSide(QWidget):
         if colour == "":
             background, text, selected, on_selected = colours.PANEL, colours.TEXT, colours.SELECTION, colours.ON_SELECTION
         elif colour is None:
-            background, text, selected, on_selected = colours.NOT_CONNECTED, colours.ON_NOT_CONNECTED, colours.ON_NOT_CONNECTED, colours.NOT_CONNECTED
+            background, text, selected, on_selected = colours.NOT_CONNECTED, colours.ON_NOT_CONNECTED, colours.SELECTION, colours.ON_SELECTION
         else:
             background, text = colour, colours.readable_text(colour)
             selected, on_selected = text, background

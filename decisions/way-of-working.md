@@ -6,3 +6,4 @@
 4. [[D-025]] Pushing and releases
 5. [[D-026]] Test elsewhere first
 6. [[D-031]] The owner's word for the first version
+7. [[D-054]] The order of the blocks

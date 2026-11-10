@@ -2,7 +2,7 @@
 
 ## Now
 
-Version 0.0.32: Connect is the default button of the connections window, so Enter connects the selected connection (D-050). Before that, version 0.0.31: the connection that last went live is remembered, and at start the connections window opens on it, selected and in view; when it is gone, the window starts as before (D-053). Before that, version 0.0.30: the right side shows the connection colour again: the menu style is given to each menu, not to the whole program, where it kept the right side grey; the menu border is a visible grey (D-052). Before that, version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
+Version 0.0.33: not connected, the right side is dark grey, the darker row colour of the left side, with light text; a dropped tab stays light grey (D-007). Before that, version 0.0.32: Connect is the default button of the connections window, so Enter connects the selected connection (D-050). Before that, version 0.0.31: the connection that last went live is remembered, and at start the connections window opens on it, selected and in view; when it is gone, the window starts as before (D-053). Before that, version 0.0.30: the right side shows the connection colour again: the menu style is given to each menu, not to the whole program, where it kept the right side grey; the menu border is a visible grey (D-052). Before that, version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
 
 Before that, 0.0.28: the menu of a tab is a menu of normal width with an icon, and its entry says "Edit settings…".
 
@@ -42,7 +42,7 @@ Tested by the owner on real work: the connection and terminal colours, the start
 
 ## Next task
 
-Block FD of the private `FEATURES.md`: masks.
+Block FH of the private `FEATURES.md`: navigation, the first of the order in D-054.
 
 ## Open questions
 

@@ -38,9 +38,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.25"
+__version__ = "test_ui_sessions.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: A dropped tab is NOT_CONNECTED_TAB
 # v0.0.25: A connection that already has a tab switches to it
 # v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
 # v0.0.12: Uploads, downloads and drops answer the transfer window, which must really come with the right folder; a file that is there
@@ -169,7 +170,7 @@ def test_an_unknown_server_asks_and_no_means_no_connection(qtbot: QtBot, window:
         qtbot.waitUntil(lambda: bool(asked))
         assert "SHA256:" in asked[0]
         assert not window.sessions[0].alive
-        assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED
+        assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED_TAB
 
 
 def test_an_unknown_server_yes_connects_and_is_remembered(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -389,7 +390,7 @@ def test_a_dropped_connection_turns_the_tab_grey_and_offers_reconnect(qtbot: QtB
     assert session.remote is not None
     window.refresh()
     qtbot.waitUntil(lambda: not session.alive, timeout=10000)
-    assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED
+    assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED_TAB
     assert base_of(window) == QColor(colours.NOT_CONNECTED)
     assert enabled(window, "reconnect")
     assert len(told) == 1
@@ -608,7 +609,7 @@ def test_an_idle_connection_that_drops_goes_grey(qtbot: QtBot, window: MainWindo
     session = window.sessions[0]
     window.check_connections()
     qtbot.waitUntil(lambda: not session.alive, timeout=10000)
-    assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED
+    assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED_TAB
 
 
 def test_closing_a_tab_with_a_running_transfer_asks_first(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1527,7 +1528,7 @@ def test_a_live_connection_without_a_colour_looks_like_the_left_side_and_drops_t
         assert window.tab_bar.background_of(0) == colours.NO_COLOUR_TAB
         window._mark_lost(window.sessions[0])
         assert base_of(window) == QColor(colours.NOT_CONNECTED)
-        assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED
+        assert window.tab_bar.background_of(0) == colours.NOT_CONNECTED_TAB
 
 
 def test_the_path_of_a_copy_with_unsent_changes_is_shown_whole_and_fits_the_screen(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

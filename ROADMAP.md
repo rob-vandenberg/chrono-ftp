@@ -50,22 +50,22 @@ Result: replaces the reference program for everyday copying.
 
 ## Milestones 5 to 21: the full counterpart
 
-One milestone per block of the private `FEATURES.md` (D-001, OR-13), in this order:
+One milestone per block of the private `FEATURES.md` (D-001, OR-13), in the order of [[D-054]]. The size of each block is an estimate (small, medium, large, huge), not a measurement.
 
 5. FA, the main window split into modules: done in 0.0.11.
 6. FB, transfer options: done in 0.0.12.
 7. FC, the queue: done in 0.0.13.
-8. FD, masks: next.
-9. FE, hashes and sizes without a shell: open.
-10. FF, synchronize: open.
-11. FG, selection and keys: open.
-12. FH, navigation: open.
-13. FI, tabs and workspaces: open.
-14. FJ, the connection list: open.
-15. FK, SSH options: open.
-16. FL, FTP and server details: open.
-17. FM, Properties and server actions: open.
-18. FN, find and edit: open.
-19. FO, shell tools and keeping a folder up to date: open.
-20. FP, program-wide: open.
-21. FQ, looks: open.
+8. FH, navigation, medium: next. A clickable path, bookmarks, location profiles, the same folder on the other side, synchronized browsing, and remembered starting folders.
+9. FM, Properties and server actions, large: open. Properties for several files, a rights editor, owner and group lists, links, duplicating, a new file, a new folder with rights, installing your key, changing the server password, and a terminal.
+10. FP, program-wide, medium: open. Preferences, a session log, a server information window, cleaning up stored data, an About window, and an update check.
+11. FQ, looks, small: open. File colours by mask, thumbnails, and a customisable toolbar.
+12. FG, selection and keys, large: open. Type-ahead, selection keys, a keyboard-driven two-pane mode, the full key set, size format, column menu, natural sort, path in the title, clipboard copies, and selection totals.
+13. FD, masks, large: open. One filter engine for include and exclude by name, path, size and date; text mode with line-ending conversion; file name conversion; transfer presets; selecting by mask; a filter window with history.
+14. FE, hashes and sizes without a shell, small: open. Checksums over SFTP and FTP; size and checksum tabs in Properties; folder sizes in the file list.
+15. FF, synchronize, huge: open. The full synchronize: directions, mirror, criteria, a checklist before applying, moved files, deletes, masks, through the queue, remembered settings, and two local folders.
+16. FI, tabs and workspaces, medium: open. Tab extras, workspaces, and copy and paste between tabs.
+17. FJ, the connection list, medium: open. Folders in the list, notes, type-to-find, import of the SSH config, and opening or generating a URL.
+18. FK, SSH options, large: open. Server command such as sudo, timeout and IP version, proxy, jump host, agent and certificates, an expired password, and algorithm order.
+19. FL, FTP and server details, medium: open. Implicit TLS, active or passive mode, keepalives, automatic reconnect, time zone, encoding, and link options.
+20. FN, find and edit, large: open. A richer find window, robust edit watching, editors per file type, and a built-in text editor.
+21. FO, shell tools and keeping a folder up to date, large: open. A second shell session, a console window, a command line, custom commands, commands after login, and keeping a remote folder up to date.

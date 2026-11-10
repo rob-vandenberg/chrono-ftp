@@ -18,9 +18,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.24"
+__version__ = "test_ui_mainwindow.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Not connected, the right side is the darker row colour of the left side, with readable text
 # v0.0.24: The tabs and New Tab share one centre line; the row, not the hidden tab bar, has the height
 # v0.0.22: Without tabs New Tab stands at the left, and the row keeps its height
 # v0.0.12: Tests that need a refusal by the rights of a folder skip as root
@@ -78,13 +79,16 @@ def test_the_lists_get_nearly_all_the_height(qtbot: QtBot) -> None:
     assert window.top_row.height() <= 3 * line
 
 
-def test_the_right_side_is_plain_grey_and_says_not_connected(qtbot: QtBot) -> None:
+def test_the_right_side_is_plain_dark_grey_and_says_not_connected(qtbot: QtBot) -> None:
     window = window_for(qtbot)
     remote = window.remote_side
     assert remote.path_line.text() == NOT_CONNECTED_TEXT
     grey = QColor(colours.NOT_CONNECTED)
     assert remote.tree.palette().color(QPalette.ColorRole.Base) == grey
     assert remote.file_list.palette().color(QPalette.ColorRole.Base) == grey
+    assert grey == QColor(colours.PANEL)  # the darker row colour of the left side
+    assert remote.file_list.palette().color(QPalette.ColorRole.Text) == QColor(colours.TEXT)
+    assert not remote.file_list.alternatingRowColors()
 
 
 def test_the_right_side_is_empty_without_a_connection(qtbot: QtBot) -> None:
