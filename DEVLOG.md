@@ -95,3 +95,7 @@ Export… stands right next to Import… on the left under the list of the conne
 ## 0.0.21 (2026-11-10): an eye in the password fields
 
 The password fields of the connections window and the login window have an eye (the Breeze icons view-visible and view-hidden) that shows or hides what was typed. It appears only while the field holds typed text; an emptied field, also when another connection is chosen, hides the password again. A stored password is never in the field, so it can never be shown. Tests in `tests/ui/test_ui_passwordeye.py`.
+
+## 0.0.22 (2026-11-10): no hole in front of New Tab
+
+An empty tab bar kept 123 pixels free for its scroll arrows, a hole in front of New Tab. The tab bar now shows only while it holds a tab; the row keeps the height of a tab, so nothing below it jumps. A test checks both.

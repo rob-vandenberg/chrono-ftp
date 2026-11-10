@@ -33,9 +33,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.15"
+__version__ = "mainwindow.py 0.0.22"
 
 # --- Version history ----------------------------------------------------
+# v0.0.22: The row of the tabs keeps the height of a tab while the tab bar is hidden
 # v0.0.15: The connections window keeps its size and place (saved_sizes)
 # v0.0.13: The queue's buttons, its choice when done, and the power of the computer (FC-02 to FC-04); a paused transfer is not finished;
 #          the toolbar's Stop is Stop All, as the queue has its own Stop for the selected items; closing chosen as the step after the
@@ -85,6 +86,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.new_tab_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.new_tab_button.setToolTip("Open a connection in a new tab")
         self.top_row = QWidget()
+        self.top_row.setMinimumHeight(self.tab_bar.maximumHeight())  # the same height with or without tabs: nothing below jumps
         top = QHBoxLayout(self.top_row)
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self.tab_bar)

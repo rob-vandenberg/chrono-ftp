@@ -18,9 +18,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.12"
+__version__ = "test_ui_mainwindow.py 0.0.22"
 
 # --- Version history ----------------------------------------------------
+# v0.0.22: Without tabs New Tab stands at the left, and the row keeps its height
 # v0.0.12: Tests that need a refusal by the rights of a folder skip as root
 # v0.0.11: An answer of a thread after the window closed goes nowhere
 # v0.0.7: One row of buttons
@@ -445,3 +446,20 @@ def test_an_answer_that_comes_after_the_window_closed_goes_nowhere(qtbot: QtBot)
     window.bridge.deliver(lambda: reached.append("late"))
     QApplication.processEvents()
     assert reached == []
+
+
+def test_without_tabs_new_tab_stands_at_the_left_and_the_row_keeps_its_height(qtbot: QtBot) -> None:
+    window = window_for(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    empty_height = window.top_row.height()
+    assert not window.tab_bar.isVisible()
+    assert window.new_tab_button.geometry().left() == 0
+    window.tab_bar.addTab("Shop")
+    qtbot.waitUntil(lambda: window.new_tab_button.geometry().left() > 0)
+    assert window.tab_bar.isVisible()
+    assert window.top_row.height() == empty_height
+    window.tab_bar.removeTab(0)
+    qtbot.waitUntil(lambda: window.new_tab_button.geometry().left() == 0)
+    assert not window.tab_bar.isVisible()
+    assert window.top_row.height() == empty_height
