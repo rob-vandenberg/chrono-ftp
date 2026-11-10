@@ -21,14 +21,16 @@ from chrono_ftp.transfers.queue import LINE, State
 from chrono_ftp.ui import icons
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.logindialog import LoginDialog
+from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.28"
+__version__ = "windowtabs.py 0.0.29"
 
 # --- Version history ----------------------------------------------------
+# v0.0.29: The menu of a tab opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.28: The menu of a tab is a full-width menu with an icon; Edit settings…
 # v0.0.27: The right-click menu of a tab: Edit opens the connections window on that connection
 # v0.0.26: Connect on a connection that has a tab: changed settings log in again in that tab, asking first about its running
@@ -90,7 +92,7 @@ class TabsPart(WindowBase):
     def _show_tab_menu(self, place: QPoint) -> None:
         menu = self.tab_menu_for(place)
         if menu is not None:
-            menu.exec(self.tab_bar.mapToGlobal(place))
+            open_menu(menu, self.tab_bar.mapToGlobal(place))
             menu.deleteLater()
 
     def edit_connection(self, name: str) -> None:

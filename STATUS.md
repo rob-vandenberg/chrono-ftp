@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.28: the menu of a tab is a menu of normal width with an icon, and its entry says "Edit settings…".
+Version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
+
+Before that, 0.0.28: the menu of a tab is a menu of normal width with an icon, and its entry says "Edit settings…".
 
 Before that, 0.0.27: a right-click on a tab shows Edit, which opens the connections window on that connection; greyed with its reason when the connection is no longer in the list.
 

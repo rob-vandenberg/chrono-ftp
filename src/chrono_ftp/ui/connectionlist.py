@@ -31,13 +31,15 @@ from chrono_ftp.config import sessionimport
 from chrono_ftp.core import colours, credentials
 from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_PORT, SFTP, Connection
 from chrono_ftp.core.errors import CredentialError
+from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.27"
+__version__ = "connectionlist.py 0.0.29"
 
 # --- Version history ----------------------------------------------------
+# v0.0.29: The right-click menu opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.27: select_connection, for Edit in the right-click menu of a tab
 # v0.0.25: Connect with unsaved changes asks "Save changes?" first: Save, Don't Save or Cancel
 # v0.0.21: An eye in the password field while it holds typed text
@@ -266,7 +268,7 @@ class ConnectionList(QDialog):
     def _show_menu(self, place: QPoint) -> None:
         menu = self.menu_for(place)
         if menu is not None:
-            menu.exec(self.list.viewport().mapToGlobal(place))
+            open_menu(menu, self.list.viewport().mapToGlobal(place))
             menu.deleteLater()
 
     def clear_fields(self) -> None:

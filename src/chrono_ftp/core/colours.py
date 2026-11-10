@@ -2,9 +2,10 @@
 written as "#rrggbb". The colours a person chooses for a connection are theirs: they are kept with the connection, not in this file."""
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.0.9"
+__version__ = "colours.py 0.0.29"
 
 # --- Version history ----------------------------------------------------
+# v0.0.29: The background of the menus
 # v0.0.9: The tab of a connection without a colour
 # v0.0.5: The colour a new connection starts with
 # v0.0.3: Initial: the neutral colours of the window and the grey of no connection
@@ -13,6 +14,7 @@ WINDOW: str = "#23282b"
 PANEL: str = "#151c1c"  # the neutral lists of the local side
 PANEL_ALTERNATIVE: str = "#1b2222"
 BUTTON: str = "#272c30"
+MENU_BACKGROUND: str = "#272c30"  # the menus, as Chrono Mail's
 TEXT: str = "#e6e8ea"
 MUTED_TEXT: str = "#8f979c"
 SELECTION: str = "#2a6fc4"

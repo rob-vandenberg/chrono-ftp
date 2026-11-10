@@ -12,15 +12,17 @@ from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections.base import RemoteConnection
 from chrono_ftp.transfers.queue import ENDED, LINE, Job, State
 from chrono_ftp.ui.afterqueue import CLOSE, DISCONNECT, NOT_DONE_TEXT, POWER_OFF, STAY, SUSPEND, Countdown
+from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.queueview import CLOSED_TAB_TEXT, NOT_CONNECTED_TAB_TEXT, QUEUE_ACTIONS, LimitDialog
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowqueue.py 0.0.13"
+__version__ = "windowqueue.py 0.0.29"
 
 # --- Version history ----------------------------------------------------
+# v0.0.29: The right-click menu of the queue opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.13: The queue's buttons and right-click menu: resume, pause, move up and down, run now, retry, speed limit, delete, pause all,
 #          resume all and clear finished, each greyed where it does not apply; the switch to start items by themselves is kept in
 #          Settings; a job that left the queue leaves the list; when the queue is done, the chosen step, once: disconnect, or close,
@@ -218,7 +220,7 @@ class QueuePart(WindowBase):
 
     def _queue_menu_wanted(self, place: QPoint) -> None:
         menu = self.queue_menu()
-        menu.exec(self.queue_view.viewport().mapToGlobal(place))
+        open_menu(menu, self.queue_view.viewport().mapToGlobal(place))
         menu.deleteLater()
 
     @override

@@ -19,3 +19,4 @@
 17. [[D-048]] Several transfers at once
 18. [[D-050]] The connections window
 19. [[D-051]] One Chrono FTP at a time
+20. [[D-052]] Menus hold the mouse, not the keyboard

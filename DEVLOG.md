@@ -123,3 +123,7 @@ A right-click on a tab shows a menu with Edit, which opens the connections windo
 ## 0.0.28 (2026-11-10): a proper menu on a tab
 
 The right-click menu of a tab was as narrow as its one short entry. It now has the width of a normal menu (22 average characters), its entry has the Breeze icon document-properties, and it says "Edit settings…".
+
+## 0.0.29 (2026-11-10): menus that leave the keyboard free, and a proper look
+
+On X11 an open menu held the whole keyboard, so the owner's screenshot shortcut did nothing. Every right-click menu (file lists, queue, tabs, connections window) now opens through `open_menu` in `src/chrono_ftp/ui/menus.py`, which lets go of the keyboard once the menu is open and keeps the mouse; tried first on the tab menu, where the screenshot of the open menu worked (D-052). Menus have Chrono Mail's look: a border, padding and roomy items. Four tests.

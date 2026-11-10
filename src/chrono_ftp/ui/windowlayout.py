@@ -7,14 +7,16 @@ from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu
 
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.ui.filelist import FileList
+from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.queueview import LOWEST_HEIGHT
 from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.16"
+__version__ = "windowlayout.py 0.0.29"
 
 # --- Version history ----------------------------------------------------
+# v0.0.29: The menus of the file lists open through open_menu, which lets go of the keyboard (D-052)
 # v0.0.16: Also the splitter of the connections window
 # v0.0.15: The size and place of the connections window are kept, also when it was not opened this time
 # v0.0.13: The settings of the queue apply at once (FC-02, FC-03)
@@ -87,10 +89,10 @@ class LayoutPart(WindowBase):
         return menu
 
     def _local_menu_wanted(self, place: QPoint) -> None:
-        self.menu_for(LOCAL_MENU).exec(self.local_side.file_list.mapToGlobal(place))
+        open_menu(self.menu_for(LOCAL_MENU), self.local_side.file_list.mapToGlobal(place))
 
     def _remote_menu_wanted(self, place: QPoint) -> None:
-        self.menu_for(REMOTE_MENU).exec(self.remote_side.file_list.mapToGlobal(place))
+        open_menu(self.menu_for(REMOTE_MENU), self.remote_side.file_list.mapToGlobal(place))
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
