@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.22: without tabs, New Tab stands at the left of its row; the empty tab bar no longer leaves a hole in front of it.
+Version 0.0.23: the icons of the side bars (walking through folders and the actions of each side) are 24 pixels instead of 18, drawn at that size.
+
+Before that, 0.0.22: without tabs, New Tab stands at the left of its row; the empty tab bar no longer leaves a hole in front of it.
 
 Before that, 0.0.21: the password fields of the connections window and the login window have an eye that shows or hides what was typed; it shows only while the field holds typed text, so a stored password is never shown.
 

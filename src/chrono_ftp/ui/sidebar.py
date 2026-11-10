@@ -5,13 +5,14 @@ from PySide6.QtWidgets import QHBoxLayout, QToolBar, QWidget
 from chrono_ftp.ui import icons
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebar.py 0.0.7"
+__version__ = "sidebar.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: The icons of the side bars are 24 pixels
 # v0.0.7: One compact row of buttons per side, icons only with the text on hover
 # v0.0.6: Initial: the buttons every side has for walking through folders, and where it has been
 
-ICON_SIZE: int = 18
+ICON_SIZE: int = 24
 ROW_GAP: int = 12  # between the walking buttons and the action buttons
 BUTTONS: tuple[tuple[str, str, str], ...] = (
     ("back", "Back", "go-previous"),

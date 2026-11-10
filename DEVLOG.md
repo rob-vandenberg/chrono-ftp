@@ -99,3 +99,7 @@ The password fields of the connections window and the login window have an eye (
 ## 0.0.22 (2026-11-10): no hole in front of New Tab
 
 An empty tab bar kept 123 pixels free for its scroll arrows, a hole in front of New Tab. The tab bar now shows only while it holds a tab; the row keeps the height of a tab, so nothing below it jumps. A test checks both.
+
+## 0.0.23 (2026-11-10): bigger icons in the side bars
+
+The icons of the navigation and action bars of both sides are 24 pixels instead of 18. The icons are now also drawn at 24 and 48 pixels, so they stay sharp. The general bar and the queue bar stay at 18. A test checks the size.

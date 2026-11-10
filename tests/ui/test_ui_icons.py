@@ -5,11 +5,13 @@ from PySide6.QtWidgets import QApplication
 
 from chrono_ftp.core import colours
 from chrono_ftp.ui import icons
+from chrono_ftp.ui.sidebar import ICON_SIZE as SIDE_ICON_SIZE, NavigationBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 0.0.14"
+__version__ = "test_ui_icons.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: The side bars show their icons at 24 pixels, drawn at that size
 # v0.0.14: The program icon loads, with its blue square and orange clock
 # v0.0.4: Initial: every icon of D-028 is there, loads and takes the colour of the text
 
@@ -59,3 +61,10 @@ def test_the_program_icon_shows_its_blue_square_and_orange_clock(qapp: QApplicat
     image = icons.application_icon().pixmap(QSize(64, 64)).toImage()
     seen = {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
     assert {"#2b6cb0", "#ffffff", "#ed8936"} <= seen
+
+
+def test_the_side_bars_show_their_icons_at_24_pixels_drawn_at_that_size(qapp: QApplication) -> None:
+    assert SIDE_ICON_SIZE == 24
+    assert QSize(24, 24) in icons.icon("go-home").availableSizes()
+    bar = NavigationBar()
+    assert bar.iconSize() == QSize(24, 24)

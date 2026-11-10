@@ -8,9 +8,10 @@ from PySide6.QtSvg import QSvgRenderer
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.21"
+__version__ = "icons.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: Also drawn at 24 and 48 pixels, so the icons of the side bars are sharp
 # v0.0.21: The eye of a password field (view-visible, view-hidden)
 # v0.0.14: The program icon (application_icon)
 # v0.0.13: Run Now and Clear Finished of the queue
@@ -65,7 +66,7 @@ ICON_NAMES: tuple[str, ...] = (
     "view-visible",
     "view-hidden",
 )
-SIZES: tuple[int, ...] = (22, 33, 44)  # normal, and sharp on a scaled screen
+SIZES: tuple[int, ...] = (22, 24, 33, 44, 48)  # the sizes in use, and sharp on a scaled screen
 _TEXT_COLOUR: re.Pattern[str] = re.compile(r"(\.ColorScheme-Text\s*\{\s*color:\s*)#[0-9a-fA-F]{3,6}")
 
 
