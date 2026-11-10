@@ -111,3 +111,7 @@ The tab bar had a fixed height of two text lines and drew its tabs at its top, w
 ## 0.0.25 (2026-11-10): one Chrono FTP, one tab per connection, and Save changes?
 
 A second start of Chrono FTP brings the running one to the front through a local socket per user and ends; a socket left behind by a crash is removed (D-051). A connection that already has a tab is switched to instead of opened again. Connect in the connections window with unsaved changes, or a typed password, asks "Save changes to …?": Save saves and connects, Don't Save connects with the saved connection and shows it again, Cancel changes nothing. Tests for each.
+
+## 0.0.26 (2026-11-10): Connect on an open connection uses its new settings
+
+0.0.25 only switched to the tab of a connection that was already open, so new settings had no effect (the owner's correction). Now changed settings log in again in that tab, after asking about its running transfers; the same settings only switch, and reconnect a dropped connection (D-051, its older wording kept). Four tests.

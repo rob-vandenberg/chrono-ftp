@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 from pathlib import Path
 from typing import cast, override
@@ -30,9 +31,11 @@ from tests.ui.test_ui_sessions import connected, window
 from tests.ui.test_ui_transfers import settled
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_queue.py 0.0.13"
+__version__ = "test_ui_queue.py 0.0.26"
 
 # --- Version history ----------------------------------------------------
+# v0.0.26: Connect on a connection that has a tab: new settings log in again there, the same settings only switch or reconnect a
+#          dropped one, and running transfers are asked about first
 # v0.0.13: Initial: the queue's buttons, right-click menu and Delete key, greyed by the selection; pause, resume, retry and the speed
 #          limit from the window; the switch to start items by themselves and the queue part of Settings; what happens when the queue
 #          is done: disconnect, close, suspend and shut down, with a countdown that can be cancelled and is called off by new work; a
@@ -872,3 +875,63 @@ def test_one_question_at_a_time_in_the_window_and_yes_to_all_answers_the_other_w
         settled(qtbot, window)
     texts = {name: (root / name).read_text(encoding="utf-8") for name in ("a.txt", "b.txt", "c.txt", "d.txt")}
     assert texts == {"a.txt": "new", "b.txt": "old", "c.txt": "new", "d.txt": "new"}
+
+
+def test_connect_with_new_settings_logs_in_again_in_the_same_tab(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    with ftp_server(tmp_path) as port:
+        connected(qtbot, window, ftp_settings(port))
+        session = window.sessions[0]
+        old = session.remote
+        window.open_connection(replace(ftp_settings(port), colour="#336699"))
+        qtbot.waitUntil(lambda: session.alive and session.remote is not old)
+        assert window.tab_bar.count() == 1
+        assert session.connection.colour == "#336699"
+
+
+def test_connect_with_the_same_settings_on_a_live_tab_only_switches(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    with ftp_server(tmp_path) as port:
+        connected(qtbot, window, ftp_settings(port))
+        session = window.sessions[0]
+        old = session.remote
+        window.open_connection(ftp_settings(port))
+        assert session.remote is old
+        assert session.alive
+        assert window.tab_bar.count() == 1
+
+
+def test_connect_with_the_same_settings_on_a_dropped_tab_reconnects(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    with ftp_server(tmp_path) as port:
+        connected(qtbot, window, ftp_settings(port))
+        session = window.sessions[0]
+        window._disconnect(session)
+        assert not session.alive
+        window.open_connection(ftp_settings(port))
+        qtbot.waitUntil(lambda: session.alive)
+        assert window.tab_bar.count() == 1
+
+
+def test_connect_with_new_settings_asks_about_running_transfers_and_no_changes_nothing(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "a.txt").write_text("a", encoding="utf-8")
+    with ftp_server(tmp_path) as port:
+        connected(qtbot, window, ftp_settings(port))
+        session = window.sessions[0]
+        old = session.remote
+        assert old is not None
+        held = Job(old, session.connection, str(here / "a.txt"), "/", True, "a.txt", state=State.PAUSED, tab=session)
+        window.queue.add(held)
+        asked: list[str] = []
+
+        def no(*args: object) -> QMessageBox.StandardButton:
+            asked.append(str(args[2]))
+            return QMessageBox.StandardButton.No
+
+        monkeypatch.setattr(QMessageBox, "question", no)
+        window.open_connection(replace(ftp_settings(port), colour="#336699"))
+        assert len(asked) == 1 and "Stop it and reconnect?" in asked[0]
+        assert session.remote is old
+        assert session.connection.colour == ""
+        assert held.state == State.PAUSED
+        empty_queue(window)
+        settled_after_delete(qtbot, window)

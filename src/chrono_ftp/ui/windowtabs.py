@@ -24,9 +24,11 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.25"
+__version__ = "windowtabs.py 0.0.26"
 
 # --- Version history ----------------------------------------------------
+# v0.0.26: Connect on a connection that has a tab: changed settings log in again in that tab, asking first about its running
+#          transfers; unchanged and dropped reconnects; unchanged and live only switches (D-051)
 # v0.0.25: A connection that already has a tab switches to it; a second start of the program brings the window to the front
 # v0.0.16: Also with its splitter where it was
 # v0.0.15: The connections window opens with the size and place it had last time
@@ -36,6 +38,7 @@ __version__ = "windowtabs.py 0.0.25"
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
+RECONNECT_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and reconnect?", "{count} transfers on {name} are not finished. Stop them and reconnect?")
 TAB_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and close the tab?", "{count} transfers on {name} are not finished. Stop them and close the tab?")
 
 
@@ -70,6 +73,7 @@ class TabsPart(WindowBase):
         for index, open_session in enumerate(self.sessions):
             if open_session.connection.name == connection.name:
                 self.tab_bar.setCurrentIndex(index)  # already open: its tab, never a second one
+                self._open_again(index, open_session, connection)
                 return
         session = Session(connection, Worker(self.bridge.deliver), self.local_side.folder)
         self.sessions.append(session)
@@ -266,6 +270,25 @@ class TabsPart(WindowBase):
         session.alive = False
         self.tab_bar.removeTab(index)
         self._let_go_of(session)
+
+    def _open_again(self, index: int, session: Session, connection: Connection) -> None:
+        """Connect on a connection that has a tab (D-051): new settings log in again there; the same settings reconnect only a dropped one."""
+        changed = connection != session.connection
+        if not changed:
+            if not session.alive:
+                self._connect(session)
+            return
+        running = [job for job in self.queue.jobs if self._tab_of(job) is session and job.state in (*LINE, State.RUNNING)]
+        if running:
+            text = (RECONNECT_UNFINISHED_TEXTS[0] if len(running) == 1 else RECONNECT_UNFINISHED_TEXTS[1]).format(count=len(running), name=connection.name)
+            if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
+                return
+            for job in running:
+                self.queue.stop(job)
+        session.connection = connection
+        session.password = None  # read from the store again: the new settings may have a new password
+        self.tab_bar.set_colour(index, None)  # grey until the new login is live
+        self._connect(session)
 
     def _let_go_of(self, session: Session) -> None:
         remote = session.remote
