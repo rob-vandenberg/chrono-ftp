@@ -8,14 +8,16 @@ from PySide6.QtSvg import QSvgRenderer
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.13"
+__version__ = "icons.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: The program icon (application_icon)
 # v0.0.13: Run Now and Clear Finished of the queue
 # v0.0.7: The pin of the queue
 # v0.0.4: Initial: the Breeze icons of D-028, drawn in the colour of the text
 
 ICON_FOLDER: Path = Path(__file__).resolve().parent / "resources" / "icons"
+APPLICATION_ICON_FILE: Path = Path(__file__).resolve().parent / "resources" / "chrono-ftp.svg"  # the program icon
 ICON_NAMES: tuple[str, ...] = (
     "folder-sync",
     "utilities-terminal",
@@ -93,3 +95,8 @@ def icon(name: str) -> QIcon:
         result.addPixmap(pixmap, QIcon.Mode.Normal)
         result.addPixmap(_greyed(pixmap), QIcon.Mode.Disabled)
     return result
+
+
+def application_icon() -> QIcon:
+    """The icon of Chrono FTP (a folder with FTP and a clock), from the file shipped with the program: every window, the taskbar and Alt+Tab."""
+    return QIcon(str(APPLICATION_ICON_FILE))

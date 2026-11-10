@@ -7,9 +7,10 @@ from chrono_ftp.core import colours
 from chrono_ftp.ui import icons
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 0.0.4"
+__version__ = "test_ui_icons.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: The program icon loads, with its blue square and orange clock
 # v0.0.4: Initial: every icon of D-028 is there, loads and takes the colour of the text
 
 ICON_SIZE: QSize = QSize(22, 22)
@@ -52,3 +53,9 @@ def test_an_icon_stays_whole_when_something_is_added_to_it(qapp: QApplication) -
 def test_a_scaled_screen_gets_a_sharp_icon(qapp: QApplication) -> None:
     pixmap = icons.icon("tab-new").pixmap(ICON_SIZE, 2.0)
     assert pixmap.width() == 2 * ICON_SIZE.width()
+
+
+def test_the_program_icon_shows_its_blue_square_and_orange_clock(qapp: QApplication) -> None:
+    image = icons.application_icon().pixmap(QSize(64, 64)).toImage()
+    seen = {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
+    assert {"#2b6cb0", "#ffffff", "#ed8936"} <= seen

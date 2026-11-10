@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128" height="128" viewBox="0 0 128 128">
+  <title>chrono-ftp.svg</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M26 0 L102 0 C116.359 0 128 11.641 128 26 L128 102 C128 116.359 116.359 128 102 128 L26 128 C11.641 128 0 116.359 0 102 L0 26 C0 11.641 11.641 0 26 0 Z" fill="#2b6cb0"/>
+    <path d="M17 38 C17 33.582 20.582 30 25 30 L50 30 L58 38 L100 38 C104.418 38 108 41.582 108 46 L108 88 C108 92.418 104.418 96 100 96 L25 96 C20.582 96 17 92.418 17 88 Z" fill="#ffffff"/>
+    <path d="M28 51 L28 74 M28 51 L41 51 M28 63 L38 63 M49 51 L67 51 M58 51 L58 74 M75 74 L75 51 L83 51 C86.866 51 90 54.134 90 58 C90 61.866 86.866 65 83 65 L75 65" fill="none" stroke="#2b6cb0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="97" cy="93" r="23" fill="#ed8936" stroke="#ffffff" stroke-width="6"/>
+    <polyline points="97,79 97,93 106,99" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -61,3 +61,9 @@ Queue control per item (D-046): pause and resume keeping what arrived, move up a
 Many review rounds over the three parts; every real fault came with a test that fails on the code before it, among them a job started twice while its previous run still ended, two items left waiting for good after logins refused at the same moment, a later item overtaking an earlier one on its place, an FTP login after a broken-off file that failed instead of waiting, and a split part that gave up after a few drops spread over a long file. Live tests passed on the real FTP test account (three transfers at once both ways, a download in parts) and on this computer's SSH server (a file in parts both ways).
 
 Still open: the known limits of the transfers in `STATUS.md`; the live test on the SFTP test account without a shell has not run for this version.
+
+## 0.0.14 (2026-11-10): the program icon
+
+Chrono FTP has its own icon, made by the owner in the style of the Chrono programs: a blue square, a white folder with the letters FTP and the orange clock. The program ships it (`src/chrono_ftp/ui/resources/chrono-ftp.svg`, in the package data) and sets it for every window, the taskbar and Alt+Tab; the windows tell the desktop they belong to the start-menu entry `chrono-ftp`. A test checks that the icon draws its blue, white and orange.
+
+Still open: the first installer must install the icon (`packaging/` does not exist yet).
