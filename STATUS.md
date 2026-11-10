@@ -2,15 +2,15 @@
 
 ## Now
 
-Version 0.0.12: block FB, transfer options. Before every upload, download and drop a transfer window shows the target folder and the options of that transfer, which the person can change for this one transfer; Settings keeps the defaults and can switch the window off (D-043). A stopped or broken-off transfer continues where it stopped, only from the very file it came from (D-044). A file that is there already is asked about, and an answer holds only for the file as the person saw it: nothing that changed meanwhile is replaced, and a version saved in the last moment is kept aside and named (D-045). Dates, rights, only new and updated, count first and move work on both ways, rsync and file by file, and what a server can't do is greyed out and says why.
+Version 0.0.13: block FC, the queue. Every item can be paused and resumed without losing what arrived, moved, run now, retried where it can continue, stopped, deleted and given a speed limit of its own that holds at once; done items leave the list after a while, and an error goes on or pauses the queue, as Settings say (D-046). A choice in the queue says what happens when it is done: disconnect, close Chrono FTP, suspend or shut down, once, after a countdown that can be cancelled, and never while edited files are not on the server yet (D-047). Several items run at once ("Transfers at once", default 2), never two on the same place, one question at a time, the speed limit shared, and a server that takes no more logins makes an item wait calmly instead of failing (D-048). A large file can go over several connections at once, as one item, where the person chooses it (D-049).
 
-Before that, 0.0.11: the main window in parts (D-041), and a closed window takes no more answers (D-042). 0.0.10: FTP listings on servers without the option `OPTS MLST`, an optional colour per connection, one login window, and the most height for the file lists, with a queue that hides when idle unless pinned.
+Before that, 0.0.12: transfer options, resume from part files and the overwrite question (D-043 to D-045). 0.0.11: the main window in parts (D-041, D-042). 0.0.10: FTP listings without `OPTS MLST`, an optional colour per connection, one login window, and the queue hidden when idle unless pinned.
 
-Tested by the owner on real work: the connection and terminal colours, the start menu entry, the import of a real export, and SFTP on the backup server. Tested on a real test account over SFTP, without a shell, and on a real SSH server on this computer. FTP is tested against the fake server in the tests; the test on a real FTP server comes later, by the owner's decision.
+Tested by the owner on real work: the connection and terminal colours, the start menu entry, the import of a real export, and SFTP on the backup server. Tested on a real test account over SFTP, without a shell, and on a real SSH server on this computer. For 0.0.13 the live tests ran on the real FTP test account (several transfers at once, a download in parts) and on this computer's SSH server (a file in parts both ways).
 
 ## Next task
 
-Block FC of the private `FEATURES.md`: the queue. Open item that belongs to it: `TransferQueue.close()` stops every job but does not wait for its thread to end.
+Block FD of the private `FEATURES.md`: masks.
 
 ## Open questions
 
@@ -18,7 +18,7 @@ Block FC of the private `FEATURES.md`: the queue. Open item that belongs to it: 
 2. [Not tested] An FTP connection may need a second login to browse during a transfer.
 3. Right after a folder is made, `setRootPath` once gave an invalid index in a probe. The tree of the left side still uses that call.
 4. Known limits: over FTP a link can't be resolved, so a stop while writing through one leaves a half file; the folder tree of the left side can't show a folder whose name is not valid UTF-8, though the list can; a server file can't be dragged to a file manager; Properties works only on the right side; a name that is not valid UTF-8 can't be opened in another program or sent to the Trash.
-5. Known limits of the transfers (0.0.12):
+5. Known limits of the transfers (0.0.13):
    1. On FTP, a file that appears between the last check and the rename can be replaced.
    2. An FTP server that lists a link as a plain file can't be told apart: an upload replaces such a link with a file.
    3. An FTP server that gives neither a type of its own nor a full mode shows a pipe as a plain file, and a download of it waits until it is stopped.
@@ -31,4 +31,8 @@ Block FC of the private `FEATURES.md`: the queue. Open item that belongs to it: 
    10. With "Ask before replacing" off, rsync skips a file whose size and date match, although its content may differ.
    11. Names of our own are kept within 255 bytes; a file system with a lower limit can still refuse them.
    12. On FTP, a picked file that the server refuses to tell about can't be told from one that is gone: both answer 550, and the job says it is no longer on the server.
-6. The live test on the SFTP test account without a shell has not run for 0.0.12.
+   13. "The same place" of two queue items on a server means the same login: an FTP and an SFTP tab, or two users, on one machine count as different sides.
+   14. With a status bar speed limit set, every start or end of another item restarts running rsync items, as their share changes; only time is lost. A whole-folder rsync run without a look-over and without kept dates can send earlier files again after a limit change or a resume.
+   15. Over a real SSH server, the server's rsync may put its unfinished copy away a moment after Chrono FTP removed that folder (resume Never); Delete tries again, and tidying takes the rest an hour later.
+   16. A file split in parts asks for its further logins only when it starts; places that free up later are not used for it.
+6. The live test on the SFTP test account without a shell has not run for 0.0.12 and 0.0.13.

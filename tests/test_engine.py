@@ -6,15 +6,16 @@ from typing import override
 
 import pytest
 
-from chrono_ftp.connections.base import Capabilities, CommandResult, Progress, RemoteConnection, RemoteEntry
+from chrono_ftp.connections.base import Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry
 from chrono_ftp.core.errors import RemoteActionFailed
 from chrono_ftp.engine import commands
 from chrono_ftp.engine.jobs import Worker
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine.py 0.0.12"
+__version__ = "test_engine.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Scripted takes a speed limit that may be asked again for every block
 # v0.0.12: Scripted takes the offset, append and exclusive of a transfer, and knows the size of what was uploaded
 # v0.0.5: Initial
 
@@ -66,8 +67,8 @@ class Scripted(RemoteConnection):
     def rename(self, old: str, new: str) -> None: ...
     def make_folder(self, path: str) -> None: ...
     def delete(self, path: str, is_folder: bool) -> None: ...
-    def download(self, remote: str, local: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None: ...
-    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+    def download(self, remote: str, local: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None: ...
+    def upload(self, local: str, remote: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         self.sizes[remote] = os.path.getsize(local)
 
     @override

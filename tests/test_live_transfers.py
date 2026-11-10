@@ -19,14 +19,16 @@ from chrono_ftp.connections.base import Progress, RemoteConnection, UnknownServe
 from chrono_ftp.connections.ssh import SshConnection
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.transferoptions import RESUME_ON, TransferOptions
+from chrono_ftp.transfers import split
 from chrono_ftp.transfers.job import PART_SUFFIX
 from chrono_ftp.transfers.queue import Job, State, TransferQueue
 from tests.test_transfers import run_all, wait_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_transfers.py 0.0.12"
+__version__ = "test_live_transfers.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A large file split in parts goes up and down whole (FC-05)
 # v0.0.12: Initial: resume both ways, dates and rights on a throwaway folder of a real server; rsync for dates only, as an upload that
 #          sets rights goes file by file; the counting stand-ins take a transfer's exclusive too
 
@@ -181,3 +183,33 @@ def test_rsync_keeps_dates_where_the_server_has_it(live: tuple[RemoteConnection,
     job = run(connection, tree, folder, True, "tree", TransferOptions(), rsync=True)
     assert job.state == State.DONE and job.way == "rsync", job.message
     assert entry(connection, joined(folder, "tree"), "a.txt")[1] == OLD_TIME
+
+
+def test_a_large_file_split_in_parts_goes_up_and_down_whole(live: tuple[RemoteConnection, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(split, "SPLIT_BYTES", 1024 * 1024)  # a few MB count as large here
+    connection, folder = live
+    logins: set[int] = set()
+    for name in ("download_range", "upload_range"):
+        real = getattr(SshConnection, name)
+
+        def noted(self: SshConnection, first: str, second: str, start: int, end: int, progress: Progress, limit: int = 0, real: object = real) -> None:
+            logins.add(id(self))
+            getattr(real, "__call__")(self, first, second, start, end, progress, limit)
+
+        monkeypatch.setattr(SshConnection, name, noted)
+    source = tmp_path / "big.bin"
+    source.write_bytes(os.urandom(4 * 1024 * 1024))
+    back = tmp_path / "back"
+    back.mkdir()
+    queue = TransferQueue(lambda item: None)
+    queue.settings(True, 15.0, False, 4)
+    options = TransferOptions(ask_before_replacing=False, split_large=True)
+    try:
+        for job in (Job(connection, connection_of(connection), str(source), folder, True, "big.bin", has_password=True, options=options), Job(connection, connection_of(connection), str(back), joined(folder, "big.bin"), False, "big.bin", has_password=True, options=options)):
+            queue.add(job)
+            finished = threading.Event()
+            threading.Thread(target=lambda job=job: wait_for((job,), finished), daemon=True).start()
+            assert finished.wait(15) and job.state == State.DONE, job.message
+    finally:
+        queue.close()
+    assert (back / "big.bin").read_bytes() == source.read_bytes() and len(logins) > 2  # each way in parts, over logins of their own

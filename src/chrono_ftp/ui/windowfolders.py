@@ -7,15 +7,16 @@ from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry, shown_name
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost
-from chrono_ftp.transfers.queue import Owned, State, tidy
+from chrono_ftp.transfers.queue import LINE, Owned, State, spared_partials, tidy
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowfolders.py 0.0.12"
+__version__ = "windowfolders.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A folder is not tidied while a transfer of its connection is paused either, and never takes what a paused job goes on from
 # v0.0.12: Tidying keeps a part file only while the next transfer of that file can continue it, and a part it removes loses its note
 #          (FB-02); _failed is declared in the base
 #          names are shown as written, never read as HTML; tidying touches only the leftovers this program made itself
@@ -74,11 +75,11 @@ class FoldersPart(WindowBase):
     def load_folder(self, session: Session, folder: str) -> None:
         session.wanted_folder = folder
         place = (session.connection.host, session.connection.port)
-        busy = any((job.connection.host, job.connection.port) == place and job.state in (State.WAITING, State.RUNNING) for job in self.queue.jobs)
+        busy = any((job.connection.host, job.connection.port) == place and job.state in (*LINE, State.RUNNING) for job in self.queue.jobs)  # a paused one too
 
         def read(remote: RemoteConnection) -> list[RemoteEntry]:
             found = remote.list_folder(folder)
-            owned = Owned(session.connection, self.settings.transfer_options)
+            owned = Owned(session.connection, self.settings.transfer_options, spared_partials(self.queue.jobs))  # a paused job's own stay
             return found if busy else tidy(remote, folder, found, session.leftovers, owned)  # a running transfer has its temporary files in use
 
         def show(found: object) -> None:

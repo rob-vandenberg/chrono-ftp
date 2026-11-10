@@ -24,9 +24,11 @@ from chrono_ftp.config.connections import config_folder
 from chrono_ftp.core.connection import Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "parts.py 0.0.12"
+__version__ = "parts.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A part written by several connections at once (FC-05) notes the ranges after its first bytes that were confirmed too; ranges
+#          that don't fit the part's size are left out on reading
 # v0.0.12: Initial: per part file, the source it holds bytes of, that source's size and date, and the bytes confirmed written; kept in
 #          memory and read again only when the file changed on the disk; the length of a file before an append, until it is safe; the
 #          files moved aside; written to the disk before they take their name, one change at a time also across processes; an append's
@@ -70,6 +72,35 @@ class PartRecord:
     resume: str = ""  # the resume setting the part was kept by: it is judged by that, never by what Settings say later
     owner: str = ""  # the Chrono FTP writing it now (running); empty once it is kept
     running: bool = False  # being written: noted before its first byte, so even a Chrono FTP that stops at once leaves no part of nobody's
+    ranges: tuple[tuple[int, int], ...] = ()  # split over several connections (FC-05): further ranges [start, end) confirmed written,
+    # each after part_size, in order and apart
+
+
+def ranges_valid(ranges: tuple[tuple[int, int], ...], part_size: int, size: int) -> bool:
+    """Each range lies after the first bytes and within the size, in order, none touching the next."""
+    end = part_size
+    for start, stop in ranges:
+        if not end < start < stop <= size:
+            return False
+        end = stop
+    return True
+
+
+def _ranges(value: object, part_size: int, size: int) -> tuple[tuple[int, int], ...]:
+    """Ranges from a note file, which is input: anything that is not a list of fitting ranges counts as none (only the first bytes)."""
+    if not isinstance(value, list):
+        return ()
+    found: list[tuple[int, int]] = []
+    for item in cast(list[object], value):
+        pair = cast(list[object], item) if isinstance(item, list) else []
+        if len(pair) != 2:
+            return ()
+        start, stop = _whole(pair[0]), _whole(pair[1])
+        if start is None or stop is None:
+            return ()
+        found.append((start, stop))
+    ranges = tuple(found)
+    return ranges if ranges_valid(ranges, part_size, size) else ()
 
 
 def upload_key(connection: Connection, remote_part: str) -> str:
@@ -117,7 +148,7 @@ def _record(value: object) -> PartRecord | None:
     if moment is None:
         return None
     resume, owner, running = data.get("resume", ""), data.get("owner", ""), data.get("running", False)
-    return PartRecord(source, size, moment, part_size, resume if isinstance(resume, str) else "", owner if isinstance(owner, str) else "", running is True)
+    return PartRecord(source, size, moment, part_size, resume if isinstance(resume, str) else "", owner if isinstance(owner, str) else "", running is True, _ranges(data.get("ranges"), part_size, size))
 
 
 _cache: dict[str, tuple[tuple[int, int], object]] = {}  # per file: its change time and size when read, and what was read
@@ -241,7 +272,7 @@ def _records(data: object) -> dict[str, PartRecord]:
 
 def _save(records: dict[str, PartRecord], durable: bool = True) -> bool:
     kept = dict(list(records.items())[-HIGHEST_RECORDS:])
-    return _write(FILE_NAME, {name: {"source": record.source, "size": record.size, "modified": record.modified, "part_size": record.part_size, "resume": record.resume, "owner": record.owner, "running": record.running} for name, record in kept.items()}, kept, durable)
+    return _write(FILE_NAME, {name: _record_data(record) for name, record in kept.items()}, kept, durable)
 
 
 def append_key(connection: Connection, remote: str) -> str:
@@ -529,13 +560,13 @@ def notes_in(connection: Connection, folder: str) -> list[str]:
 
 
 def _record_data(record: PartRecord) -> dict[str, object]:
-    return {"source": record.source, "size": record.size, "modified": record.modified, "part_size": record.part_size, "resume": record.resume, "owner": record.owner, "running": record.running}
+    return {"source": record.source, "size": record.size, "modified": record.modified, "part_size": record.part_size, "resume": record.resume, "owner": record.owner, "running": record.running, "ranges": [list(item) for item in record.ranges]}
 
 
 def remember(key: str, record: PartRecord) -> bool:
     """The part's one note: whatever was noted for this part before is replaced. False when it was not stored: then the part is nobody's
     and is not kept."""
-    if not math.isfinite(record.modified) or not 0 <= record.part_size <= record.size:
+    if not math.isfinite(record.modified) or not 0 <= record.part_size <= record.size or not ranges_valid(record.ranges, record.part_size, record.size):
         forget(key)
         return False
     with _locked():

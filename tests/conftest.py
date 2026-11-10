@@ -10,11 +10,13 @@ from types import FrameType
 import pytest
 
 from chrono_ftp.core import credentials
+from tests.fakeservers import end_the_servers
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 0.0.12"
+__version__ = "conftest.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A fake SSH server whose block ended while a window still held a connection to it ends once the test is over
 # v0.0.12: The whole run has settings folders of its own, so a thread that outlives its test never reaches the real ones; the run fails
 #          when the real settings folder of Chrono FTP gained or changed anything; nor the real data folder, also when it appears; each
 #          test has a home folder of the run, so no test reads this computer's own known hosts
@@ -122,3 +124,10 @@ def home_of_the_run(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     the real home folder: they reach a real server with this computer's own key and known hosts."""
     if request.node.get_closest_marker("live") is None:
         monkeypatch.setenv("HOME", str(RUN_HOME))
+
+
+@pytest.fixture(autouse=True)
+def fake_servers_end() -> Generator[None]:
+    """Set up before the test's own fixtures, so it ends after them: a window has closed its connections by then (AGENTS.md 4.4.4)."""
+    yield
+    end_the_servers()

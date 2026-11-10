@@ -20,9 +20,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.11"
+__version__ = "test_ui_filelist.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
 # v0.0.11: Imports from the split main window
 # v0.0.8: The login window
 # v0.0.7: The queue, the pin and the rows of buttons
@@ -374,7 +375,7 @@ def test_the_queue_button_hides_and_shows_the_queue(qtbot: QtBot) -> None:
 
 def finished_job(window: MainWindow, state: State) -> Job:
     job = Job(Scripted(CommandResult(0, "", "")), Connection(name="T", host="h"), "/a", "/", True, "a", state=state)
-    window.queue.jobs.append(job)
+    window.queue.add(job)  # a job in the given state: the queue runs only one that waits
     return job
 
 

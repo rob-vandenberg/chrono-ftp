@@ -3,7 +3,7 @@ test_transfer_rsync.py."""
 
 import json
 import os
-import select
+import selectors
 import stat
 import subprocess
 import sys
@@ -28,16 +28,18 @@ from chrono_ftp.core.connection import FTP, SFTP, Connection
 from chrono_ftp.core.transferoptions import RESUME_OFF, RESUME_ON, RESUME_SMART, SMART_RESUME_BYTES, TransferOptions, folder_rights
 from chrono_ftp.transfers.job import PART_SUFFIX, Meter
 from chrono_ftp.transfers.filebyfile import FileWay, CHANGED_HERE_TEXT, CHANGED_THERE_TEXT, NO_APPEND_TEXT, NOT_A_NAME_TEXT
-from chrono_ftp.transfers.options import Action, Answer, Answers, Choice, Conflict, decided, KEEP_TIMESTAMPS, RESUME, SET_RIGHTS, is_newer, resumable, usable
+from chrono_ftp.transfers.options import Action, Answer, Answers, Choice, Conflict, decided, KEEP_TIMESTAMPS, RESUME, SET_RIGHTS, is_newer, resumable, usable, SPLIT
 from chrono_ftp.transfers.queue import LEFTOVER_SECONDS, Job, Owned, State, TransferQueue, continuable, note_text, tidy
 from tests.fakeservers import PASSWORD, USER, ftp_server, ssh_server
 from tests.test_connections import trusted_ssh
 from tests.test_transfers import LEFTOVER_LOGIN, Leftovers, long_known, ours, run_all, wait_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_transfer_options.py 0.0.12"
+__version__ = "test_transfer_options.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The helper process is listened to without the descriptor limit of select(); an FTP upload, and an FTP download without REST,
+#          are never split (FC-05)
 # v0.0.12: Initial: every transfer option against real fake servers, stop and resume included; resume only from a noted, unchanged
 #          source; dates no clock can hold; a move keeps a source that changed; every arrival checked for its size; unknown dates told;
 #          a part without our note is never touched; a continued FTP upload is told; a new file here takes its name by a link; tidying by
@@ -440,9 +442,10 @@ class Child:
         assert output is not None
         deadline = time.monotonic() + CHILD_SECONDS
         line = b""
-        nothing: list[int] = []
         while not line.endswith(b"\n"):
-            ready, _, _ = select.select([output], nothing, nothing, max(deadline - time.monotonic(), 0))
+            with selectors.DefaultSelector() as watch:  # not select(): a long run of tests has descriptors numbered over 1024
+                watch.register(output, selectors.EVENT_READ)
+                ready = watch.select(max(deadline - time.monotonic(), 0))
             if not ready:
                 pytest.fail(f"the helper process did not say {expected!r} within {CHILD_SECONDS} s (it said {line!r})")
             byte = output.read(1)
@@ -743,14 +746,14 @@ def test_an_ftp_server_says_what_it_can_do_for_a_transfer(tmp_path: Path) -> Non
 def test_what_a_connection_can_not_do_is_off_and_says_why() -> None:
     wanted = TransferOptions(set_rights=True)
     options, reasons = usable(wanted, Capabilities(), FTP, True)
-    assert set(reasons) == {RESUME, KEEP_TIMESTAMPS, SET_RIGHTS}
-    assert all("does not offer" in text for text in reasons.values())
+    assert set(reasons) == {RESUME, KEEP_TIMESTAMPS, SET_RIGHTS, SPLIT}  # FTP never splits an upload (FC-05)
+    assert all("does not offer" in reasons[name] for name in (RESUME, KEEP_TIMESTAMPS, SET_RIGHTS))
     assert (options.resume, options.keep_timestamps, options.set_rights) == (RESUME_OFF, False, False)
     options, reasons = usable(wanted, Capabilities(resume=True, timestamps=True, rights=True), SFTP, True)
     assert reasons == {} and options == wanted
     options, reasons = usable(wanted, Capabilities(), FTP, False)
     assert KEEP_TIMESTAMPS not in reasons and options.keep_timestamps  # a download sets the date on this computer
-    assert set(reasons) == {RESUME, SET_RIGHTS} and not options.set_rights
+    assert set(reasons) == {RESUME, SET_RIGHTS, SPLIT} and not options.set_rights  # without REST no download starts in the middle
 
 
 # --- the defaults in the settings

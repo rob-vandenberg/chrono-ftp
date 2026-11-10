@@ -14,3 +14,6 @@
 12. [[D-041]] The main window in parts
 13. [[D-042]] A closed window takes no more answers
 14. [[D-043]] Transfer options and the transfer window
+15. [[D-046]] Queue control per item
+16. [[D-047]] When the queue is done
+17. [[D-048]] Several transfers at once

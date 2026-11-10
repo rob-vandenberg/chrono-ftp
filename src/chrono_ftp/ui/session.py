@@ -9,9 +9,10 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.11"
+__version__ = "session.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: An edited file knows the last save sent, so a retry of it in the queue counts as its save again
 # v0.0.11: Moved here from mainwindow.py, unchanged; the helpers lost their leading underscore (D-041)
 
 
@@ -24,6 +25,7 @@ class EditedFile:
     name: str
     unsent: bool = False  # saved, and not yet on its way to the server
     job: Job | None = None  # on its way now; only its end says the save reached the server
+    last_job: Job | None = None  # the last one sent: a retry of it in the queue is on its way again (EditPart._relink_edit)
     waited: int = 0  # how often the copy was not there
     saves: int = 0  # how many saves were noticed: a fresh copy that started before one of them is out of date
     held: bool = False  # stopped or refused: it goes only with a new save of this file

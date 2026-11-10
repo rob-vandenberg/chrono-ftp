@@ -16,9 +16,11 @@ from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES, NOT_OPENABLE_TEXT, WINDOW_
 from chrono_ftp.ui.plaintext import asked, box_text, fitting, told, wrapped
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowedit.py 0.0.12"
+__version__ = "windowedit.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A save starts by itself also when queue items wait to be started; a paused save has not ended; a stopped or refused save
+#          retried or resumed from the queue is the edit's save again
 # v0.0.12: A save goes with the default transfer options, never asks the overwrite question, is never skipped as not newer, and never
 #          changes the rights of the file on the server; names in message boxes are shown as written; a pending edit whose copy is gone
 #          leaves no empty folder behind; long names in its message boxes are shortened in their middle, but the path of a copy with
@@ -150,7 +152,8 @@ class EditPart(WindowBase):
                 edited.unsent = False
                 # The save is what the person wants there: no question, never skipped as not newer, and the file keeps its own rights.
                 options = replace(self.settings.transfer_options, ask_before_replacing=False, only_newer=False, set_rights=False)
-                edited.job = self._add_job(edited.session, copy, edited.folder, True, edited.name, options)
+                edited.job = self._add_job(edited.session, copy, edited.folder, True, edited.name, options, by_itself=True)  # a save never waits to be started
+                edited.last_job = edited.job
                 self.status.showMessage(f"Sending {shown_name(edited.name)} back to the server")
             else:
                 self.status.showMessage(f"{shown_name(edited.name)} goes to the server when the connection is back")
@@ -181,9 +184,19 @@ class EditPart(WindowBase):
         return done
 
     @override
+    def _relink_edit(self, job: Job) -> None:
+        """A save that was stopped or refused, retried or resumed from the queue: it is the edit's save on its way again, so its end
+        counts as always (sent, or held again). Only while no newer save was sent meanwhile."""
+        edited = next((item for item in self.edited.values() if item.job is None and item.last_job is job), None)
+        if edited is not None:
+            edited.job = job
+            edited.unsent = False
+            edited.held = False
+
+    @override
     def _edit_job_ended(self, job: Job) -> None:
         edited = next((item for item in self.edited.values() if item.job is job), None)
-        if edited is None or job.state in (State.WAITING, State.RUNNING):
+        if edited is None or job.state in (State.WAITING, State.RUNNING, State.PAUSED):
             return
         edited.job = None
         if job.state != State.FAILED and edited.unsent:

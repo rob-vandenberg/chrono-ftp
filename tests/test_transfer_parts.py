@@ -28,7 +28,7 @@ from chrono_ftp.transfers.filebyfile import OLD_NOT_NOTED_TEXT, PART_GONE_TEXT, 
 from chrono_ftp.transfers.job import PART_SUFFIX, Job, Meter, State, Stopped
 from chrono_ftp.transfers.options import Answer, Choice, Conflict
 from chrono_ftp.transfers.queue import APPEND_NOTES, NOTES, Owned, TransferQueue, note_text, tidy
-from chrono_ftp.transfers.rsyncway import _remove_arrived_sources
+from chrono_ftp.transfers.rsyncway import remove_arrived_sources
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, ftp_server, ssh_server
 from tests.test_connections import trusted_ssh
 from tests.test_engine import Scripted
@@ -36,9 +36,10 @@ from tests.test_transfers import wait_for
 from tests.test_transfer_options import BIG, OLD_TIME, SMALL_LIMIT, SMART_SMALL, WAIT_SECONDS, Person, Server, child, down, holds_bytes, read, server, stopped_halfway, up, write
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_transfer_parts.py 0.0.12"
+__version__ = "test_transfer_parts.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The removal of arrived originals is public, as the queue uses it for a move that goes on
 # v0.0.12: Initial: a note per part file, a refused continuation, a cut tail, every reason an original stays, impossible dates, the lost
 #          connection in the small steps, a folder that is not empty, counting what vanishes; a request that fails out of order in a
 #          pipelined transfer leaves no gap in the kept part; the notes wait for another process and are on the disk with their folder;
@@ -366,7 +367,7 @@ def test_rsync_looks_at_every_source_of_a_move_and_tells_each_reason(tmp_path: P
             job = Job(connection, connection.connection, str(here / "tree"), "/", True, "tree", options=TransferOptions(delete_source=True))
             sources: dict[str, tuple[int, float | None]] = {f"tree/{name}": (len(name), OLD_TIME) for name in ("changed.txt", "unchecked.txt", "fine.txt")}
             sources["locked/stays.txt"] = (len("stays.txt"), OLD_TIME)
-            kept = _remove_arrived_sources(job, sources)
+            kept = remove_arrived_sources(job, sources)
             connection.close()
     finally:
         (here / "locked").chmod(0o755)

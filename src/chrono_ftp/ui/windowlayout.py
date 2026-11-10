@@ -12,9 +12,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.11"
+__version__ = "windowlayout.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The settings of the queue apply at once (FC-02, FC-03)
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
@@ -25,6 +26,7 @@ class LayoutPart(WindowBase):
         for side in (self.local_side, self.remote_side):
             side.set_tree_place(self.settings.tree_place)
             side.set_show_hidden(self.settings.show_hidden)
+        self._apply_queue_settings()
 
     def _sized_parts(self) -> dict[str, Callable[[], QByteArray]]:
         return {

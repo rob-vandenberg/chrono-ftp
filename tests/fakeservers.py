@@ -19,9 +19,13 @@ from pyftpdlib.handlers import DTPHandler, FTPHandler, TLS_FTPHandler
 from pyftpdlib.servers import FTPServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeservers.py 0.0.12"
+__version__ = "fakeservers.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The SSH server leaves nothing behind: its event loop and its thread end with its block, or at the end of the test when a
+#          window still held a connection to it then (end_the_servers);
+#          an FTP server that takes only so many logins at once, as servers that limit them do (FC-01); one that answers a download the
+#          client ended early with a reply of choice (FC-05)
 # v0.0.12: An FTP server without some commands (REST, MFMT, SITE CHMOD), as old servers are; one with a garbled SIZE reply; one that
 #          drops the line at FEAT; one that offers REST and refuses to continue; a data connection that drops once; folders that take
 #          files but can't be read; one that answers a STOR of some files with a reply of choice; SIZE where nothing can be read; links
@@ -68,31 +72,72 @@ class SshServer:
         self.key: asyncssh.SSHKey = key
 
 
+CLOSE_SECONDS: float = 5.0  # the end of a fake server never waits longer than this
+ENDING: list[Callable[[], None]] = []  # the ends of fake SSH servers that still had a connection open when their block ended
+
+
 @contextmanager
 def ssh_server(root: Path, shell: bool = True) -> Generator[SshServer]:
-    """Real SSH and SFTP on a free local port; every SFTP path is inside root."""
+    """Real SSH and SFTP on a free local port; every SFTP path is inside root. At the end of its block it takes no new connection; once
+    none is open any more (else at the end of the test, end_the_servers) it closes its event loop and its thread: nothing stays behind."""
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
     key = asyncssh.generate_private_key("ssh-ed25519")
+    connections: list[asyncssh.SSHServerConnection] = []
+
+    class Server(_Server):
+        @override
+        def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
+            connections.append(conn)
 
     class Sftp(asyncssh.SFTPServer):
         def __init__(self, channel: asyncssh.SSHServerChannel[bytes]) -> None:
             super().__init__(channel, chroot=str(root).encode())
 
     async def start() -> asyncssh.SSHAcceptor:
-        return await asyncssh.listen("127.0.0.1", 0, server_host_keys=[key], server_factory=_Server, sftp_factory=Sftp, process_factory=_shell if shell else _no_shell, encoding="utf-8")
+        return await asyncssh.listen("127.0.0.1", 0, server_host_keys=[key], server_factory=Server, sftp_factory=Sftp, process_factory=_shell if shell else _no_shell, encoding="utf-8")
 
     acceptor = asyncio.run_coroutine_threadsafe(start(), loop).result(10)
     try:
         yield SshServer(acceptor.get_port(), key)
     finally:
 
-        async def stop() -> None:
-            acceptor.close()
-            await asyncio.sleep(0)
+        async def stop_listening() -> int:
+            acceptor.close()  # no new connection; the listener is gone once the ones it has are closed too
+            return sum(1 for connection in connections if not connection.is_closed())
 
-        asyncio.run_coroutine_threadsafe(stop(), loop).result(5)
+        async def stop() -> None:
+            for connection in connections:
+                connection.close()
+            await asyncio.wait_for(asyncio.gather(*(connection.wait_closed() for connection in connections), return_exceptions=True), CLOSE_SECONDS)
+            await asyncio.wait_for(acceptor.wait_closed(), CLOSE_SECONDS)
+            pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            await asyncio.wait_for(loop.shutdown_default_executor(), CLOSE_SECONDS)  # the thread that ran the shell's commands
+
+        def finish() -> None:
+            try:
+                asyncio.run_coroutine_threadsafe(stop(), loop).result(CLOSE_SECONDS * 3)
+            finally:
+                loop.call_soon_threadsafe(loop.stop)
+                thread.join(CLOSE_SECONDS)
+                assert not thread.is_alive(), "the fake SSH server did not stop"
+                loop.close()
+
+        if asyncio.run_coroutine_threadsafe(stop_listening(), loop).result(CLOSE_SECONDS):
+            ENDING.append(finish)  # a window still holds a connection to it: it closes that at the test's end, and then this ends
+        else:
+            finish()
+
+
+def end_the_servers() -> None:
+    """When a test is over (conftest): every fake SSH server whose block ended while a connection to it was still open ends now, after
+    the window of the test closed its connections: the connections it still has, then its event loop and its thread."""
+    while ENDING:
+        ENDING.pop()()
 
 
 AS_ROOT: bool = cast(Callable[[], int], getattr(os, "geteuid", lambda: -1))() == 0
@@ -100,7 +145,7 @@ NOT_AS_ROOT: pytest.MarkDecorator = pytest.mark.skipif(AS_ROOT, reason="as root 
 
 
 @contextmanager
-def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False, without: tuple[str, ...] = (), size_reply: str = "", drops_at_feat: bool = False, refuses_restart: bool = False, drops_data_after: int = 0, write_only: tuple[str, ...] = (), refuses_store: tuple[tuple[str, str], ...] = (), sizes_anywhere: bool = False, links_as_links: bool = False, full_modes: bool = False, noop_heard: Callable[[], None] | None = None, drops_at_noop: bool = False, command_heard: Callable[[str], None] | None = None) -> Generator[int]:
+def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False, without: tuple[str, ...] = (), size_reply: str = "", drops_at_feat: bool = False, refuses_restart: bool = False, drops_data_after: int = 0, write_only: tuple[str, ...] = (), refuses_store: tuple[tuple[str, str], ...] = (), sizes_anywhere: bool = False, links_as_links: bool = False, full_modes: bool = False, noop_heard: Callable[[], None] | None = None, drops_at_noop: bool = False, command_heard: Callable[[str], None] | None = None, most_logins: int = 0, early_end_reply: str = "") -> Generator[int]:
     """Real FTP on a free local port; with a certificate it offers TLS. trusted: the person already said yes to plain FTP on this port.
     without: commands this server does not know, so it does not offer them in FEAT or SITE HELP either. size_reply: what it answers to
     SIZE instead of the size. drops_at_feat: the line drops when the client asks what the server can do. refuses_restart: it offers
@@ -109,7 +154,9 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
     refuses_store: (start of a file name, reply): a file whose name starts so is answered with that reply instead of being taken.
     sizes_anywhere: SIZE is answered also in a folder that can't be read. links_as_links: a link is listed as a link, with its own size
     and date, as some servers do. full_modes: unix.mode holds the kind as well as the rights (0010644 for a pipe). noop_heard: called at every NOOP. drops_at_noop: the first NOOP closes the connection, as a server
-    that closed an idle connection all the same. command_heard: called with the name of every command."""
+    that closed an idle connection all the same. command_heard: called with the name of every command. most_logins: it takes no more
+    connections at once than this (0: any number); one more is answered with 421 and closed, as servers that limit them do.
+    early_end_reply: what it answers when the client ends a download's data connection before the end (instead of 426)."""
     authorizer = DummyAuthorizer()
     authorizer.add_user(USER, PASSWORD, str(root), perm=rights)
     for folder in write_only:
@@ -162,6 +209,15 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
         @override
         def use_sendfile(self) -> bool:
             return False  # every byte goes through send, so the drop can come
+
+    class EarlyEnd(DTPHandler):
+        @override
+        def handle_close(self) -> None:
+            if not self._closed and not self.receive and len(self.producer_fifo) != 0:
+                self._resp = (early_end_reply, lambda *args: None)  # the client ended it early: this server answers so
+                self.close()
+                return
+            super().handle_close()
 
     class Handler(FTPHandler):
         def _refused_restart(self) -> bool:
@@ -229,6 +285,8 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
     handler = Handler if certificate is None else TlsHandler
     if drops_data_after:
         Handler.dtp_handler = DroppingData  # a plain server: the TLS one keeps its own data handler
+    if early_end_reply:
+        Handler.dtp_handler = EarlyEnd
     known = (FTPHandler if certificate is None else TLS_FTPHandler).proto_cmds
     handler.proto_cmds = {name: ({**details, "perm": None} if sizes_anywhere and name == "SIZE" else details) for name, details in known.items() if name not in without}
     if links_as_links:
@@ -240,6 +298,7 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
     if certificate is not None:
         TlsHandler.certfile = str(certificate)
     server = FTPServer(("127.0.0.1", 0), handler)
+    server.max_cons_per_ip = most_logins
     port = cast(int, cast(socket.socket, server.socket).getsockname()[1])
     if trusted and certificate is None:
         trust.remember_certificate(f"127.0.0.1:{port} plain")

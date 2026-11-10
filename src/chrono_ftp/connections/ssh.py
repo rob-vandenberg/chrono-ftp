@@ -13,14 +13,17 @@ from typing import BinaryIO, cast, override
 import asyncssh
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, safe_name
+from chrono_ftp.connections.base import LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.12"
+__version__ = "ssh.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The speed limit is asked again for every block, also in a copy that started without one, so a new limit takes effect at
+#          once; its pauses are short steps, so a stop is never kept waiting; one range of a file and another login of its own, for a file
+#          split over several connections (FC-05)
 # v0.0.12: A transfer can continue at an offset or append; dates, rights, sizes and empty folders over SFTP (FB-02, FB-05, FB-06, FB-08);
 #          a date SFTP can't carry is a refusal, not a failure of the transfer; a link to a file is listed with the size and date of
 #          the file it leads to, which is what a transfer reads; every transfer goes block by block, so what progress counted is there
@@ -324,6 +327,112 @@ class SshConnection(RemoteConnection):
         self._sftp_call(self._sftp_now().rename(old, new))
 
     @override
+    def can_split(self, upload: bool) -> bool:
+        return True  # SFTP reads and writes at any place, both ways
+
+    @override
+    def another_login(self) -> "SshConnection":
+        """A login of its own (an SSH connection of its own, with what this one logged in with): one SSH connection shares one line, so
+        a range over it would gain nothing."""
+        other = SshConnection(self.connection, self.password, self.known_hosts)
+        try:
+            other.connect()
+        except BaseException:
+            other.close()
+            raise
+        return other
+
+    @override
+    def download_range(self, remote: str, local: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
+        self._run_copy(self._copy_range(remote, local, False, start, end, progress, limit))
+
+    @override
+    def upload_range(self, local: str, remote: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
+        self._run_copy(self._copy_range(local, remote, True, start, end, progress, limit))
+
+    @override
+    def make_empty(self, remote: str) -> None:
+        async def make() -> None:
+            async with await _opened(self._sftp_now(), remote, "xb"):
+                pass
+
+        try:
+            self._run_copy(make())
+        except CreateRefused as refused:
+            if self.details(remote) is not None:
+                raise NameTaken(NAME_TAKEN_TEXT) from refused.__cause__
+            raise RemoteActionFailed(str(refused.__cause__) or "The server refused to make the file.") from refused.__cause__
+
+    async def _copy_range(self, source: str, target: str, to_server: bool, start: int, end: int, progress: Progress, limit: Limit) -> None:
+        """The bytes [start, end) of source written at the same place in target, which exists: many requests at once, as a whole copy
+        (D-010). Prefix counts only bytes with no gap before them; on a failure nothing is cut back, as other ranges of the file may lie
+        after this one: what is past the counted bytes is written again by the next try."""
+        sftp = self._sftp_now()
+        block = BLOCK_SIZE if limit_now(limit) else max(BLOCK_SIZE, min(sftp.limits.max_read_len, sftp.limits.max_write_len))  # with a limit
+        depth = max(FEWEST_REQUESTS, min(IN_FLIGHT_BYTES // block, MOST_REQUESTS))  # small blocks, so it holds from the first one
+        prefix = Prefix(start, progress)
+
+        async def nothing() -> None:
+            return None
+
+        if to_server:
+            async with sftp.open(target, "r+b") as remote:
+                with LocalFile(source, "rb", False) as local:
+
+                    async def write_at(place: int, data: bytes) -> tuple[int, int]:
+                        await remote.write(data, place)
+                        return place, len(data)
+
+                    def next_request(place: int) -> asyncio.Task[tuple[int, int]] | None:
+                        if place >= end:
+                            return None
+                        local.seek(place)
+                        data = local.read(min(block, end - place))
+                        return asyncio.create_task(write_at(place, data)) if data else None
+
+                    await self._pipeline(next_request, start, block, depth, prefix, nothing, progress, limit)
+        else:
+            async with sftp.open(source, "rb") as remote:
+                with LocalFile(target, "r+b", True) as local:
+                    ended: list[bool] = []
+
+                    async def read_at(place: int, length: int) -> tuple[int, int]:
+                        got = b""
+                        while len(got) < length:  # a server may answer a read with less than was asked
+                            data = cast(bytes, await remote.read(length - len(got), place + len(got)))
+                            if not data:
+                                ended.append(True)  # the source ended before this range did
+                                break
+                            got += data
+                        local.seek(place)  # no await between: no other request writes in between
+                        local.write(got)
+                        return place, len(got)
+
+                    def next_request(place: int) -> asyncio.Task[tuple[int, int]] | None:
+                        if place >= end or ended:
+                            return None
+                        return asyncio.create_task(read_at(place, min(block, end - place)))
+
+                    await self._pipeline(next_request, start, block, depth, prefix, nothing, progress, limit)
+        if prefix.end != end:
+            raise RemoteActionFailed(SHORT_TEXT)  # the source ended earlier than its size said
+
+    def _run_copy(self, work: Coroutine[object, object, None]) -> None:
+        """A copy of a range, or the making of a file, with the server's answers in this program's words."""
+        try:
+            self._await(work, None)
+        except LOST_ERRORS as error:
+            raise ConnectionLost(LOST_TEXT) from error
+        except CreateRefused:
+            raise
+        except (asyncssh.SFTPNoSpaceOnFilesystem, asyncssh.SFTPQuotaExceeded) as error:
+            raise RefusedForNow(NO_ROOM_TEXT.format(reply=str(error) or "no room")) from error
+        except asyncssh.SFTPFailure as error:
+            raise RefusedForNow(STOPPED_TAKING_TEXT.format(reply=str(error) or "Failure")) from error
+        except (asyncssh.Error, OSError) as error:
+            raise RemoteActionFailed(str(error) or "The transfer did not finish.") from error
+
+    @override
     def place_new(self, temporary: str, target: str) -> None:
         """SFTP's rename never replaces: its refusal, when the name was taken meanwhile, is that and nothing else."""
         try:
@@ -366,13 +475,14 @@ class SshConnection(RemoteConnection):
         else:
             self._sftp_call(self._sftp_now().rmtree(path))
 
-    async def _copy_pipelined(self, source: str, target: str, to_server: bool, progress: Progress, offset: int, append: bool, exclusive: bool = False) -> None:
+    async def _copy_pipelined(self, source: str, target: str, to_server: bool, progress: Progress, offset: int, append: bool, exclusive: bool = False, limit: Limit = 0) -> None:
         """Without a limit many requests travel at once, as deep as asyncssh's own copy, which is much faster on a distant server (D-010).
         They may end in any order, so a failed one can leave a gap with written bytes after it. Prefix counts only the bytes with no gap
         before them; on a failure or a stop the target is cut to exactly those, so a kept part never holds a gap. The copy is complete
         only when those bytes reach the whole size. With offset the target is first cut to offset and written on from there; with
         append the whole source goes after the target's end; on a failure or a stop a download is cut back to what it was, and an upload
-        is left for its caller to set back, which knows what else may be in that file."""
+        is left for its caller to set back, which knows what else may be in that file. A limit set meanwhile (limit) is kept from then on:
+        one request at a time, with a pause after each."""
         sftp = self._sftp_now()
         block = max(BLOCK_SIZE, min(sftp.limits.max_read_len, sftp.limits.max_write_len))
         depth = max(FEWEST_REQUESTS, min(IN_FLIGHT_BYTES // block, MOST_REQUESTS))
@@ -402,7 +512,7 @@ class SshConnection(RemoteConnection):
                         if not append:  # an append is set back by the caller, only where nothing but it can be in the file
                             await remote.truncate(prefix.end)
 
-                    await self._pipeline(next_request, start, block, depth, prefix, undo)
+                    await self._pipeline(next_request, start, block, depth, prefix, undo, progress, limit)
                     if prefix.end != read_up_to:
                         await undo()
                         raise RemoteActionFailed(SHORT_TEXT)
@@ -410,7 +520,7 @@ class SshConnection(RemoteConnection):
             async with sftp.open(source, "rb") as remote:
                 size = (await remote.stat()).size
                 if size is None:
-                    await self._copy_blocks(source, target, False, progress, 0, offset, append, exclusive)  # no size to plan requests by: one by one
+                    await self._copy_blocks(source, target, False, progress, limit, offset, append, exclusive)  # no size to plan requests by: one by one
                     return
                 with LocalFile(target, "r+b" if append or offset else "xb" if exclusive else "wb", True) as local:
                     if offset:
@@ -440,18 +550,18 @@ class SshConnection(RemoteConnection):
                     async def undo() -> None:
                         local.truncate((start if append else prefix.end) + shift)
 
-                    await self._pipeline(next_request, start, block, depth, prefix, undo)
+                    await self._pipeline(next_request, start, block, depth, prefix, undo, progress, limit)
                     if prefix.end != size:
                         await undo()  # the source ended earlier than its size said: never a copy with a gap put in place
                         raise RemoteActionFailed(SHORT_TEXT)
 
-    async def _pipeline(self, next_request: Callable[[int], "asyncio.Task[tuple[int, int]] | None"], start: int, block: int, depth: int, prefix: Prefix, undo: Callable[[], Coroutine[object, object, None]]) -> None:
+    async def _pipeline(self, next_request: Callable[[int], "asyncio.Task[tuple[int, int]] | None"], start: int, block: int, depth: int, prefix: Prefix, undo: Callable[[], Coroutine[object, object, None]], progress: Progress, limit: Limit = 0) -> None:
         pending: set[asyncio.Task[tuple[int, int]]] = set()
         place = start
         more = True
         try:
             while True:
-                while more and len(pending) < depth:
+                while more and len(pending) < (1 if limit_now(limit) else depth):
                     task = next_request(place)
                     if task is None:
                         more = False
@@ -467,6 +577,9 @@ class SshConnection(RemoteConnection):
                         prefix.written(*task.result())  # every request that ended well counts, also one that ended with a failed one
                 if failures:
                     raise failures[0]
+                for pause in limit_pauses(limit, sum(task.result()[1] for task in finished)):
+                    await asyncio.sleep(pause)
+                    progress(0)  # a stop meanwhile ends it now
         except BaseException:
             for task in pending:
                 task.cancel()
@@ -477,13 +590,12 @@ class SshConnection(RemoteConnection):
                 pass  # the connection is gone: a part keeps its tail, which the next try cuts before it goes on
             raise
 
-    async def _copy_blocks(self, source: str, target: str, to_server: bool, progress: Progress, limit: int, offset: int, append: bool, exclusive: bool = False) -> None:
+    async def _copy_blocks(self, source: str, target: str, to_server: bool, progress: Progress, limit: Limit, offset: int, append: bool, exclusive: bool = False) -> None:
         """With a limit: block after block, with a pause after each, so progress is always the bytes written in order. With offset the
         target is first cut to offset and written on from there; with append the whole source goes after the target's end; on a failure
         or a stop a download is cut back to what it was, and an upload is left for its caller to set back."""
         sftp = self._sftp_now()
         size = BLOCK_SIZE
-        pause = size / (limit * 1024) if limit else 0.0
         if to_server:
             async with await _opened(sftp, target, "r+b" if append or offset else "xb" if exclusive else "wb") as remote:
                 if offset:
@@ -495,7 +607,7 @@ class SshConnection(RemoteConnection):
                         await remote.write(block, place)
                         place += len(block)
                         progress(len(block))
-                        await asyncio.sleep(pause)
+                        await self._keep_to(limit, len(block), progress)
         else:
             async with sftp.open(source, "rb") as remote:
                 with LocalFile(target, "r+b" if append or offset else "xb" if exclusive else "wb", True) as local:
@@ -508,7 +620,7 @@ class SshConnection(RemoteConnection):
                             local.write(block)
                             place += len(block)
                             progress(len(block))
-                            await asyncio.sleep(pause)
+                            await self._keep_to(limit, len(block), progress)
                     except BaseException:
                         if append:
                             try:
@@ -517,13 +629,22 @@ class SshConnection(RemoteConnection):
                                 pass  # the first problem is the one to tell
                         raise
 
-    def _transfer(self, source: str, target: str, to_server: bool, progress: Progress, limit: int, offset: int, append: bool, exclusive: bool = False) -> None:
+    @staticmethod
+    async def _keep_to(limit: Limit, amount: int, progress: Progress) -> None:
+        """The pause after a block that keeps to the limit as it is now; a stop meanwhile ends it at once."""
+        await asyncio.sleep(0)  # also without a limit, other work of this connection gets its turn
+        for pause in limit_pauses(limit, amount):
+            await asyncio.sleep(pause)
+            progress(0)
+
+    def _transfer(self, source: str, target: str, to_server: bool, progress: Progress, limit: Limit, offset: int, append: bool, exclusive: bool = False) -> None:
         """exclusive: the file is made only where nothing is; only a refusal of that very making can mean the name is taken. A failure
-        while writing is that, whatever the server calls it: never a taken name."""
-        if limit:
+        while writing is that, whatever the server calls it: never a taken name. A limit may change on the way: it is asked again for every
+        block."""
+        if limit_now(limit):
             work = self._copy_blocks(source, target, to_server, progress, limit, offset, append, exclusive)
         else:
-            work = self._copy_pipelined(source, target, to_server, progress, offset, append, exclusive)
+            work = self._copy_pipelined(source, target, to_server, progress, offset, append, exclusive, limit)
         try:
             self._await(work, None)
         except LOST_ERRORS as error:
@@ -541,11 +662,11 @@ class SshConnection(RemoteConnection):
             raise RemoteActionFailed(str(error) or "The transfer did not finish.") from error
 
     @override
-    def download(self, remote: str, local: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+    def download(self, remote: str, local: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         self._transfer(remote, local, False, progress, limit, offset, append, exclusive)
 
     @override
-    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+    def upload(self, local: str, remote: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         self._transfer(local, remote, True, progress, limit, offset, append, exclusive)
 
     @override

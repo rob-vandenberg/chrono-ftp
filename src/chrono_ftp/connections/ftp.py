@@ -15,14 +15,20 @@ from pathlib import Path
 from typing import BinaryIO, cast, override
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, parent_of, safe_name
+from chrono_ftp.connections.base import GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
 from chrono_ftp.core.connection import Connection
-from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed, TransferInterrupted
+from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, NoMoreLogins, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.12"
+__version__ = "ftp.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The speed limit is asked again for every block, so a new limit takes effect at once; its pauses are short steps, so a stop
+#          is never kept waiting; a passing refusal of a new connection (421: too many) is told apart from a server that can't be reached;
+#          after a broken-off transfer the new login comes only when the connection is next needed, so a stop ends at once, and a server
+#          that takes no more logins at that moment says so (NoMoreLogins) instead of the connection being lost; one range of a file
+#          fetched with REST, the data connection ended after it, and a login of its own for it (FC-05); any answer to that early end
+#          is no failure of a range that arrived whole
 # v0.0.12: What the server can do for a transfer is read from FEAT and SITE HELP; resume with REST and APPE, append, dates with MFMT,
 #          rights with SITE CHMOD, sizes and empty folders (FB-02, FB-05, FB-06, FB-08); a SIZE reply that is no number counts as
 #          unknown; a name with a line break fails only that item, in plain words; a resume of an upload is REST with STOR; the details
@@ -46,6 +52,8 @@ __version__ = "ftp.py 0.0.12"
 SECONDS: float = 30.0
 BLOCK_SIZE: int = 64 * 1024
 NOT_REACHED_TEXT: str = "The server could not be reached. Please check the host and the port."
+SHORT_RANGE_TEXT: str = "The file on the server ended earlier than its size said while it was being fetched."
+NO_MORE_LOGINS_TEXT: str = "The server takes no more connections at the moment. Please try again a little later."
 LOGIN_TEXT: str = "The server did not accept this login. Please check the user and password."
 NO_LISTING_TEXT: str = "This server does not offer the modern folder listing (MLSD) that Chrono FTP needs."
 PLAIN: str = "plain"
@@ -166,6 +174,10 @@ def _special_mode(mode: str) -> bool:
     return stat.S_IFMT(value) in (stat.S_IFIFO, stat.S_IFSOCK, stat.S_IFCHR, stat.S_IFBLK)
 
 
+class _RangeDone(Exception):
+    """The range of a split download is here: the data connection ends now."""
+
+
 class FtpConnection(RemoteConnection):
     def __init__(self, connection: Connection, password: str | None = None) -> None:
         self.connection: Connection = connection
@@ -174,6 +186,7 @@ class FtpConnection(RemoteConnection):
         self.encrypted: bool = False
         self.must_encrypt: bool = False
         self._ftp: ftplib.FTP | None = None
+        self._afresh: bool = False  # dropped after a broken-off transfer: the next call logs in again
         self._asked: ftplib.FTP | None = None  # the session that was asked for its details
         self._lock: threading.Lock = threading.Lock()  # one control connection does one thing at a time
         self._mlst: bool | None = None  # whether the server knows MLST: learnt from its first answer
@@ -257,6 +270,8 @@ class FtpConnection(RemoteConnection):
             self._binary = True
         except ftplib.error_perm as error:
             raise LoginRefused(LOGIN_TEXT) from error
+        except ftplib.error_temp as error:
+            raise NoMoreLogins(NO_MORE_LOGINS_TEXT) from error
         except FTP_ERRORS as error:
             raise ConnectionFailed(NOT_REACHED_TEXT) from error
         try:
@@ -283,6 +298,7 @@ class FtpConnection(RemoteConnection):
     def close(self) -> None:
         session = self._ftp
         self._ftp = None
+        self._afresh = False
         if session is not None:
             try:
                 session.quit()
@@ -307,6 +323,17 @@ class FtpConnection(RemoteConnection):
         self._asked = session
 
     def _session(self) -> ftplib.FTP:
+        """The control connection; after a broken-off transfer a new login first. A server that takes no more logins now says so
+        (NoMoreLogins); any other failure of that login is a lost connection."""
+        if self._ftp is None and self._afresh:
+            try:
+                self.connect()
+            except NoMoreLogins:
+                raise  # the next call tries again
+            except ChronoFtpError as error:
+                self._afresh = False
+                raise ConnectionLost(LOST_TEXT) from error
+            self._afresh = False
         if self._ftp is None:
             raise RemoteActionFailed("The connection is closed.")
         return self._ftp
@@ -317,6 +344,8 @@ class FtpConnection(RemoteConnection):
             return  # busy, so it is alive
         try:
             self._session().voidcmd("NOOP")
+        except NoMoreLogins as error:
+            raise ConnectionLost(LOST_TEXT) from error  # (a check says only whether it is there)
         except FTP_ERRORS as error:
             raise ConnectionLost(LOST_TEXT) from error
         finally:
@@ -425,12 +454,10 @@ class FtpConnection(RemoteConnection):
         self._do(("rmd", path))
 
     def _start_afresh(self) -> None:
-        """A transfer broken off leaves its reply on the way: a new login, so no later answer can belong to the wrong command."""
+        """A transfer broken off leaves its reply on the way: the control connection goes, and the next call logs in again (_session), so
+        no later answer can belong to the wrong command, and a stop never waits for a login."""
         self._drop()
-        try:
-            self.connect()
-        except (ChronoFtpError, *FTP_ERRORS):
-            pass  # the next call tells that the connection is closed
+        self._afresh = True
 
     @override
     def set_mode(self, path: str, mode: str) -> None:
@@ -602,8 +629,7 @@ class FtpConnection(RemoteConnection):
             pass  # gone: a new login follows
         with self._lock:
             self._start_afresh()
-        if self._ftp is None:
-            raise ConnectionLost(LOST_TEXT)
+            self._session()  # logged in again now; NoMoreLogins where the server takes no more at this moment
 
     @override
     def remove_empty_folder(self, path: str) -> None:
@@ -615,8 +641,7 @@ class FtpConnection(RemoteConnection):
             raise RemoteActionFailed(NOT_EMPTY_TEXT) from error
 
     @override
-    def download(self, remote: str, local: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
-        pause = BLOCK_SIZE / (limit * 1024) if limit else 0.0
+    def download(self, remote: str, local: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         with self._lock, LocalFile(local, "ab" if append else "r+b" if offset else "xb" if exclusive else "wb", True) as file:  # every step here is this computer's
             if offset:
                 file.truncate(offset)  # a continued part: whatever is after offset goes
@@ -626,7 +651,9 @@ class FtpConnection(RemoteConnection):
             def take(block: bytes) -> None:
                 file.write(block)
                 progress(len(block))
-                time.sleep(pause)
+                for pause in limit_pauses(limit, len(block)):
+                    time.sleep(pause)
+                    progress(0)  # a stop meanwhile ends it now
 
             try:
                 self._data(lambda: self._session().retrbinary(f"RETR {remote}", take, BLOCK_SIZE, rest=offset or None), bool(offset))  # REST: from offset
@@ -639,18 +666,18 @@ class FtpConnection(RemoteConnection):
                 raise
 
     @override
-    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+    def upload(self, local: str, remote: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         """An append can't be undone here (FTP can't cut a file back), so the overwrite question does not offer it over FTP. exclusive: FTP
         can't make a file only where nothing is, so the name is asked of the server right before (RNFR), as for a new file's name."""
         if exclusive and not offset and not append and self._exists(remote):
             raise NameTaken(NAME_TAKEN_TEXT)
         if offset and not append and self.file_size(remote) != offset:
             raise ContinuationRefused(PART_NOT_AS_LEFT_TEXT)  # REST would write after a gap, or into bytes that are not ours: from the start
-        pause = BLOCK_SIZE / (limit * 1024) if limit else 0.0
-
         def sent(block: bytes) -> None:
             progress(len(block))  # sent: the server holds what it got of it in order, so at most this
-            time.sleep(pause)
+            for pause in limit_pauses(limit, len(block)):
+                time.sleep(pause)
+                progress(0)  # a stop meanwhile ends it now
 
         try:
             with self._lock, LocalFile(local, "rb", False) as file:  # a read that fails is this computer's problem, never a broken line
@@ -678,19 +705,62 @@ class FtpConnection(RemoteConnection):
             if reply.startswith(("450", "452")):
                 raise RefusedForNow((NO_ROOM_TEXT if reply.startswith("452") else BUSY_TEXT).format(reply=reply)) from error
             self._start_afresh()
-            if self._ftp is None or reply.startswith("421"):
+            if reply.startswith("421"):
                 raise ConnectionLost(LOST_TEXT) from error
-            raise TransferInterrupted(INTERRUPTED_TEXT) from error
+            raise TransferInterrupted(INTERRUPTED_TEXT) from error  # the next call logs in again; where that fails, it says so
         except (ssl.SSLError, OSError) as error:  # a reset or a timeout of the data connection
             self._start_afresh()
-            if self._ftp is None:
-                raise ConnectionLost(LOST_TEXT) from error
             raise TransferInterrupted(INTERRUPTED_TEXT) from error
         except FTP_ERRORS as error:
             raise (ContinuationRefused if continued else RemoteActionFailed)(_refusal(error, "The transfer did not finish.")) from error
         except BaseException:
             self._start_afresh()
             raise
+
+    @override
+    def can_split(self, upload: bool) -> bool:
+        return not upload and self.capabilities.resume  # FTP can't write at a place in the middle; a download starts at one with REST
+
+    @override
+    def another_login(self) -> "FtpConnection":
+        return self.for_a_transfer()
+
+    @override
+    def download_range(self, remote: str, local: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
+        """REST start, and the data connection is ended once the range is there; the server's answer to that is read, so the control
+        connection goes on with the next command."""
+        wanted = end - start
+        got = 0
+        with self._lock, LocalFile(local, "r+b", True) as file:
+            file.seek(start)
+
+            def take(block: bytes) -> None:
+                nonlocal got
+                block = block[: wanted - got]
+                file.write(block)
+                got += len(block)
+                progress(len(block))
+                for pause in limit_pauses(limit, len(block)):
+                    time.sleep(pause)
+                    progress(0)  # a stop meanwhile ends it now
+                if got >= wanted:
+                    raise _RangeDone
+
+            def fetch() -> None:
+                session = self._session()
+                try:
+                    session.retrbinary(f"RETR {remote}", take, BLOCK_SIZE, rest=start or None)
+                except _RangeDone:
+                    try:
+                        session.voidresp()  # the answer to the data connection we ended: 426, 226, or any other: the range is here
+                    except (ftplib.error_temp, ftplib.error_perm, ftplib.error_reply):
+                        pass  # whatever the server says to an end it did not choose is no failure of the range
+                    except (OSError, EOFError, ftplib.error_proto):
+                        self._start_afresh()  # no clear answer: the next call logs in again, so no later answer belongs to the wrong command
+
+            self._data(fetch, True)
+        if got != wanted:
+            raise RemoteActionFailed(SHORT_RANGE_TEXT)
 
     @override
     def for_a_transfer(self) -> "FtpConnection":

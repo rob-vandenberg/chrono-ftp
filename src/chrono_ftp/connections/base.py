@@ -1,6 +1,6 @@
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -9,9 +9,12 @@ from typing import BinaryIO, cast
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "base.py 0.0.12"
+__version__ = "base.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A speed limit may be a function, asked again for every block, so a new limit takes effect while a file is on its way; the
+#          pauses it asks for are cut in short steps; one range of a file, for a file split over several connections, and another login
+#          of the same connection for such a part (FC-05)
 # v0.0.12: What a connection can do for a transfer (resume, dates, rights); a transfer can continue at an offset or append; dates, rights,
 #          the size of a file (None when unknown), the details of one file, and the removal of an empty folder; whether a size is known;
 #          a server path in its one form, .. left to the server; cutting a file back; a size is unknown where the folder can't be read;
@@ -37,7 +40,29 @@ SHORT_TEXT: str = "The source ended earlier than its size said while it was bein
 NO_ROOM_TEXT: str = "The server has no room for this file ({reply}). The other files go on; you can send this one again once there is room."
 LOCAL_READ_TEXT: str = "This computer could not read the file it was sending: {reason}."
 LOCAL_WRITE_TEXT: str = "This computer could not write what arrived: {reason}."
+NO_SPLIT_TEXT: str = "This connection sends a file in one piece."
 Progress = Callable[[int], None]  # bytes done since the last call; it may raise to stop the transfer
+Limit = int | Callable[[], int]  # KB per second, 0 for none; a function is asked again for every block, so a change takes effect at once
+LIMIT_STEP_SECONDS: float = 0.2  # a pause for the limit is cut in steps this long, so a stop or a new limit is never kept waiting
+
+
+def limit_now(limit: Limit) -> int:
+    """The limit at this moment, in KB per second; 0 for none. A number from input is never below 0."""
+    return max(0, limit() if callable(limit) else limit)
+
+
+def limit_pauses(limit: Limit, amount: int) -> Iterator[float]:
+    """The pauses after amount bytes that keep the transfer within the limit, each at most LIMIT_STEP_SECONDS. The limit is asked again
+    before each, so a raised limit shortens the rest and none ends it. After each pause the caller asks progress with 0 bytes, which raises
+    when the transfer was stopped meanwhile."""
+    owed = float(amount)
+    while owed > 0:
+        now = limit_now(limit)
+        if not now:
+            return
+        step = min(LIMIT_STEP_SECONDS, owed / (now * 1024))
+        yield step
+        owed -= step * now * 1024
 
 
 @dataclass(frozen=True)
@@ -241,13 +266,13 @@ class RemoteConnection(ABC):
     def delete(self, path: str, is_folder: bool) -> None: ...
 
     @abstractmethod
-    def download(self, remote: str, local: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
+    def download(self, remote: str, local: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
         """One file; limit is in KB per second, 0 for no limit. progress is called only for bytes written in order from the start (or from
         offset), so their sum is a length that is known to be there. offset: a resume: the target keeps its first offset bytes, anything
         after them goes, and the source from offset on is written there. append: the whole source is written after the end of the target."""
 
     @abstractmethod
-    def upload(self, local: str, remote: str, progress: Progress, limit: int = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None: ...
+    def upload(self, local: str, remote: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None: ...
 
     @abstractmethod
     def check(self) -> None:
@@ -356,3 +381,25 @@ class RemoteConnection(ABC):
     def for_a_transfer(self) -> "RemoteConnection":
         """A connection for the transfer queue, so browsing goes on during a transfer."""
         return self
+
+    def can_split(self, upload: bool) -> bool:
+        """Whether one file can go in ranges, each over its own login (FC-05): download_range, upload_range and another_login work."""
+        return False
+
+    def another_login(self) -> "RemoteConnection":
+        """A login of its own, with what this one logged in with, for one range of a split file. Raises ConnectionFailed (NoMoreLogins
+        where the server takes no more at the moment)."""
+        raise RemoteActionFailed(NO_SPLIT_TEXT)
+
+    def download_range(self, remote: str, local: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
+        """The bytes [start, end) of the server's file written at the same place in the file here, which exists already; nothing else of
+        it is touched. progress is called only for bytes written in order from start."""
+        raise RemoteActionFailed(NO_SPLIT_TEXT)
+
+    def upload_range(self, local: str, remote: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
+        """The bytes [start, end) of the file here written at the same place in the server's file, which exists already; as download_range."""
+        raise RemoteActionFailed(NO_SPLIT_TEXT)
+
+    def make_empty(self, remote: str) -> None:
+        """An empty file made only where nothing is (NameTaken otherwise): the part a split upload writes its ranges into."""
+        raise RemoteActionFailed(NO_SPLIT_TEXT)

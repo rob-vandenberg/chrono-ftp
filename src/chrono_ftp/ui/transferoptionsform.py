@@ -8,12 +8,15 @@ from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from chrono_ftp.core.transferoptions import RESUME_OFF, RESUME_ON, RESUME_SMART, RIGHTS_TEXT_PATTERN, TransferOptions, rights_valid
-from chrono_ftp.transfers.options import KEEP_TIMESTAMPS, RESUME, SET_RIGHTS
+from chrono_ftp.transfers.options import KEEP_TIMESTAMPS, RESUME, SET_RIGHTS, SPLIT
+from chrono_ftp.transfers.split import MOST_PARTS, SPLIT_BYTES
 
 # --- Version ------------------------------------------------------------
-__version__ = "transferoptionsform.py 0.0.12"
+__version__ = "transferoptionsform.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Split large files over several connections (FC-05), greyed where the connection can't, with why; the summary says it holds
+#          for the file by file way only
 # v0.0.12: Initial: resume, the overwrite question, only newer, dates, rights on upload and count first, greyed by what the connection can do;
 #          the rights texts say that a folder that is there already keeps its own
 
@@ -29,6 +32,11 @@ ADD_X_TEXT: str = "A folder the upload makes also gets x wherever it has r, so i
 IGNORE_TEXT: str = "When the server refuses the rights, the file still counts as sent."
 RIGHTS_INCOMPLETE_TEXT: str = "Rights are three or four octal digits, such as 644."
 COUNT_TEXT: str = "The size of everything is counted before the transfer starts, so the queue can show the percentage and the time left."
+SPLIT_LABEL: str = "Split large files over several connections"
+SPLIT_SUMMARY: str = "Split large files (file by file only)"  # rsync sends each file in one piece
+SPLIT_TEXT: str = (f"A file of {SPLIT_BYTES // (1024 * 1024)} MB or more goes over up to {MOST_PARTS} connections at once, as far as “Transfers at once” "
+                   "and the server allow; it stays one item in the queue. Many servers limit their connections, so this is off unless you "
+                   "choose it. Where rsync sends the files, each file goes in one piece.")
 
 
 def summary_text(options: TransferOptions, upload: bool) -> str:
@@ -42,6 +50,8 @@ def summary_text(options: TransferOptions, upload: bool) -> str:
         parts.append(f"Rights {options.rights}")
     if options.count_first:
         parts.append("Count first")
+    if options.split_large:
+        parts.append(SPLIT_SUMMARY)
     return ", ".join(parts)
 
 
@@ -74,6 +84,8 @@ class TransferOptionsForm(QWidget):
         self.ignore_errors.setToolTip(IGNORE_TEXT)
         self.count_first = QCheckBox("Count the total size first")
         self.count_first.setToolTip(COUNT_TEXT)
+        self.split_large = QCheckBox(SPLIT_LABEL)
+        self.split_large.setToolTip(SPLIT_TEXT)
         rights_row = QHBoxLayout()
         rights_row.addWidget(self.rights)
         rights_row.addWidget(self.add_x)
@@ -89,7 +101,8 @@ class TransferOptionsForm(QWidget):
         form.addRow("", self.set_rights)
         form.addRow("Rights", rights_row)
         form.addRow("", self.count_first)
-        for box in (self.ask, self.only_newer, self.keep_timestamps, self.set_rights, self.add_x, self.ignore_errors, self.count_first):
+        form.addRow("", self.split_large)
+        for box in (self.ask, self.only_newer, self.keep_timestamps, self.set_rights, self.add_x, self.ignore_errors, self.count_first, self.split_large):
             box.toggled.connect(self._changed)
         self.resume.currentIndexChanged.connect(self._changed)
         self.rights.textChanged.connect(self._changed)
@@ -107,7 +120,8 @@ class TransferOptionsForm(QWidget):
         self.add_x.setChecked(options.add_x_to_folders)
         self.ignore_errors.setChecked(options.ignore_rights_errors)
         self.count_first.setChecked(options.count_first)
-        for name, widgets, text in ((RESUME, (self.resume_label, self.resume), RESUME_TEXT), (KEEP_TIMESTAMPS, (self.keep_timestamps,), DATES_TEXT), (SET_RIGHTS, (self.set_rights,), RIGHTS_TEXT)):
+        self.split_large.setChecked(options.split_large)
+        for name, widgets, text in ((RESUME, (self.resume_label, self.resume), RESUME_TEXT), (KEEP_TIMESTAMPS, (self.keep_timestamps,), DATES_TEXT), (SET_RIGHTS, (self.set_rights,), RIGHTS_TEXT), (SPLIT, (self.split_large,), SPLIT_TEXT)):
             for widget in widgets:
                 widget.setEnabled(name not in self.reasons)
                 widget.setToolTip(self.reasons.get(name, text))
@@ -117,6 +131,8 @@ class TransferOptionsForm(QWidget):
             self.keep_timestamps.setChecked(False)
         if SET_RIGHTS in self.reasons:
             self.set_rights.setChecked(False)
+        if SPLIT in self.reasons:
+            self.split_large.setChecked(False)
         self._changed()
 
     def _changed(self) -> None:
@@ -148,6 +164,7 @@ class TransferOptionsForm(QWidget):
             add_x_to_folders=self.add_x.isChecked(),
             ignore_rights_errors=self.ignore_errors.isChecked(),
             count_first=self.count_first.isChecked(),
+            split_large=self.split_large.isChecked() and SPLIT not in self.reasons,
         )
 
 

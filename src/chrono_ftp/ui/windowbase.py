@@ -11,6 +11,7 @@ from chrono_ftp.connections.base import RemoteConnection, RemoteEntry
 from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.transfers.options import Answers
 from chrono_ftp.transfers.queue import Job, TransferQueue
+from chrono_ftp.ui.afterqueue import Countdown, Power
 from chrono_ftp.ui.bridge import Bridge
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.localside import LocalSide
@@ -21,9 +22,11 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.12"
+__version__ = "windowbase.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The power of the computer and the countdown after the queue (FC-04); the queue's own buttons and settings are shared;
+#          whether closing was chosen as the step after the queue; the tab a job belongs to
 # v0.0.12: _add_job takes the options of a transfer and the answers its action shares; _failed is shared; the jobs whose end was shown;
 #          a box for a connection lost meanwhile, or a tab closed meanwhile; the paths of unsent copies; those boxes are true for
 #          downloads too
@@ -90,6 +93,10 @@ class WindowBase(QMainWindow):
     protocol_label: QLabel
     lock_label: QLabel
     time_label: QLabel
+    power: Power  # suspend and shut down, through logind (FC-04)
+    countdown: Countdown | None  # the countdown before the step after the queue, while it runs
+    when_done_label: QLabel  # the mark in the status bar while a step is chosen for when the queue is done
+    closing_when_done: bool  # the person chose to close when the queue is done: closing asks nothing, as nothing is left unsent
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -162,8 +169,30 @@ class WindowBase(QMainWindow):
     def _move_into(self, session: Session, folder: str, chosen: list[RemoteEntry], target: str) -> None:
         raise NotImplementedError
 
-    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str, options: TransferOptions | None = None, answers: Answers | None = None) -> Job | None:
+    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str, options: TransferOptions | None = None, answers: Answers | None = None, by_itself: bool = False) -> Job | None:
         raise NotImplementedError
 
     def _edit_job_ended(self, job: Job) -> None:
+        raise NotImplementedError
+
+    def _transfers_running(self) -> bool:
+        raise NotImplementedError
+
+    def stop_transfers(self) -> None:
+        raise NotImplementedError
+
+    def _relink_edit(self, job: Job) -> None:
+        raise NotImplementedError
+
+    def _tab_of(self, job: Job) -> Session | None:
+        """The open tab a job belongs to; for a job made without one, the tab whose connection it holds."""
+        tab = job.tab
+        if isinstance(tab, Session):
+            return tab if tab in self.sessions else None
+        return next((session for session in self.sessions if session.remote is job.remote), None)
+
+    def update_queue_actions(self) -> None:
+        raise NotImplementedError
+
+    def _apply_queue_settings(self) -> None:
         raise NotImplementedError

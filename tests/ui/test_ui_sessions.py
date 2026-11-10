@@ -38,9 +38,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.12"
+__version__ = "test_ui_sessions.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
 # v0.0.12: Uploads, downloads and drops answer the transfer window, which must really come with the right folder; a file that is there
 #          already gets the overwrite question; Synchronize asks it too, with the default options; after a drop the window comes once
 #          the drop has finished; the target folder is noted while the window is open, as it goes after use; the edit folders a test's
@@ -617,7 +618,7 @@ def test_closing_a_tab_with_a_running_transfer_asks_first(qtbot: QtBot, window: 
         assert session.remote is not None
         job = Job(session.remote, session.connection, "/nothing", "/", True, "x")
         job.state = State.RUNNING
-        window.queue.jobs.append(job)
+        window.queue.add(job)  # in this state the queue never runs it
         asked: list[str] = []
 
         def no(*args: object) -> QMessageBox.StandardButton:
@@ -1272,11 +1273,11 @@ def test_no_on_the_question_about_edits_leaves_the_transfers_running(qtbot: QtBo
         connected(qtbot, window, ssh_settings(server))
         editing(qtbot, window, monkeypatch)
         job = Job(cast(RemoteConnection, window.sessions[0].remote), window.sessions[0].connection, "/nowhere", "/", True, "x", state=State.RUNNING)
-        window.queue.jobs.append(job)
+        window.queue.add(job)  # in this state the queue never runs it
         monkeypatch.setattr(QMessageBox, "question", answer)
         window.close_tab(0)
-        window.queue.jobs.remove(job)
         assert not job.stop_asked.is_set()
+        job.state = State.DONE
 
 
 def test_closing_the_window_with_a_file_open_for_editing_asks_first(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

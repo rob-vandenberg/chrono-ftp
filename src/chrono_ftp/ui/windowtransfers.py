@@ -14,7 +14,7 @@ from chrono_ftp.connections.base import joined, parent_of, RemoteConnection, Rem
 from chrono_ftp.core.errors import ConnectionLost, RemoteActionFailed
 from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.transfers.options import Answer, Answers, Choice, Conflict, usable
-from chrono_ftp.transfers.queue import Job, State
+from chrono_ftp.transfers.queue import ENDED, LINE, Job, State
 from chrono_ftp.ui.filelist import FROM_REMOTE, PARENT_ENTRY
 from chrono_ftp.ui.overwritedialog import OverwriteDialog
 from chrono_ftp.ui.remotefolderpicker import Failed, RemoteFolderPicker
@@ -24,9 +24,11 @@ from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, Windo
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtransfers.py 0.0.12"
+__version__ = "windowtransfers.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A job knows its tab, also after a reconnect; Stop in the question also stops the paused jobs of the action; Edit's saves start by themselves; a question of a paused job ends it paused; Stop All stops every running, waiting and paused item; a job that left the
+#          queue stays out of the list; the speed limit of the status bar holds at once, also for a running transfer
 # v0.0.12: The transfer window before an upload, a download or a drop (FB-09); every job carries its options, greyed by what the
 #          connection can do (FB-01), and the window shows and starts from those; the overwrite question comes from the queue for every
 #          file there already (FB-03); the server folder picker says when the connection is lost; a server folder that isn't there
@@ -117,15 +119,16 @@ class TransfersPart(WindowBase):
         self.queue.limit = value
 
     @override
-    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str, options: TransferOptions | None = None, answers: Answers | None = None) -> Job | None:
-        """Without options: the defaults of Settings. Either way only what this connection can do (OR-7)."""
+    def _add_job(self, session: Session, local: str, remote_path: str, upload: bool, name: str, options: TransferOptions | None = None, answers: Answers | None = None, by_itself: bool = False) -> Job | None:
+        """Without options: the defaults of Settings. Either way only what this connection can do (OR-7). by_itself: it starts in its
+        turn also when items do not start by themselves (a save from Edit)."""
         remote = session.remote
         if remote is None:
             return None
         wanted = options if options is not None else self.settings.transfer_options
         effective = usable(wanted, session.capabilities, session.connection.protocol, upload)[0]
-        job = Job(remote, session.connection, local, remote_path, upload, name, has_password=bool(session.password), options=effective, answers=answers or Answers())
-        self.queue.add(job)
+        job = Job(remote, session.connection, local, remote_path, upload, name, has_password=bool(session.password), options=effective, answers=answers or Answers(), tab=session)
+        self.queue.add(job, by_itself)
         return job
 
     def upload(self) -> None:
@@ -303,9 +306,12 @@ class TransfersPart(WindowBase):
     def _overwrite_question(self, job: Job, conflict: Conflict, reply: Callable[[Answer], None]) -> None:
         """Asked in the window's thread; the queue thread waits for reply. Stop stops every job of the same action. A question whose job
         was stopped meanwhile, or whose tab was closed, is never shown: it stops only that job."""
-        if job.stop_asked.is_set() or job.state != State.RUNNING or not any(session.remote is job.remote for session in self.sessions):
+        if self._tab_of(job) is None:
             self.queue.stop(job)
             reply(Answer(Choice.STOP))
+            return
+        if job.stop_asked.is_set() or job.state != State.RUNNING:
+            reply(Answer(Choice.STOP))  # stopped, paused or deleted meanwhile: it ends as the person asked
             return
         dialog = OverwriteDialog(conflict, self)
         dialog.exec()
@@ -313,27 +319,31 @@ class TransfersPart(WindowBase):
         dialog.deleteLater()
         if answer.choice == Choice.STOP:
             for other in self.queue.jobs:
-                if other.answers is job.answers and other.state in (State.WAITING, State.RUNNING):
+                if other.answers is job.answers and other.state in (*LINE, State.RUNNING):
                     self.queue.stop(other)
         reply(answer)
 
+    @override
     def stop_transfers(self) -> None:
-        running = [job for job in self.queue.jobs if job.state in (State.WAITING, State.RUNNING)]
-        chosen = [job for job in self.queue_view.selected_jobs() if job in running] or running
-        for job in chosen:
-            self.queue.stop(job)
+        """Stop All: every transfer that runs, waits or is paused. The queue's own Stop acts on the selected items only."""
+        for job in self.queue.jobs:
+            if job.state in (*LINE, State.RUNNING):
+                self.queue.stop(job)
 
     def _job_changed(self, job: Job) -> None:
-        self.queue_view.show_job(job)
+        if self.queue.has(job):
+            self.queue_view.show_job(job)  # one that left the queue meanwhile stays out of the list
         self.update_actions()
         self._follow_queue(job)
         self._edit_job_ended(job)
-        ended = job.state not in (State.WAITING, State.RUNNING)
+        if job.state == State.RUNNING:
+            self.ends_shown.discard(id(job))  # a retry or a resume: its next end is news again
+        ended = job.state in ENDED
         changed_there = ended and (job.upload or job.options.delete_source) and id(job) not in self.ends_shown  # what arrived, also from a failed or stopped upload; a move took files away
         if ended:
             self.ends_shown.add(id(job))  # later news of the same end (queued before it was taken in) refreshes nothing more
         if changed_there:
             folder = job.remote_path if job.upload else parent_of(job.remote_path)
             for session in self.sessions:
-                if session.remote is job.remote and session.remote_folder == folder:
+                if session is self._tab_of(job) and session.remote_folder == folder:
                     self._reload(session)

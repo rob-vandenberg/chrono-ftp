@@ -5,9 +5,10 @@ import re
 from dataclasses import dataclass
 
 # --- Version ------------------------------------------------------------
-__version__ = "transferoptions.py 0.0.12"
+__version__ = "transferoptions.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Split large files over several connections (FC-05), off unless the person chooses it
 # v0.0.12: Initial: resume, the overwrite question, only newer, dates, rights on upload, count first, delete the source (FB-01)
 
 RESUME_SMART: str = "smart"
@@ -32,6 +33,7 @@ class TransferOptions:
     ignore_rights_errors: bool = False
     count_first: bool = True
     delete_source: bool = False  # a move: each source file goes once it arrived; never a saved default
+    split_large: bool = False  # a large file goes over several connections at once (FC-05): many servers limit logins, so off
 
 
 def rights_valid(text: str) -> bool:

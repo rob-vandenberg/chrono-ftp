@@ -2,6 +2,9 @@ import ftplib
 import os
 import shlex
 import subprocess
+import sys
+import threading
+import time
 from collections.abc import Generator
 from pathlib import Path
 from typing import override
@@ -15,12 +18,13 @@ from chrono_ftp.connections.ssh import SshConnection, sendable
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import ConnectionFailed, RemoteActionFailed
 from tests.conftest import REAL_DATA, REAL_FOLDERS_BEFORE, REAL_HOME, REAL_SETTINGS, _snapshot
-from tests.fakeservers import PASSWORD, USER, SshServer, ftp_server, self_signed_certificate, ssh_server
+from tests.fakeservers import PASSWORD, USER, SshServer, end_the_servers, ftp_server, self_signed_certificate, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_connections.py 0.0.12"
+__version__ = "test_connections.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: A fake SSH server leaves no thread nor descriptor behind, also when a connection to it is still open at the end of its block
 # v0.0.12: No test reads this computer's own known hosts; the run's guard sees a real folder of Chrono FTP appear; SITE CHMOD is
 #          known by its own word in SITE HELP
 # v0.0.10: A server without the listing option
@@ -406,3 +410,24 @@ def test_site_chmod_is_known_by_its_own_word_in_site_help() -> None:
     assert connection._abilities(Answering("214-The following SITE commands are recognized:\n CHMOD HELP\n214 Help OK.")).rights
     assert not connection._abilities(Answering("214-The following SITE commands are recognized:\n XCHMODX HELP\n214 Help OK.")).rights
 
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the open descriptors are counted in /proc")
+@pytest.mark.parametrize("open_at_the_end", [False, True])
+def test_a_fake_ssh_server_leaves_nothing_behind(tmp_path: Path, open_at_the_end: bool) -> None:
+    """A test leaves nothing behind (AGENTS.md 4.4.4), also one whose window still holds its connection when the server's block ends."""
+    root = tmp_path / "server"
+    root.mkdir()
+    threads, descriptors = set(threading.enumerate()), set(os.listdir("/proc/self/fd"))  # what earlier tests left may still end meanwhile
+    with ssh_server(root) as server:
+        connection = trusted_ssh(server)
+        assert connection.list_folder("/") == []
+        if not open_at_the_end:
+            connection.close()
+    if open_at_the_end:
+        connection.close()  # as the window does when the test is over
+    end_the_servers()  # as conftest does after that: a server that saw its last connection close only just now ends here
+    deadline = time.monotonic() + 5.0
+    while set(threading.enumerate()) - threads and time.monotonic() < deadline:  # the client's helper thread ends right after its loop
+        threading.Event().wait(0.01)
+    assert set(threading.enumerate()) - threads == set() and set(os.listdir("/proc/self/fd")) - descriptors == set()

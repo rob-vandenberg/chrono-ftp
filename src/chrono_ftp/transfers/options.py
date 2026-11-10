@@ -9,9 +9,11 @@ from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.transferoptions import RESUME_OFF, RESUME_ON, RESUME_SMART, SMART_RESUME_BYTES, TransferOptions
 
 # --- Version ------------------------------------------------------------
-__version__ = "options.py 0.0.12"
+__version__ = "options.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The answers of one action are shared by its jobs that run at once (FC-01); splitting a large file over several connections
+#          is greyed where it can't be done: an FTP upload, an FTP download without REST (FC-05)
 # v0.0.12: Initial: options greyed out by what the connection can do; resume on, smart and off; the answers to the overwrite question;
 #          whether Append can be offered, and why not; whether each size is known; the connection a question is about
 
@@ -21,6 +23,9 @@ KIND_UNKNOWN: str = "kind unknown"  # whether it is a file or a folder is unknow
 RESUME: str = "resume"
 KEEP_TIMESTAMPS: str = "keep_timestamps"
 SET_RIGHTS: str = "set_rights"
+SPLIT: str = "split_large"
+NO_SPLIT_UP_TEXT: str = "FTP can't write a file at a place in the middle, so an upload over FTP always goes in one piece."
+NO_SPLIT_REST_TEXT: str = "This server can't start a file at a place in the middle (it does not offer REST), so each file comes in one piece."
 NO_REST_TEXT: str = "This server can't continue an unfinished transfer: it does not offer REST."
 NO_MFMT_TEXT: str = "This server can't set the date of a file: it does not offer MFMT."
 NO_CHMOD_TEXT: str = "This server can't set permissions: it does not offer SITE CHMOD."
@@ -64,7 +69,8 @@ class Answer:
 @dataclass
 class Answers:
     """The answers that hold for more than one file. One action of the person (an upload of three items) shares one, so Yes to all also
-    holds for the next item. Only the queue thread uses it."""
+    holds for the next item, also for one that runs at the same time. Only the job that has the question's turn changes it (one question
+    at a time, TransferQueue)."""
 
     batch: Choice | None = None
 
@@ -102,6 +108,10 @@ def usable(options: TransferOptions, capabilities: Capabilities, protocol: str, 
             reasons[KEEP_TIMESTAMPS] = NO_MFMT_TEXT  # a download sets the date on this computer, which always can
         if upload and not capabilities.rights:
             reasons[SET_RIGHTS] = NO_CHMOD_TEXT
+        if upload:
+            reasons[SPLIT] = NO_SPLIT_UP_TEXT
+        elif not capabilities.resume:
+            reasons[SPLIT] = NO_SPLIT_REST_TEXT
     if not upload:
         reasons[SET_RIGHTS] = ONLY_ON_UPLOAD_TEXT
     result = options
@@ -111,6 +121,8 @@ def usable(options: TransferOptions, capabilities: Capabilities, protocol: str, 
         result = replace(result, keep_timestamps=False)
     if SET_RIGHTS in reasons:
         result = replace(result, set_rights=False)
+    if SPLIT in reasons:
+        result = replace(result, split_large=False)
     return result, reasons
 
 

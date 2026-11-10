@@ -15,7 +15,7 @@ from chrono_ftp.core import credentials
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ConnectionLost, CredentialError, LoginRefused, RemoteActionFailed
 from chrono_ftp.engine.jobs import Worker
-from chrono_ftp.transfers.queue import State
+from chrono_ftp.transfers.queue import LINE, State
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.session import Session
@@ -23,11 +23,16 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.12"
+__version__ = "windowtabs.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Closing a tab also stops its paused transfers, and counts every transfer of the tab whatever connection it holds; after a
+#          reconnect the tab's transfers that are still to run, or may run again, go over the new connection; "1 transfer ... is"
 # v0.0.12: Names in message boxes are shown as written, never read as HTML; the paths of unsent copies are in the box's details
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
+
+
+TAB_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and close the tab?", "{count} transfers on {name} are not finished. Stop them and close the tab?")
 
 
 class TabsPart(WindowBase):
@@ -144,6 +149,9 @@ class TabsPart(WindowBase):
             session.typed_user = False
         self._set_tab(session)
         self.load_folder(session, folder)
+        for job in self.queue.jobs:
+            if job.tab is session and job.state != State.RUNNING:
+                job.remote = remote  # what is still to run, or may run again, goes over the tab's new connection
         for copy in self._edits_of(session):
             if self.edited[copy].after_reconnect:
                 self.edited[copy].held = False
@@ -223,10 +231,10 @@ class TabsPart(WindowBase):
 
     def close_tab(self, index: int) -> None:
         session = self.sessions[index]
-        running = [job for job in self.queue.jobs if job.remote is session.remote and job.state in (State.WAITING, State.RUNNING)]
+        running = [job for job in self.queue.jobs if self._tab_of(job) is session and job.state in (*LINE, State.RUNNING)]  # whatever connection it holds
         open_here = self._edits_of(session)
         if running:
-            text = f"{len(running)} transfers on {session.connection.name} are not finished. Stop them and close the tab?"
+            text = (TAB_UNFINISHED_TEXTS[0] if len(running) == 1 else TAB_UNFINISHED_TEXTS[1]).format(count=len(running), name=session.connection.name)
             if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
                 return
         if open_here and not asked(self, WINDOW_TITLE, self._edits_text(open_here) + " Close the tab?", self._unsent_paths(open_here)):

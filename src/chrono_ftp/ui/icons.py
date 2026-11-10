@@ -8,9 +8,10 @@ from PySide6.QtSvg import QSvgRenderer
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.7"
+__version__ = "icons.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Run Now and Clear Finished of the queue
 # v0.0.7: The pin of the queue
 # v0.0.4: Initial: the Breeze icons of D-028, drawn in the colour of the text
 
@@ -56,6 +57,8 @@ ICON_NAMES: tuple[str, ...] = (
     "arrow-down",
     "view-split-left-right",
     "window-pin",
+    "media-skip-forward",
+    "edit-clear-history",
 )
 SIZES: tuple[int, ...] = (22, 33, 44)  # normal, and sharp on a scaled screen
 _TEXT_COLOUR: re.Pattern[str] = re.compile(r"(\.ColorScheme-Text\s*\{\s*color:\s*)#[0-9a-fA-F]{3,6}")

@@ -1,9 +1,10 @@
 """The errors of Chrono FTP. Their text is shown to the person, so it reassures and never alarms (OR-23)."""
 
 # --- Version ------------------------------------------------------------
-__version__ = "errors.py 0.0.12"
+__version__ = "errors.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: NoMoreLogins: the server takes no more connections at the moment (FC-01)
 # v0.0.12: LocalWriteFailed and LocalReadFailed: this computer could not write what arrived, or read what is to be sent;
 #          TransferInterrupted: the data of one file broke off while the login still works; NameTaken: a name was taken meanwhile;
 #          ContinuationRefused and RefusedForNow: a refusal to go on with a part, and one of a file for now
@@ -25,6 +26,10 @@ class ConnectionFailed(ChronoFtpError):
 
 class LoginRefused(ConnectionFailed):
     """The server is there, but did not accept this login."""
+
+
+class NoMoreLogins(ConnectionFailed):
+    """The server is there, but takes no more connections at the moment (FTP answers 421 or another passing refusal)."""
 
 
 class RemoteActionFailed(ChronoFtpError):

@@ -12,17 +12,25 @@ from pathlib import Path
 
 from chrono_ftp.config import parts
 from chrono_ftp.config.parts import AppendNote, PartRecord, download_key, download_source, upload_key, upload_source
-from chrono_ftp.connections.base import LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, OLD_SUFFIX, RemoteConnection, RemoteEntry, Swapped, joined, own_name, parent_of, safe_name, shown_name
+from chrono_ftp.connections.base import LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, OLD_SUFFIX, Limit, LocalFile, RemoteConnection, RemoteEntry, Swapped, joined, own_name, parent_of, safe_name, shown_name
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, ContinuationRefused, RefusedForNow, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed, TransferInterrupted
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.transferoptions import RESUME_ON, file_rights, folder_rights
 from chrono_ftp.transfers.job import FOLDER_IN_THE_WAY_TEXT, PART_SUFFIX, SOURCE_GONE_TEXT, Ask, Job, Meter, Stopped
+from chrono_ftp.transfers.split import Logins, Move, Spans, move_in_parts, splits
 from chrono_ftp.transfers.options import NO_CUT, SIZE_UNKNOWN, Action, Choice, Conflict, action_of, decided, resumable
 
 # --- Version ------------------------------------------------------------
-__version__ = "filebyfile.py 0.0.12"
+__version__ = "filebyfile.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The speed limit is handed on as it is asked, so a new one takes effect at once (FC-02); a pause keeps what arrived of the file
+#          on its way, noted to be continued, whatever the resume setting; a pause that is ended otherwise than by a resume gives those
+#          notes their own resume setting back, and is never continued from; a file sent in an earlier run is sent again when its source
+#          or what is there changed since, comparing dates only where the date was really set; appends that broke off are looked at
+#          by one job of a login at a time while other jobs run (FC-01), each note checked again right before it is acted on, so one
+#          another job set back or started anew meanwhile is left alone; a job that waits for its turn there sees its stop; a large file
+#          goes in parts over several logins where the person chose it (FC-05), its confirmed ranges noted with its part
 # v0.0.12: Initial: moved here from queue.py; resume, the overwrite question for every file, only newer (unknown dates counted), dates,
 #          rights, count first, move. A part is noted per part file with its source and the bytes confirmed written, and continued
 #          only from there; a part is kept only after a stop, a lost connection or a local disk problem, and a refused continuation
@@ -144,6 +152,16 @@ def _there(check: Callable[[], bool]) -> bool:
     except (ChronoFtpError, OSError):
         return True
 
+def end_pause_notes(job: Job) -> None:
+    """A pause that ends otherwise than in a resume (a stop, a delete, a run that does not continue it): the parts it kept are noted again
+    with the resume setting they would have had, so with resume off nothing continues from them and tidying takes them as any other."""
+    for key, resume in job.paused_parts.items():
+        note = parts.lookup(key)
+        if note is not None and note.resume == RESUME_ON and resume != RESUME_ON and not note.running:
+            parts.remember(key, replace(note, resume=resume))
+    job.paused_parts.clear()
+
+
 class SourceChanged(RemoteActionFailed):
     """The source changed while it was transferred: what arrived is thrown away, and trying again at once would meet the same change."""
 
@@ -196,11 +214,11 @@ class FileWay:
     """One job, file by file. recording: for rsync, the paths (relative to the job's base) it is to send; this way then sends only what
     rsync can't do (a rename, an append, a continued part file). known: decisions taken before, so nobody is asked twice."""
 
-    def __init__(self, job: Job, connection: RemoteConnection, limit: int, meter: Meter, ask: Ask, recording: list[str] | None = None, known: dict[str, Action] | None = None, shown: dict[str, Shown] | None = None) -> None:
+    def __init__(self, job: Job, connection: RemoteConnection, limit: Limit, meter: Meter, ask: Ask, recording: list[str] | None = None, known: dict[str, Action] | None = None, shown: dict[str, Shown] | None = None) -> None:
         self.job: Job = job
         self.connection: RemoteConnection = connection
         self.options = job.options
-        self.limit: int = limit
+        self.limit: Limit = limit  # asked again for every block
         self.meter: Meter = meter
         self.ask: Ask = ask
         self.recording: list[str] | None = recording
@@ -230,7 +248,9 @@ class FileWay:
         self.can_resume: bool = connection.capabilities.resume  # without it a part file is never offered or continued
         self.failed: list[tuple[str, str]] = []  # items inside a folder that failed on their own, with why (OR-15); the first MOST_FAILED
         self.failed_count: int = 0  # all of them
+        self.dated: bool = False  # the date of the file just sent was set to its source's
         self.attempt_counted: int = 0  # what the meter counted of the file now on its way, taken back when it starts again
+        self.logins: Logins | None = None  # the further logins the queue lends for a large file split in parts (FC-05); None: never split
 
     def run(self) -> None:
         try:
@@ -300,6 +320,10 @@ class FileWay:
     # --- what both directions share
 
     def _decide(self, relative: str, conflict: Conflict) -> Action:
+        if self.known.get(relative) == Action.SKIP and relative in self.job.sent_as and not self._still_as_sent(relative, conflict):
+            del self.known[relative]  # sent in an earlier run, but its source or what is there changed since: it is decided afresh
+            self.shown.pop(relative, None)
+            del self.job.sent_as[relative]
         if relative in self.known:
             action = self.known[relative]
             if action != Action.SKIP and self.shown.get(relative, shown_of(conflict)) != shown_of(conflict):
@@ -322,6 +346,17 @@ class FileWay:
             self.known[relative] = action  # a rename is known only once it is done (as SKIP): its name belongs to this way
             self.shown[relative] = shown_of(conflict)
         return action
+
+    def _still_as_sent(self, relative: str, conflict: Conflict) -> bool:
+        """A file sent in an earlier run of this job (paused, stopped, failed): the source still has the size and date it was sent with,
+        and what is there is still what was sent (its size, and its date where that date was really set: a server that can't set dates
+        keeps its own)."""
+        size, date, dated = self.job.sent_as[relative]
+        if (conflict.source_size, conflict.source_modified) != (size, date) or not conflict.target_size_known or conflict.target_size != size:
+            return False
+        if dated and date is not None and conflict.target_modified is not None:  # only a date that was really set tells anything
+            return int(conflict.target_modified) == int(date)
+        return True
 
     def _changed_since_decided(self, conflict: Conflict) -> None:
         """The file there changed after the decision about it (the person's answer, carried over to the other way after rsync could not
@@ -356,6 +391,8 @@ class FileWay:
             return 0
         note = parts.lookup(key)
         by = replace(self.options, resume=note.resume) if note is not None and note.resume else self.options
+        if key in self.job.paused_parts and not self.job.resuming:
+            by = replace(self.options, resume=self.job.paused_parts[key])  # a pause that was ended counts no more
         return part_offset if action == Action.RESUME or resumable(by, size) else 0
 
     @staticmethod
@@ -395,6 +432,13 @@ class FileWay:
         parts.forget(key)
         return True
 
+    def _kept_record(self, key: str, whose: PartRecord, written: int, ranges: tuple[tuple[int, int], ...] = ()) -> PartRecord:
+        """The note of a part that is kept. After a pause it is noted to be continued whatever the resume setting, as the person asked for
+        it to go on later (a pause is a stop the person means to continue)."""
+        if self.job.continue_later:
+            self.job.paused_parts[key] = whose.resume
+        return replace(whose, part_size=written, resume=RESUME_ON if self.job.continue_later else whose.resume, ranges=ranges if written else ())
+
     @staticmethod
     def _kept_after(error: BaseException) -> bool:
         """A part is kept only after a stop, a lost connection or a problem of this computer's disk: what can go well the next time. A
@@ -409,13 +453,16 @@ class FileWay:
             return type(error)(f"{error} {PART_KEPT_TEXT if kept else PART_GONE_TEXT}")
         return error
 
-    def _time(self, path: str, modified: float) -> None:
+    def _time(self, path: str, modified: float) -> bool:
+        """Whether the date was set."""
         try:
             self.connection.set_time(path, modified)
         except ConnectionLost:
             raise
         except RemoteActionFailed:
             self.dates_not_kept += 1  # the file arrived whole; only its date is the server's own
+            return False
+        return True
 
     def _rights(self, path: str, mode: str) -> None:
         try:
@@ -427,6 +474,56 @@ class FileWay:
                 raise
 
     # --- upload
+
+    # --- a large file in parts (FC-05)
+
+    @staticmethod
+    def _earlier_ranges(key: str, offset: int, size: int, actual: int) -> tuple[tuple[int, int], ...]:
+        """The ranges after the first bytes that an earlier split run of this part confirmed, where it is continued (offset) and they are
+        all still in the part (actual: its size now). Anything that does not fit counts as nothing: those bytes come again."""
+        note = parts.lookup(key)
+        if not offset or note is None:
+            return ()
+        ranges = tuple(item for item in note.ranges if item[1] <= actual)
+        return ranges if parts.ranges_valid(ranges, offset, size) else ()
+
+    def _part_size_there(self, temporary: str) -> int:
+        try:
+            found = self.connection.fresh_details(temporary)
+        except ConnectionLost:
+            raise
+        except RemoteActionFailed:
+            return 0
+        return found.size if found is not None and found.size_known else 0
+
+    def _counted(self, amount: int) -> None:
+        """A part confirmed these bytes: counted once, from whichever part (each call under the parts' lock)."""
+        self.attempt_counted += amount
+        self.meter.add(amount)
+
+    def _in_parts(self, spans: Spans, offset: int, size: int, move: Move) -> None:
+        """What earlier runs confirmed after the first bytes is counted once; the rest goes over the parts."""
+        before = sum(end - start for start, end in spans.rest())
+        if before:
+            self._counted(before)
+        logins = self.logins
+        assert logins is not None
+        move_in_parts(self.connection, logins, move, spans, size, self._counted, self.limit, self.job.stop_asked)
+
+    def _fetch_in_parts(self, remote: str, temporary: str, offset: int, size: int, spans: Spans) -> None:
+        """The part file here is made only where nothing is; a continued one is cut to the size, never shorter, so the ranges stay."""
+        if not offset:
+            with LocalFile(temporary, "xb", True):
+                pass
+        elif os.path.getsize(temporary) > size:
+            os.truncate(temporary, size)
+        self._in_parts(spans, offset, size, lambda connection, start, end, progress, limit: connection.download_range(remote, temporary, start, end, progress, limit))
+
+    def _send_in_parts(self, source: Path, temporary: str, offset: int, size: int, spans: Spans) -> None:
+        """The part file there is made only where nothing is; each part writes its ranges into it."""
+        if not offset:
+            self.connection.make_empty(temporary)
+        self._in_parts(spans, offset, size, lambda connection, start, end, progress, limit: connection.upload_range(str(source), temporary, start, end, progress, limit))
 
     def _upload(self) -> None:
         job = self.job
@@ -597,6 +694,7 @@ class FileWay:
                 temporary, _part = self._temporary_up(target, present, tried)
                 offset, part_there = 0, False
         self.known[relative] = Action.SKIP
+        self.job.sent_as[relative] = (size, details.st_mtime, self.dated)  # looked at again by a later run: sent once more if it changed
 
     def _forget_old_unless_aside(self, aside: str) -> None:
         """The swap failed: where nothing waits under the aside name (the old file was never moved, or was moved back), its note goes, so
@@ -665,11 +763,15 @@ class FileWay:
 
     def _send(self, source: Path, target: str, temporary: str, old: RemoteEntry | None, size: int, modified: float, offset: int, resumed_by_choice: bool, part_there: bool, present: dict[str, RemoteEntry]) -> None:
         key = upload_key(self.job.connection, temporary)
+        self.dated = False
         keeps = resumed_by_choice or resumable(self.options, size)
+        split = splits(self.options, self.connection, self.logins, True, size)
+        earlier = self._earlier_ranges(key, offset, size, self._part_size_there(temporary) if split and offset else 0)
         if not offset:
             if not self._clear_part(key, lambda: self.connection.delete(temporary, False), part_there):
                 raise TemporaryTaken(temporary)  # it still has this name: the next free one
-        whose = PartRecord(upload_source(str(source)), size, modified, offset, RESUME_ON if resumed_by_choice else self.options.resume)
+        whose = PartRecord(upload_source(str(source)), size, modified, offset, RESUME_ON if resumed_by_choice else self.options.resume, ranges=earlier)
+        spans: Spans | None = None  # split in parts: the ranges confirmed
         if parts.claim(key, whose) is False:
             raise TemporaryTaken(temporary)  # another Chrono FTP writes it now: another name
         written = offset  # the bytes at the start of the part known to be there: the server got them in order
@@ -687,7 +789,11 @@ class FileWay:
             if offset:
                 self.meter.add(offset)
             try:
-                self.connection.upload(str(source), temporary, step, self.limit, offset, False, not offset)  # a new part only where nothing is
+                if split:
+                    spans = Spans(offset, earlier)
+                    self._send_in_parts(source, temporary, offset, size, spans)
+                else:
+                    self.connection.upload(str(source), temporary, step, self.limit, offset, False, not offset)  # a new part only where nothing is
             except NameTaken as taken:
                 parts.forget(key)  # the note of a name that is not ours
                 raise TemporaryTaken(temporary) from taken
@@ -706,7 +812,7 @@ class FileWay:
                 self._rights(temporary, file_rights(self.options))
                 old = replace(old, permissions="") if old is not None else None  # the chosen rights, not the old file's
             if self.options.keep_timestamps:
-                self._time(temporary, modified)  # a rename keeps the date
+                self.dated = self._time(temporary, modified)  # a rename keeps the date
             if old is not None:
                 old = self._still_the_one(target, old)  # None: gone meanwhile, so the new file simply takes the name
             if old is None:
@@ -734,7 +840,9 @@ class FileWay:
         except TemporaryTaken:
             raise
         except BaseException as error:
-            kept = keeps and not placing and self._kept_after(error) and written > 0 and _there(lambda: self.connection.fresh_details(temporary) is not None) and parts.remember(key, replace(whose, part_size=min(written, size)))
+            if spans is not None:
+                written = spans.first()  # the bytes in order from the start, and the ranges after them, from every part
+            kept = (keeps or self.job.continue_later) and not placing and self._kept_after(error) and written > 0 and _there(lambda: self.connection.fresh_details(temporary) is not None) and parts.remember(key, self._kept_record(key, whose, min(written, size), spans.rest() if spans is not None else ()))
             if not kept:
                 self._let_go(key, whose, lambda: self.connection.delete(temporary, False), lambda: self.connection.fresh_details(temporary) is not None)
             told = self._told(error, kept, written)
@@ -892,11 +1000,14 @@ class FileWay:
             except RemoteActionFailed:
                 pass
 
-    def _local_time(self, path: str, modified: float) -> None:
+    def _local_time(self, path: str, modified: float) -> bool:
+        """Whether the date was set."""
         try:
             os.utime(path, (modified, modified))
         except (OverflowError, OSError, ValueError):
             self.dates_not_kept += 1  # a date from the server is input (OR-15)
+            return False
+        return True
 
     def _download_file(self, remote: str, entry: RemoteEntry, local: str, relative: str, renamed: bool = False) -> None:
         if entry.is_link and not renamed:
@@ -972,6 +1083,7 @@ class FileWay:
                 temporary = self._temporary_down(target, tried)
                 offset, part_there = 0, False
         self.known[relative] = Action.SKIP
+        self.job.sent_as[relative] = (entry.size, entry.modified, self.dated)  # looked at again by a later run: fetched once more if it changed
 
     def _temporary_down(self, target: str, skip: set[str] | None = None) -> str:
         """Where a download lands first: a name nothing holds, or our own part (it has its note). A file this program did not make (a real
@@ -990,11 +1102,15 @@ class FileWay:
         """seen: the size and date of the file here that the person agreed to replace; None where there was none."""
         exists = seen is not None
         key = download_key(temporary)
+        self.dated = False
         keeps = (resumed_by_choice or resumable(self.options, entry.size)) and entry.size_known and entry.modified is not None and math.isfinite(entry.modified)
+        split = entry.size_known and splits(self.options, self.connection, self.logins, False, entry.size)
+        earlier = self._earlier_ranges(key, offset, entry.size, os.path.getsize(temporary) if split and offset and os.path.isfile(temporary) else 0)
         if not offset:
             if not self._clear_part(key, lambda: os.remove(temporary), part_there):
                 raise TemporaryTaken(temporary)  # it still has this name: the next free one
-        whose = PartRecord(download_source(self.job.connection, remote), entry.size, entry.modified if entry.modified is not None and math.isfinite(entry.modified) else 0.0, offset, RESUME_ON if resumed_by_choice else self.options.resume)
+        whose = PartRecord(download_source(self.job.connection, remote), entry.size, entry.modified if entry.modified is not None and math.isfinite(entry.modified) else 0.0, offset, RESUME_ON if resumed_by_choice else self.options.resume, ranges=earlier)
+        spans: Spans | None = None  # split in parts: the ranges confirmed
         if parts.claim(key, whose) is False:
             raise TemporaryTaken(temporary)  # another Chrono FTP writes it now: another name
         written = offset  # the bytes at the start of the part known to be there: written in order
@@ -1011,7 +1127,11 @@ class FileWay:
             if offset:
                 self.meter.add(offset)
             try:
-                self.connection.download(remote, temporary, step, self.limit, offset, False, not offset)  # a new part only where nothing is
+                if split:
+                    spans = Spans(offset, earlier)
+                    self._fetch_in_parts(remote, temporary, offset, entry.size, spans)
+                else:
+                    self.connection.download(remote, temporary, step, self.limit, offset, False, not offset)  # a new part only where nothing is
             except NameTaken as taken:
                 parts.forget(key)  # the note of a name that is not ours
                 raise TemporaryTaken(temporary) from taken
@@ -1024,7 +1144,7 @@ class FileWay:
             if exists:
                 shutil.copymode(target, temporary)  # the new file keeps the old one's permissions
             if self.options.keep_timestamps and entry.modified is not None:
-                self._local_time(temporary, entry.modified)
+                self.dated = self._local_time(temporary, entry.modified)
             placing = True
             if seen is not None:
                 self._replace_here(temporary, target, seen)  # the person chose to replace it
@@ -1035,7 +1155,9 @@ class FileWay:
         except TemporaryTaken:
             raise
         except BaseException as error:
-            kept = keeps and not placing and self._kept_after(error) and written > 0 and entry.modified is not None and os.path.isfile(temporary) and parts.remember(key, replace(whose, part_size=min(written, entry.size)))
+            if spans is not None:
+                written = spans.first()  # the bytes in order from the start, and the ranges after them, from every part
+            kept = (keeps or self.job.continue_later) and not placing and self._kept_after(error) and written > 0 and entry.modified is not None and os.path.isfile(temporary) and parts.remember(key, self._kept_record(key, whose, min(written, entry.size), spans.rest() if spans is not None else ()))
             if not kept:
                 self._let_go(key, whose, lambda: Path(temporary).unlink(missing_ok=True), lambda: os.path.lexists(temporary))
             told = self._told(error, kept, written)
@@ -1178,14 +1300,35 @@ def set_back(connection: RemoteConnection, login: Connection, path: str, note: A
     return outcome
 
 
-def undo_broken_appends(connection: RemoteConnection, login: Connection) -> dict[str, int]:
+def undo_broken_appends(connection: RemoteConnection, login: Connection, stop: threading.Event | None = None) -> dict[str, int]:
     """The files of this login that an append broke off in are looked at (set_back), and their notes go; a file that can't be reached yet
-    keeps its note for the next time. Called before each transfer, one job at a time, so never while an append runs. How many ended
+    keeps its note for the next time. Called before each transfer, by one job of the login at a time (other jobs may run meanwhile;
+    one that waits for its turn ends at its stop); each note is
+    looked up again right before it is acted on, so one another job set back, or an append it started since, is left alone. How many ended
     each way that is to be told: SET_BACK, LEFT, REFUSED, WHOLE and MAYBE_PART."""
     counts = dict.fromkeys((SET_BACK, LEFT, REFUSED, WHOLE, MAYBE_PART), 0)
     if not connection.capabilities.cut:
         return counts
+    with _appends_lock:
+        turn = _appends_looked_at.setdefault((login.host, login.port, login.user), threading.Lock())
+    while not turn.acquire(timeout=TURN_SECONDS):
+        if stop is not None and stop.is_set():
+            raise Stopped
+    try:
+        return _undo_broken_appends(connection, login, counts)
+    finally:
+        turn.release()
+
+
+TURN_SECONDS: float = 0.2  # how often a job that waits for its turn to look at the appends sees whether it was stopped
+_appends_lock: threading.Lock = threading.Lock()  # for the table below
+_appends_looked_at: dict[tuple[str, int, str], threading.Lock] = {}  # per login: one job at a time looks at its appends that broke off
+
+
+def _undo_broken_appends(connection: RemoteConnection, login: Connection, counts: dict[str, int]) -> dict[str, int]:
     for path, note in parts.broken_appends(login).items():
+        if parts.broken_appends(login).get(path) != note:
+            continue  # set back meanwhile, or an append of it runs now
         try:
             outcome = set_back(connection, login, path, note)
         except ConnectionLost:

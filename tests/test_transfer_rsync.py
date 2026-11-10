@@ -7,7 +7,7 @@ import shutil
 import stat
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -23,11 +23,11 @@ from chrono_ftp.core.transferoptions import RESUME_OFF, RESUME_ON, TransferOptio
 from chrono_ftp.connections.base import Capabilities, CommandResult
 from chrono_ftp.transfers import rsyncway
 from chrono_ftp.transfers.job import PART_SUFFIX, Job, Meter, State
-from chrono_ftp.transfers.options import Answer, Choice
+from chrono_ftp.transfers.options import Action, Answer, Choice
 from chrono_ftp.transfers.queue import LEFTOVER_SECONDS, Owned, TransferQueue, note_text, tidy, tidy_partials_here
 from chrono_ftp.transfers.filebyfile import NOT_A_FILE_HERE_TEXT, NOT_A_FILE_THERE_TEXT, NOT_A_FILE_DOWN_TEXT, CHANGED_HERE_NOT_REPLACED_TEXT, CHANGED_TO_REPLACE_TEXT, LINK_TO_FOLDER_DOWN_TEXT, FileWay, FILE_HERE_TEXT, FILE_IN_THE_WAY_TEXT, FOLDER_HERE_TEXT, FOLDER_IN_THE_WAY_TEXT, LINK_NOWHERE_TEXT, UNSAFE_NAME_TEXT
 from chrono_ftp.transfers.rsyncway import DROPPED_KEPT_TEXT
-from chrono_ftp.transfers.rsyncway import PARTIAL_FOLDER, _remove_arrived_sources, rsync_arguments
+from chrono_ftp.transfers.rsyncway import PARTIAL_FOLDER, partial_folder_of, remove_arrived_sources, rsync_arguments
 from tests.fakeservers import NOT_AS_ROOT, ssh_server
 from tests.test_connections import trusted_ssh
 from tests.test_transfer_safety import NOT_SENT_TEXTS, MeanwhileOnTheServer, not_sendable, pipe_on_the_server, pipes_here, pipes_in_the_way, pipes_still_there
@@ -36,9 +36,14 @@ from tests.test_engine import Scripted
 from tests.test_transfers import Leftovers, fake_rsync, wait_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_transfer_rsync.py 0.0.12"
+__version__ = "test_transfer_rsync.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: The stand-ins for rsync's run take the check of a new speed limit and the percentage done before; the removal of arrived originals is public; with resume
+#          off rsync keeps its unfinished copies in a folder of the job's own; a paused move removes the originals of what arrived
+#          before the pause when it goes on; a pause with resume off keeps what arrived; a file rsync started but did not finish before
+#          a restart or a pause is sent whole, and only what arrived whole is left out; with resume off rsync's own folder of unfinished
+#          copies goes at once when nothing continues it, also of a resumed job that still waits
 # v0.0.12: Initial: moved here from test_transfer_options.py, now inside the test's own folder; download with move, dates and rights;
 #          a move keeps a source that changed; the part of a stopped rsync; Rename, Append, Resume and Only if newer while rsync looks
 #          over a job; the other way after rsync could not log in asks nobody twice; a link to a file goes as its content, both ways; a new
@@ -204,7 +209,7 @@ def test_a_move_keeps_every_source_that_changed_after_it_was_read(rsync_server: 
     write(target / "tree" / "grew.txt", "grew", OLD_TIME)  # what arrived: the source as it was read
     write(source / "tree" / "grew.txt", "grew and grew", OLD_TIME + 5)  # it changed after it was read
     job = Job(rsync_server.connection, rsync_server.settings, str(here if not upload else here / "tree"), str(server_side if upload else server_side / "tree"), upload, "tree", options=TransferOptions(delete_source=True))
-    kept = _remove_arrived_sources(job, {"tree/same.txt": (4, OLD_TIME), "tree/grew.txt": (4, OLD_TIME)})
+    kept = remove_arrived_sources(job, {"tree/same.txt": (4, OLD_TIME), "tree/grew.txt": (4, OLD_TIME)})
     assert kept == {"kept_changed": 1, "kept_unchecked": 0, "kept_not_removed": 0, "removed_unflushed": 0}
     assert not (source / "tree" / "same.txt").exists()
     assert read(source / "tree" / "grew.txt") == "grew and grew"
@@ -238,7 +243,8 @@ def test_rsync_gets_a_flag_for_every_option() -> None:
     chosen = rsync_arguments(job, 0, files_from="/tmp/list")
     assert "--no-perms" in chosen and not any(item.startswith("--chmod") for item in chosen) and "--no-times" in chosen
     assert "--remove-source-files" not in chosen  # a move removes each source itself, only when it is unchanged
-    assert "--no-inc-recursive" not in chosen and not any(item.startswith("--partial-dir") for item in chosen)
+    assert "--no-inc-recursive" not in chosen and f"--partial-dir={PARTIAL_FOLDER}" not in chosen  # resume off: never what others left
+    assert f"--partial-dir={partial_folder_of(job)}" in chosen  # a folder of this job's own, so a pause keeps what arrived
     assert chosen[-6:] == ["--files-from=/tmp/list", "--from0", "--ignore-times", "--", "/home/a/", "h:/srv/"]
 
 
@@ -360,10 +366,10 @@ def test_a_new_file_that_turns_up_before_rsync_runs_is_never_replaced(rsync_serv
     write(here / "tree" / "fresh.txt", "new")  # not there at the look-over: nobody is asked about it
     real_run = rsyncway._run
 
-    def someone_else_meanwhile(job: Job, arguments: list[str], meter: Meter) -> tuple[int, str, bool, set[str]]:
+    def someone_else_meanwhile(job: Job, arguments: list[str], meter: Meter, limit_changed: Callable[[], bool] = lambda: False, base: int = 0) -> tuple[int, str, bool, set[str]]:
         if "--ignore-existing" in arguments:
             write(there / "fresh.txt", "someone else's")  # it turns up between the look-over and rsync
-        return real_run(job, arguments, meter)
+        return real_run(job, arguments, meter, limit_changed, base)
 
     monkeypatch.setattr(rsyncway, "_run", someone_else_meanwhile)
     person = Person(Answer(Choice.YES))
@@ -430,10 +436,10 @@ def test_a_move_never_removes_the_source_of_a_file_that_turned_up_at_the_target_
     (target / "tree").mkdir(parents=True)
     real_run = rsyncway._run
 
-    def someone_else_meanwhile(job: Job, arguments: list[str], meter: Meter) -> tuple[int, str, bool, set[str]]:
+    def someone_else_meanwhile(job: Job, arguments: list[str], meter: Meter, limit_changed: Callable[[], bool] = lambda: False, base: int = 0) -> tuple[int, str, bool, set[str]]:
         if "--ignore-existing" in arguments:
             write(target / "tree" / "fresh.txt", "them", OLD_TIME)  # turns up between the look-over and rsync, alike in size and date
-        return real_run(job, arguments, meter)
+        return real_run(job, arguments, meter, limit_changed, base)
 
     monkeypatch.setattr(rsyncway, "_run", someone_else_meanwhile)
     options = TransferOptions(delete_source=True)
@@ -732,3 +738,212 @@ def test_an_upload_into_a_folder_that_takes_files_but_can_not_be_read_goes_file_
     assert job.state == State.DONE and job.way == "SFTP", job.message
     assert read(drop / "a.txt") == "mine"
 
+
+
+def until(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + WAIT_SECONDS
+    while not condition():
+        assert time.monotonic() < deadline, "rsync never got there"
+        threading.Event().wait(0.01)
+
+
+def test_a_paused_rsync_move_removes_the_originals_of_what_arrived_before_the_pause_when_it_goes_on(rsync_server: RsyncServer, tmp_path: Path) -> None:
+    server_side, here = rsync_server.folder, tmp_path / "here"
+    contents = {f"{number}.bin": os.urandom(BIG // 4) for number in range(6)}
+    for name, content in contents.items():
+        (here / "tree").mkdir(parents=True, exist_ok=True)
+        (here / "tree" / name).write_bytes(content)
+    queue = TransferQueue(lambda item: None, "rsync", remote_shell=rsync_server.shell)
+    job = Job(rsync_server.connection, rsync_server.settings, str(here / "tree"), str(server_side), True, "tree", options=TransferOptions(delete_source=True), limit=SLOW)
+    try:
+        queue.add(job)
+        first = server_side / "tree" / "0.bin"
+        until(lambda: first.is_file() and first.stat().st_size == BIG // 4)  # a file arrived whole before the pause
+        queue.pause(job)
+        until(lambda: job.state == State.PAUSED)
+        rsync_server.wait_for_receivers()
+        assert job.moved_pending and all((here / "tree" / name.removeprefix("tree/")).exists() for name in job.moved_pending)
+        queue.set_limit(job, 0)
+        queue.resume(job)
+        until(lambda: job.state == State.DONE)
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
+    assert all((server_side / "tree" / name).read_bytes() == content for name, content in contents.items())
+    assert not (here / "tree").exists()  # every original went, also of what arrived before the pause, and then its folder
+
+
+def test_a_paused_rsync_with_resume_off_keeps_what_arrived_and_goes_on_from_it(rsync_server: RsyncServer, tmp_path: Path) -> None:
+    server_side, here = rsync_server.folder, tmp_path / "here"
+    here.mkdir()
+    content = os.urandom(4 * BIG)
+    (here / "big.bin").write_bytes(content)
+    queue = TransferQueue(lambda item: None, "rsync", remote_shell=rsync_server.shell)
+    job = Job(rsync_server.connection, rsync_server.settings, str(here / "big.bin"), str(server_side), True, "big.bin", options=TransferOptions(resume=RESUME_OFF, ask_before_replacing=False), limit=SLOW)
+    try:
+        queue.add(job)
+        until(lambda: job.percent > 0)
+        queue.pause(job)
+        until(lambda: job.state == State.PAUSED)
+        rsync_server.wait_for_receivers()
+        kept = server_side / partial_folder_of(job) / "big.bin"
+        until(lambda: kept.exists() and kept.stat().st_size > 0)
+        queue.set_limit(job, 0)
+        queue.resume(job)
+        until(lambda: job.state == State.DONE)
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
+    assert (server_side / "big.bin").read_bytes() == content and not kept.parent.exists()
+
+
+def test_a_new_run_with_resume_off_never_goes_on_from_what_an_earlier_run_left(tmp_path: Path) -> None:
+    item = Job(Leftovers([]), Connection(name="T", host="h"), "/home/a/big.bin", "/srv", True, "big.bin", options=TransferOptions(resume=RESUME_OFF))
+    item.partial_token = "a" * rsyncway.TOKEN_LENGTH
+    item.resuming = True
+    assert partial_folder_of(item) == f"{PARTIAL_FOLDER}-{'a' * rsyncway.TOKEN_LENGTH}" and rsyncway.is_partial_folder(partial_folder_of(item))
+    assert not rsyncway.is_partial_folder(f"{PARTIAL_FOLDER}-mine")  # someone's folder that only looks like ours
+
+
+def logging_rsync(tmp_path: Path) -> tuple[str, Path, Path]:
+    """The real rsync, behind a program that notes its arguments and keeps the list of what it is to leave out."""
+    log, excluded = tmp_path / "arguments", tmp_path / "excluded"
+    real = shutil.which("rsync")
+    assert real is not None
+    script = f'echo "$@" >> {shlex.quote(str(log))}\nfor argument in "$@"; do case "$argument" in --exclude-from=*) tr "\\0" "\\n" < "${{argument#--exclude-from=}}" > {shlex.quote(str(excluded))};; esac; done\nexec {shlex.quote(real)} "$@"\n'
+    return fake_rsync(tmp_path, script), log, excluded
+
+
+def tree_of(here: Path, count: int, size: int) -> dict[str, bytes]:
+    contents = {f"{number}.bin": os.urandom(size) for number in range(count)}
+    (here / "tree").mkdir(parents=True)
+    for name, content in contents.items():
+        (here / "tree" / name).write_bytes(content)
+    return contents
+
+
+@pytest.mark.parametrize("resume", [RESUME_ON, RESUME_OFF])
+def test_a_file_rsync_started_but_did_not_finish_before_a_restart_is_sent_whole(rsync_server: RsyncServer, tmp_path: Path, resume: str) -> None:
+    server_side, here = rsync_server.folder, tmp_path / "here"
+    contents = tree_of(here, 3, BIG // 2)
+    program, log, excluded = logging_rsync(tmp_path)
+    queue = TransferQueue(lambda item: None, program, remote_shell=rsync_server.shell)
+    job = Job(rsync_server.connection, rsync_server.settings, str(here / "tree"), str(server_side), True, "tree", options=TransferOptions(ask_before_replacing=False, resume=resume), limit=SLOW)
+    try:
+        queue.add(job)
+        until(lambda: bool(job.rsync_started))  # rsync named the first file: it is on its way, not there
+        queue.set_limit(job, 0)
+        until(lambda: job.state not in (State.WAITING, State.RUNNING))
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
+    assert job.state == State.DONE, job.message
+    assert all((server_side / "tree" / name).read_bytes() == content for name, content in contents.items())
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 2  # it really started again
+
+
+def test_rsync_started_again_leaves_out_only_what_arrived_whole(rsync_server: RsyncServer, tmp_path: Path) -> None:
+    server_side, here = rsync_server.folder, tmp_path / "here"
+    contents = tree_of(here, 3, BIG // 4)
+    program, log, excluded = logging_rsync(tmp_path)
+    queue = TransferQueue(lambda item: None, program, remote_shell=rsync_server.shell)
+    job = Job(rsync_server.connection, rsync_server.settings, str(here / "tree"), str(server_side), True, "tree", options=TransferOptions(ask_before_replacing=False), limit=SLOW)
+    first = server_side / "tree" / "0.bin"
+    try:
+        queue.add(job)
+        until(lambda: first.is_file() and first.stat().st_size == BIG // 4)  # the first one is whole in its place
+        queue.set_limit(job, 0)
+        until(lambda: job.state not in (State.WAITING, State.RUNNING))
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
+    assert job.state == State.DONE, job.message
+    assert all((server_side / "tree" / name).read_bytes() == content for name, content in contents.items())
+    assert "--from0 --exclude-from" in log.read_text(encoding="utf-8").splitlines()[1]
+    assert "/tree/0.bin" in excluded.read_text(encoding="utf-8").splitlines()
+    assert not {"/tree/1.bin", "/tree/2.bin"} <= set(excluded.read_text(encoding="utf-8").splitlines())  # what was under way is sent
+
+
+def test_a_file_under_way_when_rsync_was_paused_is_sent_whole_after_resume(rsync_server: RsyncServer, tmp_path: Path) -> None:
+    server_side, here = rsync_server.folder, tmp_path / "here"
+    contents = tree_of(here, 2, BIG // 2)
+    queue = TransferQueue(lambda item: None, "rsync", remote_shell=rsync_server.shell)
+    job = Job(rsync_server.connection, rsync_server.settings, str(here / "tree"), str(server_side), True, "tree", options=TransferOptions(), limit=SLOW)  # looked over first
+    try:
+        queue.add(job)
+        until(lambda: bool(job.rsync_started))
+        queue.pause(job)
+        until(lambda: job.state == State.PAUSED)
+        rsync_server.wait_for_receivers()
+        assert not (server_side / "tree" / "0.bin").exists() and job.decided.get("tree/0.bin") != Action.SKIP  # started, never arrived
+        queue.set_limit(job, 0)
+        queue.resume(job)
+        until(lambda: job.state not in (State.WAITING, State.RUNNING, State.PAUSED))
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
+    assert job.state == State.DONE, job.message
+    assert all((server_side / "tree" / name).read_bytes() == content for name, content in contents.items())
+
+
+# --- review round 5
+
+
+def resume_off_upload(rsync_server: RsyncServer, tmp_path: Path, queue: TransferQueue) -> tuple[Job, Path]:
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "big.bin").write_bytes(os.urandom(4 * BIG))
+    job = Job(rsync_server.connection, rsync_server.settings, str(here / "big.bin"), str(rsync_server.folder), True, "big.bin", options=TransferOptions(resume=RESUME_OFF, ask_before_replacing=False), limit=SLOW)
+    queue.add(job)
+    until(lambda: job.percent > 0 and bool(job.partial_token))
+    return job, rsync_server.folder / partial_folder_of(job)  # where rsync keeps what arrived, once it is interrupted
+
+
+@pytest.mark.parametrize("ending", ["stop", "pause then stop", "pause then delete", "pause then close"])
+def test_with_resume_off_rsync_s_own_unfinished_copy_goes_at_once_when_nothing_continues_it(rsync_server: RsyncServer, tmp_path: Path, ending: str) -> None:
+    queue = TransferQueue(lambda item: None, "rsync", remote_shell=rsync_server.shell)
+    try:
+        job, own = resume_off_upload(rsync_server, tmp_path, queue)
+        if ending != "stop":
+            queue.pause(job)
+            until(lambda: job.state == State.PAUSED)
+            rsync_server.wait_for_receivers()
+            assert own.is_dir()  # kept while paused
+        if ending.endswith("stop"):
+            queue.stop(job)
+        elif ending.endswith("delete"):
+            queue.delete(job)
+        else:
+            queue.close()
+        rsync_server.wait_for_receivers()
+        until(lambda: not own.exists())
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
+    assert not (rsync_server.folder / "big.bin").exists()
+
+
+def test_with_resume_off_a_resumed_job_that_still_waits_loses_its_own_unfinished_copy_when_stopped(rsync_server: RsyncServer, tmp_path: Path) -> None:
+    queue = TransferQueue(lambda item: None, "rsync", remote_shell=rsync_server.shell)
+    try:
+        job, own = resume_off_upload(rsync_server, tmp_path, queue)
+        queue.pause(job)
+        until(lambda: job.state == State.PAUSED)
+        rsync_server.wait_for_receivers()
+        assert own.is_dir()
+        other_here = tmp_path / "other"
+        other_here.mkdir()
+        (other_here / "other.bin").write_bytes(os.urandom(4 * BIG))
+        other = Job(rsync_server.connection, rsync_server.settings, str(other_here / "other.bin"), str(rsync_server.folder), True, "other.bin", options=TransferOptions(ask_before_replacing=False), limit=SLOW)
+        queue.add(other)
+        until(lambda: other.state == State.RUNNING)
+        queue.resume(job)  # it waits, behind the one that runs
+        assert job.state == State.WAITING
+        queue.stop(job)
+        assert own.is_dir()  # the queue's thread removes it, once the transfer it is busy with lets it
+        queue.stop(other)
+        until(lambda: other.state == State.STOPPED)
+        until(lambda: not own.exists())
+    finally:
+        queue.close()
+        rsync_server.wait_for_receivers()
