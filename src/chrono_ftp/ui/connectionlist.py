@@ -35,9 +35,10 @@ from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.25"
+__version__ = "connectionlist.py 0.0.27"
 
 # --- Version history ----------------------------------------------------
+# v0.0.27: select_connection, for Edit in the right-click menu of a tab
 # v0.0.25: Connect with unsaved changes asks "Save changes?" first: Save, Don't Save or Cancel
 # v0.0.21: An eye in the password field while it holds typed text
 # v0.0.20: The labels of the fields keep the style's margin from the splitter again
@@ -321,6 +322,11 @@ class ConnectionList(QDialog):
         saved.save(self.connections)
         self._fill_list()
         self._select(connection.name)
+
+    def select_connection(self, name: str) -> None:
+        """Selects this connection, its fields shown and ready to change."""
+        self._select(name)
+        self.name.setFocus()
 
     def _select(self, name: str) -> None:
         for row in range(self.list.count()):

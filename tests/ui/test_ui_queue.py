@@ -10,6 +10,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox, QProgressBar
 from pytestqt.qtbot import QtBot
 
+from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections.base import CommandResult
 from chrono_ftp.core.connection import FTP, Connection
@@ -31,9 +32,10 @@ from tests.ui.test_ui_sessions import connected, window
 from tests.ui.test_ui_transfers import settled
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_queue.py 0.0.26"
+__version__ = "test_ui_queue.py 0.0.27"
 
 # --- Version history ----------------------------------------------------
+# v0.0.27: The right-click menu of a tab: Edit opens the connections window on its connection; greyed when the connection is gone
 # v0.0.26: Connect on a connection that has a tab: new settings log in again there, the same settings only switch or reconnect a
 #          dropped one, and running transfers are asked about first
 # v0.0.13: Initial: the queue's buttons, right-click menu and Delete key, greyed by the selection; pause, resume, retry and the speed
@@ -935,3 +937,35 @@ def test_connect_with_new_settings_asks_about_running_transfers_and_no_changes_n
         assert held.state == State.PAUSED
         empty_queue(window)
         settled_after_delete(qtbot, window)
+
+
+def test_the_menu_of_a_tab_has_edit_which_opens_its_connection(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    with ftp_server(tmp_path) as port:
+        saved_connections.save([ftp_settings(port), Connection(name="Other", host="other.example.com")])
+        with qtbot.waitExposed(window):
+            window.show()
+        connected(qtbot, window, ftp_settings(port))
+        assert window.tab_menu_for(window.tab_bar.rect().bottomRight()) is None  # beside the tabs: no menu
+        menu = window.tab_menu_for(window.tab_bar.tabRect(0).center())
+        assert menu is not None
+        actions = menu.actions()
+        assert [action.text() for action in actions] == ["Edit"]
+        assert actions[0].isEnabled()
+        actions[0].trigger()
+        assert window.connection_list is not None and window.connection_list.isVisible()
+        assert window.connection_list.name.text() == "Shop"
+        assert window.connection_list.host.text() == "127.0.0.1"
+        window.connection_list.hide()
+
+
+def test_edit_is_greyed_with_its_reason_when_the_connection_is_gone(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+    with ftp_server(tmp_path) as port:
+        saved_connections.save([])
+        with qtbot.waitExposed(window):
+            window.show()
+        connected(qtbot, window, ftp_settings(port))
+        menu = window.tab_menu_for(window.tab_bar.tabRect(0).center())
+        assert menu is not None
+        edit = menu.actions()[0]
+        assert not edit.isEnabled()
+        assert edit.toolTip()

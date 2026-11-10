@@ -33,9 +33,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.24"
+__version__ = "mainwindow.py 0.0.27"
 
 # --- Version history ----------------------------------------------------
+# v0.0.27: A right-click on a tab opens its menu
 # v0.0.24: The tab bar has its own height and stands centred in its row, so the tabs and New Tab share one centre line
 # v0.0.22: The row of the tabs keeps the height of a tab while the tab bar is hidden
 # v0.0.15: The connections window keeps its size and place (saved_sizes)
@@ -137,6 +138,8 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.new_tab_button.clicked.connect(self.show_connection_list)
         self.tab_bar.currentChanged.connect(self._tab_changed)
         self.tab_bar.tabCloseRequested.connect(self.close_tab)
+        self.tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_bar.customContextMenuRequested.connect(self._show_tab_menu)
         self.local_side.folder_changed.connect(self._local_folder_changed)
         self.local_side.selection_changed.connect(self.update_actions)
         self.remote_side.folder_requested.connect(self.open_remote_folder)

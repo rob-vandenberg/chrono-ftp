@@ -115,3 +115,7 @@ A second start of Chrono FTP brings the running one to the front through a local
 ## 0.0.26 (2026-11-10): Connect on an open connection uses its new settings
 
 0.0.25 only switched to the tab of a connection that was already open, so new settings had no effect (the owner's correction). Now changed settings log in again in that tab, after asking about its running transfers; the same settings only switch, and reconnect a dropped connection (D-051, its older wording kept). Four tests.
+
+## 0.0.27 (2026-11-10): Edit in the right-click menu of a tab
+
+A right-click on a tab shows a menu with Edit, which opens the connections window with that tab's connection selected; Save and Connect there log in again with the new settings (0.0.26). Edit is greyed with a hover text when the connection is no longer in the list; beside the tabs there is no menu. Two tests.

@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.26: Connect on a connection that has a tab logs in again there with changed settings, asking first about its running transfers; with the same settings it only switches, and reconnects a dropped one (D-051).
+Version 0.0.27: a right-click on a tab shows Edit, which opens the connections window on that connection; greyed with its reason when the connection is no longer in the list.
+
+Before that, 0.0.26: Connect on a connection that has a tab logs in again there with changed settings, asking first about its running transfers; with the same settings it only switches, and reconnects a dropped one (D-051).
 
 Before that, 0.0.25: one Chrono FTP at a time: a second start brings the running one to the front (D-051); opening a connection that already has a tab switches to it; Connect with unsaved changes in the connections window asks "Save changes?" first.
 

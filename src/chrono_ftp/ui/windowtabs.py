@@ -5,8 +5,9 @@ import time
 from dataclasses import replace
 from typing import override
 
-from PySide6.QtCore import QByteArray
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QByteArray, QPoint
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMenu, QMessageBox
 
 from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.connections import trust
@@ -24,9 +25,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.26"
+__version__ = "windowtabs.py 0.0.27"
 
 # --- Version history ----------------------------------------------------
+# v0.0.27: The right-click menu of a tab: Edit opens the connections window on that connection
 # v0.0.26: Connect on a connection that has a tab: changed settings log in again in that tab, asking first about its running
 #          transfers; unchanged and dropped reconnects; unchanged and live only switches (D-051)
 # v0.0.25: A connection that already has a tab switches to it; a second start of the program brings the window to the front
@@ -39,6 +41,8 @@ __version__ = "windowtabs.py 0.0.26"
 
 
 RECONNECT_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and reconnect?", "{count} transfers on {name} are not finished. Stop them and reconnect?")
+EDIT_TEXT: str = "Edit"
+EDIT_GONE_TEXT: str = "This connection is no longer in your connection list."
 TAB_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and close the tab?", "{count} transfers on {name} are not finished. Stop them and close the tab?")
 
 
@@ -61,6 +65,35 @@ class TabsPart(WindowBase):
             self.connection_list.connect_requested.connect(self.open_connection)
         self.connection_list.show()
         self.connection_list.raise_()
+
+    def tab_menu_for(self, place: QPoint) -> QMenu | None:
+        """The right-click menu of the tab at this place in the tab bar; nothing beside the tabs."""
+        index = self.tab_bar.tabAt(place)
+        if not 0 <= index < len(self.sessions):
+            return None
+        name = self.sessions[index].connection.name
+        menu = QMenu(self)
+        edit = QAction(EDIT_TEXT, menu)
+        if name in {connection.name for connection in saved_connections.load().connections}:
+            edit.triggered.connect(lambda: self.edit_connection(name))
+        else:
+            edit.setEnabled(False)  # greyed with its reason, never hidden (OR-20)
+            edit.setToolTip(EDIT_GONE_TEXT)
+            menu.setToolTipsVisible(True)
+        menu.addAction(edit)
+        return menu
+
+    def _show_tab_menu(self, place: QPoint) -> None:
+        menu = self.tab_menu_for(place)
+        if menu is not None:
+            menu.exec(self.tab_bar.mapToGlobal(place))
+            menu.deleteLater()
+
+    def edit_connection(self, name: str) -> None:
+        """The connections window, open on this connection and ready to change it."""
+        self.show_connection_list()
+        if self.connection_list is not None:
+            self.connection_list.select_connection(name)
 
     def come_forward(self) -> None:
         """Another start of Chrono FTP: this window comes to the front instead (D-051)."""
