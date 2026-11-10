@@ -127,3 +127,7 @@ The right-click menu of a tab was as narrow as its one short entry. It now has t
 ## 0.0.29 (2026-11-10): menus that leave the keyboard free, and a proper look
 
 On X11 an open menu held the whole keyboard, so the owner's screenshot shortcut did nothing. Every right-click menu (file lists, queue, tabs, connections window) now opens through `open_menu` in `src/chrono_ftp/ui/menus.py`, which lets go of the keyboard once the menu is open and keeps the mouse; tried first on the tab menu, where the screenshot of the open menu worked (D-052). Menus have Chrono Mail's look: a border, padding and roomy items. Four tests.
+
+## 0.0.30 (2026-11-10): the connection colour is back, and a visible menu border
+
+Since 0.0.29 the right side stayed grey on a live connection, with the text in the colour's readable shade: the menu style sheet was set on the whole program, and with it the file list kept its first background. `open_menu` in `src/chrono_ftp/ui/menus.py` now gives the style to each menu; `theme.apply` sets none. The menu border was the bevel colour, almost the colour of the window; it is now `MENU_BORDER` (#4a5157) in `src/chrono_ftp/core/colours.py` (D-052). Two tests, both failing on 0.0.29. Still open: the window sizes that come back at their defaults after a restart.

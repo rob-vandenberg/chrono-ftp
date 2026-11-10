@@ -4,15 +4,16 @@ from PySide6.QtWidgets import QApplication
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.29"
+__version__ = "theme.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: The menu style is given to each menu, never to the whole program: there it kept the right side grey; a visible border
 # v0.0.29: Menus with a border, room around them and roomy items, as in Chrono Mail
 # v0.0.3: Initial: the neutral look of the program; nothing comes from the platform (OR-9)
 
 
-MENU_STYLE: str = (
-    f"QMenu {{ background: {colours.MENU_BACKGROUND}; border: 1px solid palette(mid); padding: 4px; }}\n"
+MENU_STYLE: str = (  # for menus only (menus.open_menu): on the whole program it stops the connection colour from showing
+    f"QMenu {{ background: {colours.MENU_BACKGROUND}; border: 1px solid {colours.MENU_BORDER}; padding: 4px; }}\n"
     "QMenu::item { padding: 6px 28px 6px 22px; border-radius: 3px; }\n"
     "QMenu::item:selected { background: palette(highlight); color: palette(highlighted-text); }\n"
     f"QMenu::item:disabled {{ color: {colours.DISABLED_TEXT}; }}\n"
@@ -55,4 +56,3 @@ def neutral_palette() -> QPalette:
 def apply(application: QApplication) -> None:
     application.setStyle("Fusion")
     application.setPalette(neutral_palette())
-    application.setStyleSheet(MENU_STYLE)

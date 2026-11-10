@@ -8,11 +8,13 @@ from chrono_ftp.core.connection import Connection
 from chrono_ftp.ui import connectionlist, menus, theme, windowlayout, windowqueue, windowtabs
 from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.mainwindow import MainWindow
+from chrono_ftp.ui.remoteside import RemoteSide
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_menus.py 0.0.29"
+__version__ = "test_ui_menus.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: The menu style is given to each menu; the right side shows the connection colour with the program's look
 # v0.0.29: Initial: a menu lets go of the keyboard once open, every menu opens that way, and menus have a border and roomy items
 
 
@@ -83,3 +85,31 @@ def test_a_menu_has_a_border_and_roomy_items(qapp: QApplication) -> None:
     styled.addAction("Edit settings…")
     assert styled.sizeHint().height() > plain.sizeHint().height()
     assert styled.sizeHint().width() > plain.sizeHint().width()
+
+
+def test_open_menu_gives_the_menu_the_menu_style(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    def closed(menu: QMenu) -> None:
+        menu.close()  # the test answers the menu: nothing waits for a click
+
+    monkeypatch.setattr(menus, "let_go_of_the_keyboard", closed)
+    menu = QMenu()
+    qtbot.addWidget(menu)
+    menu.addAction("Edit settings…")
+    QTimer.singleShot(5000, menu.close)  # never waits for good
+    menus.open_menu(menu, QPoint(10, 10))
+    assert menu.styleSheet() == theme.MENU_STYLE
+
+
+def test_the_right_side_shows_the_connection_colour_with_the_look_of_the_program(qtbot: QtBot, qapp: QApplication) -> None:
+    theme.apply(qapp)
+    try:
+        side = RemoteSide()
+        qtbot.addWidget(side)
+        side.resize(600, 400)
+        with qtbot.waitExposed(side):
+            side.show()
+        side.set_colour("#00007f")
+        image = side.file_list.viewport().grab().toImage()
+        assert image.pixelColor(image.width() // 2, image.height() - 5).name() == "#00007f"
+    finally:
+        qapp.setStyleSheet("")  # leaves nothing behind, also on a version that set one
