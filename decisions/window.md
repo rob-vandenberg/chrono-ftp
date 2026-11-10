@@ -17,3 +17,4 @@
 15. [[D-046]] Queue control per item
 16. [[D-047]] When the queue is done
 17. [[D-048]] Several transfers at once
+18. [[D-050]] The connections window

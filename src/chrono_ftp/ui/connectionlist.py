@@ -3,8 +3,8 @@ from pathlib import Path
 
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -32,9 +33,11 @@ from chrono_ftp.core.errors import CredentialError
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.16"
+__version__ = "connectionlist.py 0.0.17"
 
 # --- Version history ----------------------------------------------------
+# v0.0.17: Laid out as the reference program: Import… and Export… under the list; Connect, Duplicate and Delete in the right-click
+#          menu of a connection; New, Save and Connect under the fields; Duplicate copies a connection with its password
 # v0.0.16: A splitter between the list and the fields of the selected connection
 # v0.0.12: Names in message boxes are shown as written, never read as HTML
 # v0.0.9: A tick switches the colour of a connection on; off for a new one
@@ -49,6 +52,11 @@ WINDOW_HEIGHT: int = 460
 SET_ASIDE_TEXT: str = "Part of your connection list could not be read. A copy is kept here, so nothing is lost:"
 SAME_NAME_TEXT: str = "There is already a connection with this name. Please choose another name."
 DELETE_TEXT: str = "Delete the connection {name}?"
+IMPORT_TEXT: str = "Import…"
+EXPORT_TEXT: str = "Export…"
+EXPORT_LATER_TEXT: str = "Export comes in a later version."
+COPY_NAME: str = "{name} (copy)"
+NEXT_COPY_NAME: str = "{name} (copy {number})"
 PROTOCOL_LABELS: dict[str, str] = {SFTP: "SFTP", FTP: "FTP"}
 
 
@@ -87,9 +95,14 @@ class ConnectionList(QDialog):
         self.use_colour = QCheckBox("Use a colour")
         self.new_button = QPushButton("New")
         self.save_button = QPushButton("Save")
-        self.delete_button = QPushButton("Delete")
         self.connect_button = QPushButton("Connect")
-        self.import_button = QPushButton(sessionimport.IMPORT_BUTTON_TEXT)
+        self.import_button = QPushButton(IMPORT_TEXT)
+        self.export_button = QPushButton(EXPORT_TEXT)
+        self.export_button.setEnabled(False)  # greyed, never hidden (OR-20)
+        self.export_button.setToolTip(EXPORT_LATER_TEXT)
+        self.connect_action = QAction("Connect", self)
+        self.duplicate_action = QAction("Duplicate", self)
+        self.delete_action = QAction("Delete", self)
         key_row = QHBoxLayout()
         key_row.addWidget(self.key_file)
         key_row.addWidget(self.browse_button)
@@ -108,7 +121,7 @@ class ConnectionList(QDialog):
         colour_row.addStretch(1)
         form.addRow("Colour", colour_row)
         buttons = QHBoxLayout()
-        for button in (self.new_button, self.save_button, self.delete_button, self.import_button):
+        for button in (self.new_button, self.save_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
         buttons.addWidget(self.connect_button)
@@ -120,7 +133,17 @@ class ConnectionList(QDialog):
         fields.setLayout(right)
         self.parts = QSplitter(Qt.Orientation.Horizontal)
         self.parts.setChildrenCollapsible(False)
-        self.parts.addWidget(self.list)
+        list_buttons = QHBoxLayout()
+        list_buttons.addWidget(self.import_button)
+        list_buttons.addStretch(1)
+        list_buttons.addWidget(self.export_button)
+        list_side = QVBoxLayout()
+        list_side.setContentsMargins(0, 0, 0, 0)
+        list_side.addWidget(self.list)
+        list_side.addLayout(list_buttons)
+        list_part = QWidget()
+        list_part.setLayout(list_side)
+        self.parts.addWidget(list_part)
         self.parts.addWidget(fields)
         self.parts.setStretchFactor(1, 1)  # a wider window widens the fields, the list keeps its width
         self.parts.setSizes([LIST_WIDTH, WINDOW_WIDTH - LIST_WIDTH])
@@ -128,6 +151,11 @@ class ConnectionList(QDialog):
         layout.addWidget(self.parts)
         self.list.currentRowChanged.connect(self._row_changed)
         self.list.itemDoubleClicked.connect(self._connect)
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._show_menu)
+        self.connect_action.triggered.connect(self._connect)
+        self.duplicate_action.triggered.connect(self.duplicate)
+        self.delete_action.triggered.connect(self.delete)
         self.protocol.currentIndexChanged.connect(self._protocol_changed)
         self.name.textChanged.connect(self._update_buttons)
         self.host.textChanged.connect(self._update_buttons)
@@ -136,7 +164,6 @@ class ConnectionList(QDialog):
         self.use_colour.toggled.connect(self.colour_button.setEnabled)
         self.new_button.clicked.connect(self.clear_fields)
         self.save_button.clicked.connect(self.save)
-        self.delete_button.clicked.connect(self.delete)
         self.connect_button.clicked.connect(self._connect)
         self.import_button.clicked.connect(self.import_sessions)
         self._load()
@@ -207,8 +234,28 @@ class ConnectionList(QDialog):
     def _update_buttons(self) -> None:
         self.save_button.setEnabled(bool(self.name.text().strip() and self.host.text().strip()))
         chosen = self.selected() is not None
-        self.delete_button.setEnabled(chosen)
+        for action in (self.connect_action, self.duplicate_action, self.delete_action):
+            action.setEnabled(chosen)
         self.connect_button.setEnabled(chosen)
+
+    def menu_for(self, place: QPoint) -> QMenu | None:
+        """The right-click menu of the connection at this place in the list; nothing outside a connection."""
+        item = self.list.itemAt(place)
+        if item is None:
+            return None
+        self.list.setCurrentItem(item)
+        menu = QMenu(self)
+        menu.addAction(self.connect_action)
+        menu.addSeparator()
+        menu.addAction(self.duplicate_action)
+        menu.addAction(self.delete_action)
+        return menu
+
+    def _show_menu(self, place: QPoint) -> None:
+        menu = self.menu_for(place)
+        if menu is not None:
+            menu.exec(self.list.viewport().mapToGlobal(place))
+            menu.deleteLater()
 
     def clear_fields(self) -> None:
         self.list.setCurrentRow(-1)
@@ -285,6 +332,35 @@ class ConnectionList(QDialog):
             QMessageBox.information(self, WINDOW_TITLE, box_text(str(error)))
         self._fill_list()
         self.clear_fields()
+
+    def copy_name(self, name: str) -> str:
+        """The first free name of a copy: "name (copy)", then "name (copy 2)" and so on."""
+        taken = {connection.name for connection in self.connections}
+        candidate = COPY_NAME.format(name=name)
+        number = 2
+        while candidate in taken:
+            candidate = NEXT_COPY_NAME.format(name=name, number=number)
+            number += 1
+        return candidate
+
+    def duplicate(self) -> None:
+        """A saved copy of the selected connection, its password too (OR-24), selected with its name ready to be typed over."""
+        original = self.selected()
+        if original is None:
+            return
+        copy = replace(original, name=self.copy_name(original.name))
+        try:
+            stored = credentials.store.read(original.name)
+            if stored:
+                credentials.store.write(copy.name, stored)
+        except CredentialError as error:
+            QMessageBox.information(self, WINDOW_TITLE, box_text(str(error)))
+        self.connections.append(copy)
+        saved.save(self.connections)
+        self._fill_list()
+        self._select(copy.name)
+        self.name.setFocus()
+        self.name.selectAll()
 
     def import_sessions(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(self, sessionimport.IMPORT_BUTTON_TEXT, "", sessionimport.FILE_FILTER)

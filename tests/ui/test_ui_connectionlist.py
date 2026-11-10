@@ -11,9 +11,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.9"
+__version__ = "test_ui_connectionlist.py 0.0.17"
 
 # --- Version history ----------------------------------------------------
+# v0.0.17: Delete is in the right-click menu; Duplicate; Import… and a greyed Export… under the list; the fields can be made narrow
 # v0.0.9: The optional colour
 # v0.0.5: Initial
 
@@ -60,7 +61,7 @@ def test_save_is_greyed_until_name_and_host_are_filled_in(qtbot: QtBot) -> None:
 
 def test_delete_and_connect_are_greyed_without_a_selected_connection(qtbot: QtBot) -> None:
     window = window_with(qtbot)
-    assert not window.delete_button.isEnabled()
+    assert not window.delete_action.isEnabled()
     assert not window.connect_button.isEnabled()
 
 
@@ -70,7 +71,7 @@ def test_a_saved_connection_is_in_the_list_and_in_the_file(qtbot: QtBot) -> None
     window.save()
     assert window.list.count() == 1
     assert connections.load().connections[0].host == "shop.example.com"
-    assert window.delete_button.isEnabled()
+    assert window.delete_action.isEnabled()
 
 
 def test_the_password_goes_to_the_store_and_never_into_the_file(qtbot: QtBot, memory_store: MemoryStore) -> None:
@@ -203,3 +204,52 @@ def test_a_connection_with_a_colour_after_one_without_shows_its_own_state(qtbot:
     assert window.use_colour.isChecked()
     window.list.setCurrentRow(0)
     assert not window.use_colour.isChecked() and not window.colour_button.isEnabled()
+
+
+def test_duplicate_saves_a_copy_with_its_password_ready_to_be_renamed(qtbot: QtBot, memory_store: MemoryStore) -> None:
+    window = window_with(qtbot, Connection(name="example.nl", host="example.nl", user="admin", port=2222))
+    memory_store.write("example.nl", "very-secret")
+    window.list.setCurrentRow(0)
+    window.duplicate()
+    copy = next(connection for connection in connections.load().connections if connection.name == "example.nl (copy)")
+    assert (copy.host, copy.user, copy.port) == ("example.nl", "admin", 2222)
+    assert memory_store.read("example.nl (copy)") == "very-secret"
+    assert window.name.text() == "example.nl (copy)"
+    assert window.name.selectedText() == "example.nl (copy)"
+    window.name.setText("example.org")
+    window.save()
+    assert sorted(connection.name for connection in connections.load().connections) == ["example.nl", "example.org"]
+    assert memory_store.read("example.org") == "very-secret"
+
+
+def test_a_second_duplicate_gets_a_name_of_its_own(qtbot: QtBot) -> None:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"), Connection(name="Shop (copy)", host="shop.example.com"))
+    window._select("Shop")
+    window.duplicate()
+    assert window.name.text() == "Shop (copy 2)"
+
+
+def test_the_right_click_menu_holds_connect_duplicate_and_delete_only_on_a_connection(qtbot: QtBot) -> None:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
+    window.show()
+    first = window.list.visualItemRect(window.list.item(0)).center()
+    menu = window.menu_for(first)
+    assert menu is not None
+    assert [action.text() for action in menu.actions() if not action.isSeparator()] == ["Connect", "Duplicate", "Delete"]
+    assert window.selected() is not None
+    assert window.menu_for(window.list.viewport().rect().bottomLeft()) is None
+
+
+def test_import_is_under_the_list_and_export_is_greyed_with_a_hover_text(qtbot: QtBot) -> None:
+    window = window_with(qtbot)
+    assert window.import_button.text() == "Import…"
+    assert not window.export_button.isEnabled()
+    assert window.export_button.toolTip()
+    list_part = window.parts.widget(0)
+    assert list_part is not None and list_part.isAncestorOf(window.import_button)
+
+
+def test_the_fields_side_can_be_made_narrow(qtbot: QtBot) -> None:
+    window = window_with(qtbot)
+    fields = window.parts.widget(1)
+    assert fields is not None and fields.minimumSizeHint().width() < 400

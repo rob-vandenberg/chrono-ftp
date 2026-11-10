@@ -75,3 +75,7 @@ The size and place of the connections window are kept in the window file with th
 ## 0.0.16 (2026-11-10): a splitter in the connections window
 
 The list of connections and the fields of the selected connection have a splitter between them; a wider window widens the fields. Its place is kept in the window file with the size and place of the window. A test: the splitter is where it was after a restart.
+
+## 0.0.17 (2026-11-10): the connections window as the reference program
+
+Import… and Export… (greyed until export exists, with a hover text) under the list; Connect, Duplicate and Delete in the right-click menu of a connection; New, Save and Connect under the fields. The row of five buttons under the fields is gone, so the fields side shrinks to about 300 pixels instead of 492. Duplicate saves a copy named "… (copy)" with its password, selected and ready to be renamed (D-050). Tests for Duplicate, the menu, the buttons under the list and the narrow fields.
