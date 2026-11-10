@@ -22,9 +22,10 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.16"
+__version__ = "windowbase.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: The row of the tabs, not the tab bar, keeps the height of two lines
 # v0.0.16: The name under which the splitter of the connections window is kept
 # v0.0.15: The name under which the size and place of the connections window are kept
 # v0.0.13: The power of the computer and the countdown after the queue (FC-04); the queue's own buttons and settings are shared;
@@ -39,7 +40,7 @@ LOST_MEANWHILE_TEXT: str = "The connection was lost meanwhile, so nothing was tr
 TAB_CLOSED_MEANWHILE_TEXT: str = "Its tab was closed meanwhile, so nothing was transferred."
 START_WIDTH: int = 1280
 START_HEIGHT: int = 800
-EMPTY_TAB_BAR_LINES: int = 2  # an empty tab bar has no height of its own: it keeps the height of a tab
+EMPTY_TAB_BAR_LINES: int = 2  # the row of the tabs keeps this height in lines, with or without tabs
 HIGHEST_LIMIT: int = 1_000_000
 CHECK_MILLISECONDS: int = 30_000  # how often an idle connection is checked, so a dropped one goes grey (OR-3)
 SHELL_ACTIONS: tuple[str, ...] = ("copy", "search", "change", "terminal")  # hidden on FTP, greyed on SFTP without a shell (D-027)

@@ -103,3 +103,7 @@ An empty tab bar kept 123 pixels free for its scroll arrows, a hole in front of 
 ## 0.0.23 (2026-11-10): bigger icons in the side bars
 
 The icons of the navigation and action bars of both sides are 24 pixels instead of 18. The icons are now also drawn at 24 and 48 pixels, so they stay sharp. The general bar and the queue bar stay at 18. A test checks the size.
+
+## 0.0.24 (2026-11-10): the tabs and New Tab on one line
+
+The tab bar had a fixed height of two text lines and drew its tabs at its top, while New Tab stood centred in the row, so New Tab sat lower than the tabs. The tab bar now has its own height and stands centred in the row; the row keeps the height of two lines. A test checks that a tab and New Tab share one centre line.

@@ -18,9 +18,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.22"
+__version__ = "test_ui_mainwindow.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: The tabs and New Tab share one centre line; the row, not the hidden tab bar, has the height
 # v0.0.22: Without tabs New Tab stands at the left, and the row keeps its height
 # v0.0.12: Tests that need a refusal by the rights of a folder skip as root
 # v0.0.11: An answer of a thread after the window closed goes nowhere
@@ -62,7 +63,7 @@ def test_the_tab_bar_runs_above_both_sides(qtbot: QtBot) -> None:
     bar_top_left = window.top_row.mapTo(window, QPoint(0, 0))
     sides_top_left = window.sides.mapTo(window, QPoint(0, 0))
     assert bar_top_left.y() < sides_top_left.y()
-    assert window.tab_bar.height() > 0
+    assert window.top_row.height() > 0
     assert window.top_row.width() == window.sides.width()
 
 
@@ -74,7 +75,7 @@ def test_the_lists_get_nearly_all_the_height(qtbot: QtBot) -> None:
     for side in (window.local_side, window.remote_side):
         assert side.path_line.height() <= 2 * line
         assert side.file_list.height() >= side.height() - side.navigation.height() - 4 * line
-    assert window.tab_bar.height() <= 3 * line
+    assert window.top_row.height() <= 3 * line
 
 
 def test_the_right_side_is_plain_grey_and_says_not_connected(qtbot: QtBot) -> None:
@@ -463,3 +464,15 @@ def test_without_tabs_new_tab_stands_at_the_left_and_the_row_keeps_its_height(qt
     qtbot.waitUntil(lambda: window.new_tab_button.geometry().left() == 0)
     assert not window.tab_bar.isVisible()
     assert window.top_row.height() == empty_height
+
+
+def test_the_tabs_and_new_tab_share_one_centre_line(qtbot: QtBot) -> None:
+    window = window_for(qtbot)
+    with qtbot.waitExposed(window):
+        window.show()
+    window.tab_bar.addTab("Shop")
+    qtbot.waitUntil(window.tab_bar.isVisible)
+    qtbot.wait(10)
+    tab_centre = window.tab_bar.mapTo(window.top_row, window.tab_bar.tabRect(0).center()).y()
+    button_centre = window.new_tab_button.geometry().center().y()
+    assert tab_centre == button_centre

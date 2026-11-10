@@ -33,9 +33,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.22"
+__version__ = "mainwindow.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: The tab bar has its own height and stands centred in its row, so the tabs and New Tab share one centre line
 # v0.0.22: The row of the tabs keeps the height of a tab while the tab bar is hidden
 # v0.0.15: The connections window keeps its size and place (saved_sizes)
 # v0.0.13: The queue's buttons, its choice when done, and the power of the computer (FC-02 to FC-04); a paused transfer is not finished;
@@ -79,14 +80,13 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.connection_list = None
         self.saved_sizes = {}
         self.tab_bar = ConnectionTabBar()
-        self.tab_bar.setFixedHeight(self.fontMetrics().height() * EMPTY_TAB_BAR_LINES)
         self.new_tab_button = QToolButton()
         self.new_tab_button.setIcon(icons.icon("tab-new"))
         self.new_tab_button.setText("New Tab")
         self.new_tab_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.new_tab_button.setToolTip("Open a connection in a new tab")
         self.top_row = QWidget()
-        self.top_row.setMinimumHeight(self.tab_bar.maximumHeight())  # the same height with or without tabs: nothing below jumps
+        self.top_row.setMinimumHeight(self.fontMetrics().height() * EMPTY_TAB_BAR_LINES)  # the same height with or without tabs: nothing below jumps
         top = QHBoxLayout(self.top_row)
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self.tab_bar)
