@@ -36,9 +36,10 @@ from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.31"
+__version__ = "connectionlist.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: Connect is the default button: Enter in the list or a field connects the selected connection (D-050)
 # v0.0.31: start_on: the window starts on the connection that was last live, in view; the top one when it is gone (D-053)
 # v0.0.29: The right-click menu opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.27: select_connection, for Edit in the right-click menu of a tab
@@ -112,6 +113,9 @@ class ConnectionList(QDialog):
         self.import_button = QPushButton(IMPORT_TEXT)
         self.export_button = QPushButton(EXPORT_TEXT)
         self.export_button.setEnabled(False)  # greyed, never hidden (OR-20)
+        for button in (self.browse_button, self.colour_button, self.new_button, self.save_button, self.import_button, self.export_button):
+            button.setAutoDefault(False)  # Enter never goes to another button, also not to the one with the focus
+        self.connect_button.setDefault(True)  # Enter connects the selected connection (D-050)
         self.export_button.setToolTip(EXPORT_LATER_TEXT)
         self.connect_action = QAction("Connect", self)
         self.duplicate_action = QAction("Duplicate", self)

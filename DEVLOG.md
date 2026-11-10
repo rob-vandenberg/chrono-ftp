@@ -135,3 +135,7 @@ Since 0.0.29 the right side stayed grey on a live connection, with the text in t
 ## 0.0.31 (2026-11-10): the connections window starts on the last connection
 
 The connections window started on the top item of its list. The connection that goes live is now written at once to `last_connection` in `settings.json`, and at start the window selects it, scrolls it into view and shows its fields; a deleted or renamed one leaves the window as before, and the settings window keeps the value (D-053). Four tests, all failing on 0.0.30. Still open: the window sizes that come back at their defaults after a restart.
+
+## 0.0.32 (2026-11-10): Enter connects
+
+In the connections window Enter did not connect, and a focused button such as Import… took Enter itself. Connect is now the default button and no other button takes Enter, so Enter in the list, in a field or on a focused button connects the selected connection (D-050). Four tests, all failing on 0.0.31. Still open: the window sizes that come back at their defaults after a restart.

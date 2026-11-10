@@ -3,6 +3,9 @@ from collections.abc import Callable
 import pytest
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QColorDialog, QLabel, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import connections
@@ -11,9 +14,10 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.25"
+__version__ = "test_ui_connectionlist.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: Connect is the default button; Enter in the list, a field or on a focused button connects
 # v0.0.25: Connect with unsaved changes asks Save changes?: Save, Don't Save, Cancel; none without changes
 # v0.0.20: The labels of the fields are not against the splitter
 # v0.0.19: Export… stands right next to Import…
@@ -347,3 +351,34 @@ def test_connect_without_changes_asks_nothing(qtbot: QtBot, monkeypatch: pytest.
     window.connect_button.click()
     assert asked == []
     assert len(handed) == 1
+
+
+def test_connect_is_the_default_button(qtbot: QtBot) -> None:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
+    assert window.connect_button.isDefault()
+
+
+def enter_connects_from(qtbot: QtBot, pick: Callable[[ConnectionList], QWidget]) -> list[Connection]:
+    window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
+    with qtbot.waitExposed(window):
+        window.show()
+    window.list.setCurrentRow(0)
+    handed: list[Connection] = []
+    window.connect_requested.connect(handed.append)
+    target = pick(window)
+    target.setFocus()
+    QTest.keyClick(target, Qt.Key.Key_Return)
+    window.hide()
+    return handed
+
+
+def test_enter_in_the_list_connects_the_selected_connection(qtbot: QtBot) -> None:
+    assert [connection.name for connection in enter_connects_from(qtbot, lambda window: window.list)] == ["Shop"]
+
+
+def test_enter_in_a_field_connects_the_selected_connection(qtbot: QtBot) -> None:
+    assert [connection.name for connection in enter_connects_from(qtbot, lambda window: window.host)] == ["Shop"]
+
+
+def test_enter_on_another_focused_button_still_connects(qtbot: QtBot) -> None:
+    assert [connection.name for connection in enter_connects_from(qtbot, lambda window: window.import_button)] == ["Shop"]
