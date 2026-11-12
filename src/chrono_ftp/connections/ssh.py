@@ -1,9 +1,10 @@
 import asyncio
 import math
+import re
 import shlex
 import struct
 import threading
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import replace
 from concurrent.futures import CancelledError
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -12,16 +13,20 @@ from typing import BinaryIO, cast, override
 
 import asyncssh
 
-from chrono_ftp.connections import trust
+from chrono_ftp.connections import sessionlog, trust
 from chrono_ftp.connections.passwordchange import PASSWD_COMMAND, AskedTooOften, PasswordAnswer, PasswordTalk, shown_answer
-from chrono_ftp.connections.base import HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
+from chrono_ftp.connections.base import FreeSpace, ServerInfo, log_listing, size_from, HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
 from chrono_ftp.core.connection import Connection
-from chrono_ftp.core.errors import ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
+from chrono_ftp.core.logrules import DEBUG, NORMAL
+from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.37"
+__version__ = "ssh.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The session log: the login, every SFTP request and command with the server's answer, transfers, and at the debug level the
+#          encryption agreed and what the server offers; the passwords of the connection and of passwd are never written (FP-02); what
+#          the connection tells about itself, and the free space of a folder through statvfs@openssh.com or df (FP-03)
 # v0.0.37: Symbolic and hard links and a copy of a file on the server itself through SFTP, where the server offers them (copy-data,
 #          hardlink@openssh.com); the password changed by the server's passwd in a terminal of its own, never written anywhere;
 #          whether passwd is there is detected (FM-05, FM-06, FM-10); posix-rename and ln detected, for a link led elsewhere in one step;
@@ -62,7 +67,7 @@ HIGHEST_TIME: int = 2**32  # SFTP carries a date as an unsigned 32-bit number of
 IN_FLIGHT_BYTES: int = 4 * 1024 * 1024  # as asyncssh's own copy: about this much travels at once, in 16 to 128 requests
 FEWEST_REQUESTS: int = 16
 MOST_REQUESTS: int = 128
-TOOLS: tuple[str, ...] = ("rsync", "find", "chown", "chmod", "cp", "mv", "rm", "sha256sum", "passwd", "ln")
+TOOLS: tuple[str, ...] = ("rsync", "find", "chown", "chmod", "cp", "mv", "rm", "sha256sum", "passwd", "ln", "df")
 PROBE_MARK: str = "chrono-ftp-probe"
 PROBE: str = f"echo {PROBE_MARK}; uname -s; id -u; for tool in " + " ".join(TOOLS) + "; do command -v $tool >/dev/null 2>&1 && echo tool:$tool; done; exit 0"
 PROBE_SECONDS: float = 15.0
@@ -83,6 +88,43 @@ PASSWORD_NO_SESSION_TEXT: str = "The server opened no session to run passwd, so 
 PASSWORD_FAILED_TEXT: str = "The talk with passwd broke off ({reason}), so the server did not confirm a change; your stored password was left as it was."
 PASSWORD_UNKNOWN_TEXT: str = "The server did not say whether the password changed, and it may have taken the new one. Your stored password was left as it was; if the old password is refused at the next login, type the new one there."
 LOST_ERRORS: tuple[type[BaseException], ...] = (asyncssh.ConnectionLost, asyncssh.SFTPConnectionLost, asyncssh.SFTPNoConnection, ConnectionError)
+
+
+DF_LINE: re.Pattern[str] = re.compile(r"\s([0-9]{1,18})\s+([0-9]{1,18})\s+([0-9]{1,18})\s+[0-9]{1,3}%\s")  # blocks, used, available, capacity
+DF_BLOCK: int = 1024  # df -k counts in blocks of this size
+EXTENSIONS: tuple[tuple[str, str], ...] = (  # what asyncssh learnt from the server's hello, by the name the server gave it
+    ("_supports_posix_rename", "posix-rename@openssh.com"),
+    ("_supports_statvfs", "statvfs@openssh.com"),
+    ("_supports_fstatvfs", "fstatvfs@openssh.com"),
+    ("_supports_hardlink", "hardlink@openssh.com"),
+    ("_supports_fsync", "fsync@openssh.com"),
+    ("_supports_lsetstat", "lsetstat@openssh.com"),
+    ("_supports_limits", "limits@openssh.com"),
+    ("_supports_copy_data", "copy-data"),
+)
+
+
+def space_from_df(output: str) -> FreeSpace | None:
+    """The room df -Pk tells: the last line holds the numbers, whatever the name of the file system before them. Input (OR-15)."""
+    lines = [line for line in output.splitlines() if line.strip()]
+    found = DF_LINE.search(lines[-1] + " ") if len(lines) >= 2 else None
+    if found is None:
+        return None
+    total, available = int(found.group(1)), int(found.group(3))
+    return FreeSpace(size_from(available * DF_BLOCK), size_from(total * DF_BLOCK), "df")
+
+
+def _operation(work: object) -> str:
+    """The name of an SFTP request, as asyncssh names its call: readdir, stat, rename."""
+    return str(getattr(work, "__qualname__", "request")).rsplit(".", 1)[-1]
+
+
+def _answer_of(result: object) -> str:
+    if isinstance(result, list):
+        return f"{len(cast(list[object], result))} names"
+    if isinstance(result, (str, bytes)):
+        return _text(result)
+    return "done"
 
 
 SPECIAL_TYPES: frozenset[int] = frozenset({asyncssh.FILEXFER_TYPE_FIFO, asyncssh.FILEXFER_TYPE_SOCKET, asyncssh.FILEXFER_TYPE_CHAR_DEVICE, asyncssh.FILEXFER_TYPE_BLOCK_DEVICE, asyncssh.FILEXFER_TYPE_SPECIAL})
@@ -156,11 +198,39 @@ async def _opened(sftp: asyncssh.SFTPClient, target: str, mode: str) -> asyncssh
         raise
 
 
+KEX: str = "key exchange"  # what asyncssh calls the choice of the key exchange
+
+
+class _KexWitness(asyncssh.SSHClient):
+    """Notes the key exchange the connection agrees on: asyncssh forgets it once the keys are made, and the server information shows it
+    (FP-03). A version of asyncssh that chooses another way leaves it unknown, and nothing else changes."""
+
+    def __init__(self) -> None:
+        self.kex: str = ""
+
+    @override
+    def connection_made(self, conn: asyncssh.SSHClientConnection) -> None:
+        found: object = getattr(conn, "_choose_alg", None)
+        if not callable(found):
+            return
+        choose = cast(Callable[[str, Sequence[bytes], Sequence[bytes]], bytes], found)
+
+        def noted(kind: str, local: Sequence[bytes], remote: Sequence[bytes]) -> bytes:
+            chosen = choose(kind, local, remote)
+            if kind == KEX and isinstance(chosen, bytes):
+                self.kex = chosen.decode("ascii", "replace")
+            return chosen
+
+        setattr(conn, "_choose_alg", noted)
+
+
 class SshConnection(RemoteConnection):
     def __init__(self, connection: Connection, password: str | None = None, known_hosts: str | None = None) -> None:
         self.connection: Connection = connection
         self.password: str | None = password
         self.known_hosts: str = known_hosts or str(trust.known_hosts_path())
+        self.log = sessionlog.log_for(connection.name)
+        self.log.hide(password)  # never written, whatever the level (OR-19)
         self.capabilities = Capabilities()
         self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
         self._thread: threading.Thread = threading.Thread(target=self._loop.run_forever, daemon=True)
@@ -168,6 +238,7 @@ class SshConnection(RemoteConnection):
         self._closed: bool = False
         self._client: asyncssh.SSHClientConnection | None = None
         self._sftp: asyncssh.SFTPClient | None = None
+        self._witness: _KexWitness = _KexWitness()
 
     def _await[T](self, work: Coroutine[object, object, T], seconds: float | None = ANSWER_SECONDS) -> T:
         if self._closed:
@@ -188,7 +259,7 @@ class SshConnection(RemoteConnection):
         return [name for name in [*files, str(users)] if Path(name).exists()]
 
     async def _open(self) -> None:
-        options: dict[str, object] = {"host": self.connection.host, "port": self.connection.port, "known_hosts": self._host_key_files() or b"", "connect_timeout": CONNECT_SECONDS, "keepalive_interval": KEEPALIVE_SECONDS, "keepalive_count_max": KEEPALIVE_TRIES}
+        options: dict[str, object] = {"host": self.connection.host, "port": self.connection.port, "known_hosts": self._host_key_files() or b"", "connect_timeout": CONNECT_SECONDS, "keepalive_interval": KEEPALIVE_SECONDS, "keepalive_count_max": KEEPALIVE_TRIES, "client_factory": lambda: self._witness}
         if self.connection.user:
             options["username"] = self.connection.user
         if self.connection.key_file:
@@ -216,16 +287,32 @@ class SshConnection(RemoteConnection):
 
     @override
     def connect(self) -> None:
+        how = f"the key file {self.connection.key_file}" if self.connection.key_file else "a password" if self.password else "no password"
+        self.log.asked(f"connect to {self.connection.host} port {self.connection.port} as {self.connection.user or '(no user)'} with {how}")
         try:
             self._await(self._open(), CONNECT_SECONDS * 2)
         except asyncssh.HostKeyNotVerifiable as error:
+            self.log.failed("the server's host key is not trusted yet")
             raise self._await(self._unknown_server()) from error
-        except ConnectionFailed:
+        except ConnectionFailed as error:
+            self.log.failed(str(error))
             raise
         except asyncssh.PermissionDenied as error:
+            self.log.failed(LOGIN_TEXT)
             raise LoginRefused(LOGIN_TEXT) from error
         except (OSError, asyncssh.Error, RemoteActionFailed) as error:
+            self.log.failed(f"{NOT_REACHED_TEXT} ({error})")
             raise ConnectionFailed(NOT_REACHED_TEXT) from error
+        if self.log.wanted(NORMAL):
+            try:
+                info = self.server_info()
+            except (ChronoFtpError, ValueError, AttributeError):
+                info = ServerInfo()  # only the log misses it: the login stands
+            self.log.answered(f"logged in: {info.software or 'SSH'}, {info.protocol}")
+            for label, value in (*info.encryption, *info.identity):
+                self.log.note(f"{label}: {value}", DEBUG)
+            if info.offers:
+                self.log.note(f"the server offers {', '.join(info.offers)}", DEBUG)
         handler = getattr(self._sftp, "_handler", None)  # asyncssh learns from the server's hello what it offers, and tells some only here
         durable = bool(getattr(handler, "_supports_fsync", False))
         hardlinks = bool(getattr(handler, "_supports_hardlink", False)) or self._sftp_now().version >= 6
@@ -238,6 +325,7 @@ class SshConnection(RemoteConnection):
         try:
             result = self._run(PROBE, PROBE_SECONDS)
         except RemoteActionFailed:
+            self.log.note("no shell for this login: SFTP only")
             return Capabilities()  # SFTP without a shell
         lines = result.output.splitlines()
         lines = lines[lines.index(PROBE_MARK) + 1 :] if PROBE_MARK in lines else []  # a login banner may come first
@@ -251,6 +339,8 @@ class SshConnection(RemoteConnection):
         if self._closed:
             return
         client = self._client
+        if client is not None:
+            self.log.note("disconnect")
         self._client = None
         self._sftp = None
 
@@ -289,17 +379,27 @@ class SshConnection(RemoteConnection):
             raise RemoteActionFailed("The connection is closed.")
         return self._sftp
 
-    def _sftp_call[T](self, work: Coroutine[object, object, T]) -> T:
+    def _sftp_call[T](self, work: Coroutine[object, object, T], *paths: str) -> T:
+        """One SFTP request, written to the session log with the paths it names and the server's answer (FP-02)."""
+        self.log.asked(" ".join((_operation(work), *paths)))
         try:
-            return self._await(work)
+            result = self._await(work)
         except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
             raise ConnectionLost(LOST_TEXT) from error
         except (asyncssh.Error, OSError) as error:
-            raise RemoteActionFailed(str(error) or "The server refused this action.") from error
+            text = str(error) or "The server refused this action."
+            self.log.failed(text)
+            raise RemoteActionFailed(text) from error
+        except ConnectionLost as error:
+            self.log.failed(str(error))
+            raise
+        self.log.answered(_answer_of(result))
+        return result
 
     @override
     def home(self) -> str:
-        return _text(self._sftp_call(self._sftp_now().realpath(".")))
+        return _text(self._sftp_call(self._sftp_now().realpath("."), "."))
 
     @override
     def list_folder(self, path: str) -> list[RemoteEntry]:
@@ -307,7 +407,7 @@ class SshConnection(RemoteConnection):
 
     @override
     def list_folder_all(self, path: str) -> tuple[list[RemoteEntry], list[str]]:
-        names = self._sftp_call(self._sftp_now().readdir(path))
+        names = self._sftp_call(self._sftp_now().readdir(path), path)
         entries: list[RemoteEntry] = []
         left_out: list[str] = []
         for item in names:
@@ -324,14 +424,14 @@ class SshConnection(RemoteConnection):
             target = ""
             if is_link:
                 try:
-                    attributes = self._sftp_call(self._sftp_now().stat(joined(path, name)))  # what the link leads to: that is what a transfer reads
+                    attributes = self._sftp_call(self._sftp_now().stat(joined(path, name)), joined(path, name))  # what the link leads to: that is what a transfer reads
                     is_folder = attributes.type == asyncssh.FILEXFER_TYPE_DIRECTORY
                 except RemoteActionFailed as error:
                     if isinstance(error, ConnectionLost):
                         raise
                     is_folder = False  # a broken link is shown as a file, with the link's own details
                 try:
-                    target = _text(self._sftp_call(self._sftp_now().readlink(joined(path, name))))
+                    target = _text(self._sftp_call(self._sftp_now().readlink(joined(path, name)), joined(path, name)))
                 except RemoteActionFailed as error:
                     if isinstance(error, ConnectionLost):
                         raise
@@ -341,11 +441,12 @@ class SshConnection(RemoteConnection):
             group = _text(attributes.group) or ("" if attributes.gid is None else str(attributes.gid))
             modified = None if attributes.mtime is None else float(attributes.mtime)
             entries.append(RemoteEntry(name, is_folder, size, modified, _modes(attributes.permissions), owner, group, is_link, target, size_known, special=_special(attributes)))
+        log_listing(self.log, entries, left_out)
         return entries, left_out
 
     @override
     def rename(self, old: str, new: str) -> None:
-        self._sftp_call(self._sftp_now().rename(old, new))
+        self._sftp_call(self._sftp_now().rename(old, new), old, new)
 
     @override
     def can_split(self, upload: bool) -> bool:
@@ -365,11 +466,11 @@ class SshConnection(RemoteConnection):
 
     @override
     def download_range(self, remote: str, local: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
-        self._run_copy(self._copy_range(remote, local, False, start, end, progress, limit))
+        self._run_copy(self._copy_range(remote, local, False, start, end, progress, limit), f"download {remote} bytes {start} to {end} into {local}")
 
     @override
     def upload_range(self, local: str, remote: str, start: int, end: int, progress: Progress, limit: Limit = 0) -> None:
-        self._run_copy(self._copy_range(local, remote, True, start, end, progress, limit))
+        self._run_copy(self._copy_range(local, remote, True, start, end, progress, limit), f"upload {local} bytes {start} to {end} to {remote}")
 
     @override
     def make_empty(self, remote: str) -> None:
@@ -378,7 +479,7 @@ class SshConnection(RemoteConnection):
                 pass
 
         try:
-            self._run_copy(make())
+            self._run_copy(make(), f"make the empty file {remote}")
         except CreateRefused as refused:
             if self.details(remote) is not None:
                 raise NameTaken(NAME_TAKEN_TEXT) from refused.__cause__
@@ -438,20 +539,30 @@ class SshConnection(RemoteConnection):
         if prefix.end != end:
             raise RemoteActionFailed(SHORT_TEXT)  # the source ended earlier than its size said
 
-    def _run_copy(self, work: Coroutine[object, object, None]) -> None:
-        """A copy of a range, or the making of a file, with the server's answers in this program's words."""
+    def _run_copy(self, work: Coroutine[object, object, None], what: str) -> None:
+        """A copy of a range, or the making of a file, with the server's answers in this program's words; what: for the session log."""
+        self.log.asked(what)
         try:
             self._await(work, None)
         except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
             raise ConnectionLost(LOST_TEXT) from error
-        except CreateRefused:
+        except CreateRefused as error:
+            self.log.failed(str(error.__cause__) or "refused")
             raise
         except (asyncssh.SFTPNoSpaceOnFilesystem, asyncssh.SFTPQuotaExceeded) as error:
+            self.log.failed(str(error) or "no room")
             raise RefusedForNow(NO_ROOM_TEXT.format(reply=str(error) or "no room")) from error
         except asyncssh.SFTPFailure as error:
+            self.log.failed(str(error) or "Failure")
             raise RefusedForNow(STOPPED_TAKING_TEXT.format(reply=str(error) or "Failure")) from error
         except (asyncssh.Error, OSError) as error:
+            self.log.failed(str(error) or "The transfer did not finish.")
             raise RemoteActionFailed(str(error) or "The transfer did not finish.") from error
+        except ChronoFtpError as error:
+            self.log.failed(str(error))
+            raise
+        self.log.answered("done")
 
     @override
     def place_new(self, temporary: str, target: str) -> None:
@@ -468,7 +579,7 @@ class SshConnection(RemoteConnection):
     @override
     def resolved(self, path: str) -> str | None:
         try:
-            return _text(self._sftp_call(self._sftp_now().realpath(path)))
+            return _text(self._sftp_call(self._sftp_now().realpath(path), path))
         except ConnectionLost:
             raise
         except RemoteActionFailed:
@@ -477,24 +588,24 @@ class SshConnection(RemoteConnection):
     @override
     def set_mode(self, path: str, mode: str) -> None:
         try:
-            self._sftp_call(self._sftp_now().chmod(path, int(mode, 8)))
+            self._sftp_call(self._sftp_now().chmod(path, int(mode, 8)), path, mode)
         except (RemoteActionFailed, ValueError):
             pass  # the file is there; only its permissions could not be set
 
     @override
     def make_folder(self, path: str) -> None:
-        self._sftp_call(self._sftp_now().mkdir(path))
+        self._sftp_call(self._sftp_now().mkdir(path), path)
 
     @override
     def delete(self, path: str, is_folder: bool) -> None:
         if not is_folder:
-            self._sftp_call(self._sftp_now().remove(path))
+            self._sftp_call(self._sftp_now().remove(path), path)
         elif self.capabilities.has("rm"):
             result = self.run(f"rm -rf -- {shlex.quote(path)}")
             if result.status != 0:
                 raise RemoteActionFailed(result.errors.strip() or "The server refused this action.")
         else:
-            self._sftp_call(self._sftp_now().rmtree(path))
+            self._sftp_call(self._sftp_now().rmtree(path), path)
 
     async def _copy_pipelined(self, source: str, target: str, to_server: bool, progress: Progress, offset: int, append: bool, exclusive: bool = False, limit: Limit = 0) -> None:
         """Without a limit many requests travel at once, as deep as asyncssh's own copy, which is much faster on a distant server (D-010).
@@ -666,21 +777,33 @@ class SshConnection(RemoteConnection):
             work = self._copy_blocks(source, target, to_server, progress, limit, offset, append, exclusive)
         else:
             work = self._copy_pipelined(source, target, to_server, progress, offset, append, exclusive, limit)
+        how = " (appended)" if append else f" (from byte {offset})" if offset else ""
+        self.log.asked(f"{'upload' if to_server else 'download'} {source} to {target}{how}")
+        self.log.note(f"speed limit {limit_now(limit)} KB/s" if limit_now(limit) else "no speed limit: many requests at once", DEBUG)
         try:
             self._await(work, None)
         except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
             raise ConnectionLost(LOST_TEXT) from error
         except CreateRefused as refused:
             error = refused.__cause__
+            self.log.failed(str(error) or "refused to make the file")
             if self.details(target) is not None:
                 raise NameTaken(NAME_TAKEN_TEXT) from error  # made only where nothing was: something has that name now
             raise RemoteActionFailed(str(error) or "The server refused to make the file.") from error  # not allowed here
         except (asyncssh.SFTPNoSpaceOnFilesystem, asyncssh.SFTPQuotaExceeded) as error:
+            self.log.failed(str(error) or "no room")
             raise RefusedForNow(NO_ROOM_TEXT.format(reply=str(error) or "no room")) from error
         except asyncssh.SFTPFailure as error:  # what OpenSSH answers also for a full disk: it says no more; what arrived is still good
+            self.log.failed(str(error) or "Failure")
             raise RefusedForNow(STOPPED_TAKING_TEXT.format(reply=str(error) or "Failure")) from error
         except (asyncssh.Error, OSError) as error:
+            self.log.failed(str(error) or "The transfer did not finish.")
             raise RemoteActionFailed(str(error) or "The transfer did not finish.") from error
+        except ChronoFtpError as error:
+            self.log.failed(str(error))  # this computer's file, or a stop
+            raise
+        self.log.answered("done")
 
     @override
     def download(self, remote: str, local: str, progress: Progress, limit: Limit = 0, offset: int = 0, append: bool = False, exclusive: bool = False) -> None:
@@ -692,7 +815,7 @@ class SshConnection(RemoteConnection):
 
     @override
     def set_rights(self, path: str, mode: str) -> None:
-        self._sftp_call(self._sftp_now().chmod(path, int(mode, 8)))
+        self._sftp_call(self._sftp_now().chmod(path, int(mode, 8)), path, mode)
 
     @override
     def set_time(self, path: str, modified: float) -> None:
@@ -700,13 +823,13 @@ class SshConnection(RemoteConnection):
         if not math.isfinite(modified) or not 0 <= modified < HIGHEST_TIME:
             raise RemoteActionFailed(NO_TIME_TEXT)
         try:
-            self._sftp_call(self._sftp_now().utime(path, (modified, modified)))
+            self._sftp_call(self._sftp_now().utime(path, (modified, modified)), path)
         except (OverflowError, ValueError, struct.error) as error:
             raise RemoteActionFailed(NO_TIME_TEXT) from error
 
     @override
     def file_size(self, path: str) -> int | None:
-        size = self._sftp_call(self._sftp_now().stat(path)).size
+        size = self._sftp_call(self._sftp_now().stat(path), path).size
         return size if isinstance(size, int) and size >= 0 else None
 
     @override
@@ -723,7 +846,7 @@ class SshConnection(RemoteConnection):
     def name_taken(self, path: str) -> bool:
         """Whether anything has this name: the name itself (lstat), so a link that leads nowhere has it too. A refusal to tell is raised."""
         try:
-            self._sftp_call(self._sftp_now().lstat(path))
+            self._sftp_call(self._sftp_now().lstat(path), path)
         except ConnectionLost:
             raise
         except RemoteActionFailed as error:
@@ -736,7 +859,7 @@ class SshConnection(RemoteConnection):
     def details_or_refusal(self, path: str) -> RemoteEntry | None:
         """None only where the server says there is no such file; a refusal (no permission to look) is raised as one."""
         try:
-            attributes = self._sftp_call(self._sftp_now().stat(path))
+            attributes = self._sftp_call(self._sftp_now().stat(path), path)
         except ConnectionLost:
             raise
         except RemoteActionFailed as error:
@@ -767,12 +890,12 @@ class SshConnection(RemoteConnection):
 
     @override
     def cut(self, path: str, length: int) -> None:
-        self._sftp_call(self._sftp_now().truncate(path, length))
+        self._sftp_call(self._sftp_now().truncate(path, length), path, str(length))
 
     @override
     def remove_empty_folder(self, path: str) -> None:
         try:
-            self._sftp_call(self._sftp_now().rmdir(path))
+            self._sftp_call(self._sftp_now().rmdir(path), path)
         except ConnectionLost:
             raise
         except RemoteActionFailed as error:
@@ -790,15 +913,15 @@ class SshConnection(RemoteConnection):
         if hard:
             if not self.capabilities.hardlinks:
                 raise RemoteActionFailed(NO_HARD_LINKS_TEXT)
-            self._sftp_call(sftp.link(target, path))
+            self._sftp_call(sftp.link(target, path), target, path)
         else:
-            self._sftp_call(sftp.symlink(target, path))
+            self._sftp_call(sftp.symlink(target, path), target, path)
 
     @override
     def replace_atomically(self, source: str, target: str) -> None:
         if not self.capabilities.atomic_rename:
             raise RemoteActionFailed(NO_ATOMIC_TEXT)
-        self._sftp_call(self._sftp_now().posix_rename(source, target))
+        self._sftp_call(self._sftp_now().posix_rename(source, target), source, target)
 
     @override
     def copy_file(self, source: str, target: str) -> None:
@@ -823,7 +946,7 @@ class SshConnection(RemoteConnection):
                     pass  # the copy is whole; only the rights of the original could not be given to it
 
         try:
-            self._run_copy(copy())
+            self._run_copy(copy(), f"copy-data {source} to {target}")
         except CreateRefused as refused:
             if self.name_taken(target):
                 raise NameTaken(NAME_TAKEN_TEXT) from refused.__cause__
@@ -836,7 +959,7 @@ class SshConnection(RemoteConnection):
     def _remove_half_copy(self, target: str, error: RemoteActionFailed) -> None:
         """A copy that failed halfway goes again; when it can't, because the connection is gone, the message says it is still there."""
         try:
-            self._sftp_call(self._sftp_now().remove(target))
+            self._sftp_call(self._sftp_now().remove(target), target)
         except RemoteActionFailed as problem:
             text = f"{error} {HALF_COPY_LEFT_TEXT.format(path=target)}"
             raise (ConnectionLost(text) if isinstance(problem, ConnectionLost) or isinstance(error, ConnectionLost) else RemoteActionFailed(text)) from error
@@ -847,6 +970,9 @@ class SshConnection(RemoteConnection):
         does when all goes well. The passwords go to passwd only: they are never in what is returned, nor written anywhere."""
         if not self.capabilities.has("passwd"):
             raise RemoteActionFailed(NO_PASSWORD_TEXT)
+        self.log.hide(old)  # neither is ever written, whatever passwd or the server answers (OR-19)
+        self.log.hide(new)
+        self.log.asked(PASSWD_COMMAND)
         talk = PasswordTalk(old, new)
 
         async def go() -> PasswordAnswer:
@@ -880,7 +1006,9 @@ class SshConnection(RemoteConnection):
             return PasswordAnswer(done.exit_status == 0, text if text or done.exit_status == 0 else PASSWORD_REFUSED_TEXT)
 
         try:
-            return self._await(go(), PASSWORD_ANSWER_SECONDS * 4)
+            answer = self._await(go(), PASSWORD_ANSWER_SECONDS * 4)
+            self.log.answered("the password was changed" if answer.changed else "the password was not changed")
+            return answer
         except (ConnectionLost, *LOST_ERRORS) as error:
             # both new passwords were typed: the server may have taken the new one before the line went
             lost = str(error) if isinstance(error, ConnectionLost) else LOST_TEXT
@@ -902,21 +1030,103 @@ class SshConnection(RemoteConnection):
                 raise RemoteActionFailed(SLOW_COMMAND_TEXT.format(seconds=round(seconds))) from error
             return CommandResult(result.exit_status if result.exit_status is not None else -1, _text(cast("bytes | str | None", result.stdout)), _text(cast("bytes | str | None", result.stderr)))
 
+        self.log.asked(f"run {command}")
         try:
-            return self._await(go(), seconds + CLOSE_SECONDS)
+            result = self._await(go(), seconds + CLOSE_SECONDS)
         except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
             raise ConnectionLost(LOST_TEXT) from error
         except (asyncssh.Error, OSError) as error:
+            self.log.failed(str(error) or "refused")
             raise RemoteActionFailed(str(error) or "The server refused this command.") from error
+        except RemoteActionFailed as error:
+            self.log.failed(str(error))
+            raise
+        self._log_result(result)
+        return result
 
     def _run(self, command: str, seconds: float) -> CommandResult:
         async def go() -> CommandResult:
             result = await self._client_now().run(sendable(command), check=False, stdin=asyncssh.DEVNULL, encoding="utf-8", errors="surrogateescape")
             return CommandResult(result.exit_status if result.exit_status is not None else -1, _text(cast("bytes | str | None", result.stdout)), _text(cast("bytes | str | None", result.stderr)))
 
+        self.log.asked(f"run {command}")
         try:
-            return self._await(go(), seconds)
+            result = self._await(go(), seconds)
         except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
             raise ConnectionLost(LOST_TEXT) from error
         except (asyncssh.Error, OSError) as error:
+            self.log.failed(str(error) or "no shell")
             raise RemoteActionFailed(str(error) or "The server has no shell for this login.") from error
+        except ConnectionLost as error:
+            self.log.failed(str(error))
+            raise
+        self._log_result(result)
+        return result
+
+    def _log_result(self, result: CommandResult) -> None:
+        if not self.log.wanted(NORMAL):
+            return  # a large output is never split for nothing
+        self.log.answered(f"exit status {result.status}")
+        self.log.answered_lines(result.output.splitlines())
+        self.log.answered_lines(result.errors.splitlines())
+
+    @override
+    def server_info(self) -> ServerInfo:
+        """The SSH banner, the encryption agreed and the host key, as asyncssh learnt them on connecting (FP-03)."""
+        client = self._client
+        sftp = self._sftp
+        if client is None or sftp is None:
+            raise ConnectionLost(LOST_TEXT)
+
+        def extra(name: str) -> str:
+            value: object = client.get_extra_info(name)
+            return str(value) if value else ""
+
+        def both(sending: str, receiving: str) -> str:
+            out, back = extra(sending), extra(receiving)
+            return out if out == back else f"{out or 'none'} to the server, {back or 'none'} from it"
+
+        encryption: list[tuple[str, str]] = [("Cipher", both("send_cipher", "recv_cipher"))]
+        mac = both("send_mac", "recv_mac")
+        encryption.append(("MAC", mac if mac and mac != "none" else "part of the cipher"))
+        encryption.append(("Key exchange", self._witness.kex or "unknown"))
+        encryption.append(("Compression", both("send_compression", "recv_compression") or "none"))
+        identity: list[tuple[str, str]] = []
+        key = client.get_server_host_key()
+        if key is not None:
+            identity.append(("Host key type", key.get_algorithm()))
+            identity.append(("Fingerprint (SHA-256)", key.get_fingerprint("sha256")))
+            try:
+                identity.append(("Fingerprint (MD5)", key.get_fingerprint("md5")))
+            except ValueError:
+                pass  # a Python without MD5: the SHA-256 fingerprint says it all
+        handler = getattr(sftp, "_handler", None)
+        offers = tuple(name for flag, name in EXTENSIONS if getattr(handler, flag, False))
+        return ServerInfo(f"SFTP version {sftp.version} over SSH-2", extra("server_version"), tuple(encryption), tuple(identity), offers)
+
+    @override
+    def free_space(self, path: str) -> FreeSpace | None:
+        """statvfs@openssh.com where the server offers it, else df where a shell has it; None where neither can tell."""
+        handler = getattr(self._sftp, "_handler", None)
+        if getattr(handler, "_supports_statvfs", False):
+            try:
+                found = self._sftp_call(self._sftp_now().statvfs(path), path)
+                unit = found.frsize or found.bsize
+                if not isinstance(unit, int) or unit <= 0:
+                    return None  # an answer without a block size tells nothing (OR-15)
+                return FreeSpace(size_from(found.bavail * unit), size_from(found.blocks * unit), "statvfs@openssh.com")
+            except ConnectionLost:
+                raise
+            except (RemoteActionFailed, TypeError):
+                pass  # refused for this folder: df may still tell
+        if self.capabilities.has("df"):
+            try:
+                result = self._run(f"df -Pk -- {shlex.quote(path)}", PROBE_SECONDS)
+            except ConnectionLost:
+                raise
+            except RemoteActionFailed:
+                return None
+            return space_from_df(result.output) if result.status == 0 else None
+        return None

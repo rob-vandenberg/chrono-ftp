@@ -9,9 +9,10 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.34"
+__version__ = "session.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Each tab can keep its own sort order and column widths, and knows whether an automatic refresh is on its way (FP-01)
 # v0.0.34: Each tab keeps whether synchronized browsing is on, and the folder a step of it asked for on the server (FH-05); the folder
 #          each side fell back to while the person has not moved it (FH-06)
 # v0.0.13: An edited file knows the last save sent, so a retry of it in the queue counts as its save again
@@ -65,6 +66,10 @@ class Session:
     remote_fallback: str = ""  # the same on the server
     sync_asked: str = ""  # the folder synchronized browsing asked the server for: its arrival is no step of the person
     leftovers: dict[str, tuple[float, int]] = field(default_factory=dict[str, tuple[float, int]])  # see tidy; only the session's thread uses it
+    local_columns: bytes = b""  # the sort order and column widths of each side while another tab is shown, where they are kept per tab (FP-01)
+    remote_columns: bytes = b""
+    auto_refreshing: bool = False  # an automatic refresh is on its way: the next waits for it (FP-01)
+    refresh_problem: str = ""  # what the last automatic refresh could not do: said once, not at every refresh
 
     @property
     def capabilities(self) -> Capabilities:

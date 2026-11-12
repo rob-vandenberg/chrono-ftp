@@ -30,9 +30,12 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.37"
+__version__ = "windowtabs.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The menu of a tab opens Server Information, greyed while the tab is not connected (FP-03), and the Session Log (FP-02);
+#          closing a tab with running transfers asks unless switched off (FP-01); a tab keeps its own sort order and columns where
+#          that is chosen
 # v0.0.37: The menu of a tab also installs my public key on its server and changes the password there, each greyed with its reason;
 #          Change Password is not shown on FTP, as it needs a shell (FM-09, FM-10, D-027)
 # v0.0.34: A connection opens in its local starting folder too; a starting folder that is gone says so calmly and opens the home
@@ -60,6 +63,9 @@ EDIT_TEXT: str = "Edit settings…"
 KEY_TEXT: str = "Install My Public Key…"
 PASSWORD_TEXT: str = "Change Password…"
 MENU_WIDTH_CHARACTERS: int = 22  # a menu of normal width, also with one short entry
+INFORMATION_TEXT: str = "Server Information…"
+LOG_TEXT: str = "Session Log…"
+NOT_LIVE_TEXT: str = "This tab is not connected. Reconnect to see what the server tells."
 EDIT_GONE_TEXT: str = "This connection is no longer in your connection list."
 LOCAL_START_GONE_TEXT: str = "The starting folder {path} of {name} is no longer on this computer, so your home folder opens instead."
 REMOTE_START_GONE_TEXT: str = "The starting folder {path} of {name} can't be opened on the server, so your home folder there opens instead."
@@ -133,6 +139,17 @@ class TabsPart(WindowBase):
                 action.setToolTip(why)
                 menu.setToolTipsVisible(True)
             menu.addAction(action)
+        menu.addSeparator()
+        information = QAction(icons.icon("documentinfo"), INFORMATION_TEXT, menu)
+        information.triggered.connect(lambda: self.show_server_info(session))
+        if not session.alive:
+            information.setEnabled(False)  # greyed with its reason (OR-20)
+            information.setToolTip(NOT_LIVE_TEXT)
+            menu.setToolTipsVisible(True)
+        menu.addAction(information)
+        log = QAction(icons.icon("view-list-text"), LOG_TEXT, menu)
+        log.triggered.connect(lambda: self.show_session_log(session))
+        menu.addAction(log)
         return menu
 
     def _show_tab_menu(self, place: QPoint) -> None:
@@ -337,6 +354,7 @@ class TabsPart(WindowBase):
         self.tab_bar.update()
         if session is self.shown:
             return  # another tab went away: this one stays as it is, with its selection
+        self._leave_columns(self.shown)
         self.shown = session
         if session is None:
             self.remote_side.clear()
@@ -352,6 +370,7 @@ class TabsPart(WindowBase):
         self.remote_side.home_folder = session.home_folder
         if session.remote_folder:
             self.remote_side.show_folder(session.remote_folder, list(session.entries))
+        self._enter_columns(session)
         self._tab_shown()
         self.update_actions()
 
@@ -368,7 +387,7 @@ class TabsPart(WindowBase):
         session = self.sessions[index]
         running = [job for job in self.queue.jobs if self._tab_of(job) is session and job.state in (*LINE, State.RUNNING)]  # whatever connection it holds
         open_here = self._edits_of(session)
-        if running:
+        if running and self.settings.confirm_close_running:  # unless switched off in Settings, Confirmations (FP-01)
             text = (TAB_UNFINISHED_TEXTS[0] if len(running) == 1 else TAB_UNFINISHED_TEXTS[1]).format(count=len(running), name=session.connection.name)
             if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
                 return

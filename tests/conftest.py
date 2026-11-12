@@ -9,13 +9,17 @@ from types import FrameType
 
 import pytest
 
+from chrono_ftp.connections import sessionlog
 from chrono_ftp.core import credentials
+from chrono_ftp.core.logrules import LogRules
 from tests.fakeservers import end_the_servers
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 0.0.13"
+__version__ = "conftest.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The state folder (the session logs) of the run and of each test is a folder of its own, and the run fails when the real one
+#          changed; every test starts and ends with the session log off
 # v0.0.13: A fake SSH server whose block ended while a window still held a connection to it ends once the test is over
 # v0.0.12: The whole run has settings folders of its own, so a thread that outlives its test never reaches the real ones; the run fails
 #          when the real settings folder of Chrono FTP gained or changed anything; nor the real data folder, also when it appears; each
@@ -34,6 +38,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 REAL_HOME: Path = Path.home()
 REAL_SETTINGS: Path = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "chrono-ftp"
 REAL_DATA: Path = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "chrono-ftp"
+REAL_STATE: Path = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "chrono-ftp"
 THERE: tuple[int, int] = (-1, -1)  # what a snapshot notes for the folder itself, so a folder that appears, even empty, is a change
 
 
@@ -46,13 +51,14 @@ def _snapshot(folder: Path) -> dict[str, tuple[int, int]]:
     return found
 
 
-REAL_FOLDERS_BEFORE: dict[Path, dict[str, tuple[int, int]]] = {folder: _snapshot(folder) for folder in (REAL_SETTINGS, REAL_DATA)}
+REAL_FOLDERS_BEFORE: dict[Path, dict[str, tuple[int, int]]] = {folder: _snapshot(folder) for folder in (REAL_SETTINGS, REAL_DATA, REAL_STATE)}
 
 # Settings folders of this run, set before any test or thread can ask for one: a test sets its own on top, and what it puts back when it
 # ends is this, never the real one, also for a transfer thread that is still ending after its test.
 RUN_SETTINGS: Path = Path(tempfile.mkdtemp(prefix="chrono-ftp-tests-"))
 os.environ["XDG_CONFIG_HOME"] = str(RUN_SETTINGS / "config")
 os.environ["XDG_DATA_HOME"] = str(RUN_SETTINGS / "data")
+os.environ["XDG_STATE_HOME"] = str(RUN_SETTINGS / "state")
 RUN_HOME: Path = RUN_SETTINGS / "home"  # the home folder of every test but the live ones: no ~/.ssh/known_hosts of this computer
 RUN_HOME.mkdir()
 
@@ -115,7 +121,16 @@ def memory_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MemoryStore
     monkeypatch.setattr(credentials, "store", store)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     return store
+
+
+@pytest.fixture(autouse=True)
+def session_log_off() -> Generator[None]:
+    """The session log is off unless a test switches it on, and off again after it (FP-02)."""
+    sessionlog.set_rules(LogRules())
+    yield
+    sessionlog.set_rules(LogRules())
 
 
 @pytest.fixture(autouse=True)

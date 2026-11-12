@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from collections.abc import Callable
+from typing import override
 
 from PySide6.QtCore import QByteArray, QPoint
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu
@@ -14,9 +15,11 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.31"
+__version__ = "windowlayout.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The settings also apply the session log and the automatic refresh (FP-01, FP-02); the settings window can open Clean Up
+#          Stored Data, and window places removed there are not written back on closing (FP-04)
 # v0.0.31: The settings window keeps the last connection, which it does not show (D-053)
 # v0.0.29: The menus of the file lists open through open_menu, which lets go of the keyboard (D-052)
 # v0.0.16: Also the splitter of the connections window
@@ -28,11 +31,13 @@ __version__ = "windowlayout.py 0.0.31"
 class LayoutPart(WindowBase):
     """The right-click menus, the filter, the settings and the remembered sizes of the main window."""
 
+    @override
     def _apply_settings(self) -> None:
         for side in (self.local_side, self.remote_side):
             side.set_tree_place(self.settings.tree_place)
             side.set_show_hidden(self.settings.show_hidden)
         self._apply_queue_settings()
+        self._apply_program_settings()
 
     def _sized_parts(self) -> dict[str, Callable[[], QByteArray]]:
         return {
@@ -66,6 +71,8 @@ class LayoutPart(WindowBase):
             self._show_queue()
 
     def _save_sizes(self) -> None:
+        if self.sizes_forgotten:
+            return  # removed in Clean Up Stored Data: nothing is written back by itself (FP-04)
         state = {name: bytes(read().toBase64().data()).decode("ascii") for name, read in self._sized_parts().items()}
         height = self.queue_panel.height() if self.queue_panel.isVisibleTo(self) else self.queue_height
         state["queue_height"] = str(height)
@@ -97,8 +104,10 @@ class LayoutPart(WindowBase):
         open_menu(self.menu_for(REMOTE_MENU), self.remote_side.file_list.mapToGlobal(place))
 
     def open_settings(self) -> None:
-        dialog = SettingsDialog(self.settings, self)
-        if dialog.exec() == SettingsDialog.DialogCode.Accepted.value:
+        dialog = SettingsDialog(self.settings, self, self.clean_up_stored_data)
+        accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted.value
+        dialog.deleteLater()
+        if accepted:
             self.settings = replace(dialog.chosen(), last_connection=self.settings.last_connection)  # not in the settings window
             self._apply_settings()
             try:

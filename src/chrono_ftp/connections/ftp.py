@@ -14,15 +14,21 @@ from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO, cast, override
 
-from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
+from cryptography import x509
+
+from chrono_ftp.connections import sessionlog, trust
+from chrono_ftp.connections.base import FreeSpace, ServerInfo, log_listing, HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
 from chrono_ftp.core.connection import Connection
+from chrono_ftp.core.logrules import DEBUG
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, NoMoreLogins, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.37"
+__version__ = "ftp.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The session log: every command and every reply of the control connection, the PASS line never with its password, each
+#          listing's entries at the detailed level and the data connections at the debug level (FP-02); what the connection tells about
+#          itself (greeting, SYST, TLS and its certificate, FEAT), and the free space of a folder through AVBL where FEAT offers it (FP-03)
 # v0.0.37: A file is copied on the server itself with SITE CPFR and CPTO, where SITE HELP offers both (FM-06); never onto a name
 #          that is taken; a copy that failed halfway is removed, and where it can't be, the message says so
 # v0.0.13: The speed limit is asked again for every block, so a new limit takes effect at once; its pauses are short steps, so a stop
@@ -69,6 +75,8 @@ LOST_TEXT: str = "The connection to the server was lost."
 INTERRUPTED_TEXT: str = "The data connection for this file broke off on the way."
 PART_NOT_AS_LEFT_TEXT: str = "The unfinished copy on the server is not as it was left, so it starts again from the beginning."
 BUSY_TEXT: str = "The server can't use this file right now ({reply}). The other files go on; you can send this one again later."
+SITE_COMMANDS: frozenset[str] = frozenset({"CHMOD", "CHOWN", "CHGRP", "CPFR", "CPTO", "SYMLINK", "UTIME", "MKDIR", "RMDIR", "UMASK", "IDLE", "MD5", "SHA1"})
+AVBL_REPLY: re.Pattern[str] = re.compile(r"213\s+([0-9]{1,18})\s*")
 FTP_ERRORS: tuple[type[BaseException], ...] = (ftplib.Error, OSError, EOFError, ValueError)
 LOST_ERRORS: tuple[type[BaseException], ...] = (EOFError, ConnectionError, TimeoutError)
 
@@ -119,13 +127,39 @@ def _names_codec(name: str) -> codecs.CodecInfo | None:
 codecs.register(_names_codec)
 
 
-class _TlsFtp(ftplib.FTP_TLS):
+class _LoggedFtp(ftplib.FTP):
+    """Every command and every reply of the control connection goes to the session log (FP-02); the log itself takes the password out of
+    the PASS line, whatever the level (OR-19)."""
+
+    session_log: sessionlog.SessionLog = sessionlog.QUIET
+
+    @override
+    def putcmd(self, line: str) -> None:
+        self.session_log.asked(line)
+        super().putcmd(line)
+
+    @override
+    def getmultiline(self) -> str:
+        reply = super().getmultiline()
+        lines = reply.splitlines()
+        self.session_log.answered(lines[0] if lines else "")
+        self.session_log.answered_lines(lines[1:])
+        return reply
+
+    @override
+    def ntransfercmd(self, cmd: str, rest: int | str | None = None) -> tuple[socket.socket, int | None]:
+        self.session_log.note(f"data connection for {cmd}" + (f" from byte {rest}" if rest else ""), DEBUG)
+        return super().ntransfercmd(cmd, rest)
+
+
+class _TlsFtp(_LoggedFtp, ftplib.FTP_TLS):
     """Some servers want the data connection to continue the TLS session of the control connection."""
 
     trusted_certificate: bytes | None = None  # set when the person trusted this certificate: every data connection must show the same one
 
     @override
     def ntransfercmd(self, cmd: str, rest: int | str | None = None) -> tuple[socket.socket, int | None]:
+        self.session_log.note(f"data connection for {cmd}" + (f" from byte {rest}" if rest else ""), DEBUG)
         conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
         if self._prot_p:  # pyrefly: ignore[missing-attribute]
             conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)  # pyrefly: ignore[missing-attribute]
@@ -133,6 +167,23 @@ class _TlsFtp(ftplib.FTP_TLS):
                 conn.close()
                 raise ssl.SSLError("The data connection showed another certificate.")
         return conn, size
+
+
+def certificate_lines(certificate: bytes) -> list[tuple[str, str]]:
+    """What the TLS certificate says of itself; a certificate that can't be read gives its fingerprint alone (OR-15)."""
+    digest = hashlib.sha256(certificate).hexdigest()
+    fingerprint = ("Fingerprint (SHA-256)", ":".join(digest[place : place + 2] for place in range(0, len(digest), 2)))
+    try:
+        read = x509.load_der_x509_certificate(certificate)
+        return [
+            ("Issued to", read.subject.rfc4514_string()),
+            ("Issued by", read.issuer.rfc4514_string()),
+            ("Valid from", read.not_valid_before_utc.strftime("%Y-%m-%d %H:%M UTC")),
+            ("Valid until", read.not_valid_after_utc.strftime("%Y-%m-%d %H:%M UTC")),
+            fingerprint,
+        ]
+    except ValueError:
+        return [fingerprint]
 
 
 def _time_of(fact: str) -> float | None:
@@ -194,6 +245,10 @@ class FtpConnection(RemoteConnection):
         self._mlst: bool | None = None  # whether the server knows MLST: learnt from its first answer
         self._binary: bool = False  # the session is in binary mode now: SIZE needs it, a listing leaves it
         self._listings: dict[str, dict[str, RemoteEntry]] | None = None  # a transfer's folders (by name), each read once and kept up with its own changes
+        self._features: frozenset[str] = frozenset()  # what FEAT named, for the server information and AVBL (FP-03)
+        self._site: tuple[str, ...] = ()  # the SITE commands SITE HELP named
+        self.log = sessionlog.log_for(connection.name)
+        self.log.hide(password)  # never written, whatever the level (OR-19)
 
     def _prefix(self) -> str:
         return f"{self.connection.host}:{self.connection.port} "
@@ -208,8 +263,9 @@ class FtpConnection(RemoteConnection):
         context.verify_mode = ssl.CERT_NONE
         return context
 
-    def _new_session(self, session: ftplib.FTP) -> ftplib.FTP:
+    def _new_session(self, session: _LoggedFtp) -> ftplib.FTP:
         session.encoding = NAMES_ENCODING
+        session.session_log = self.log
         session.connect(self.connection.host, self.connection.port)
         return session
 
@@ -244,7 +300,7 @@ class FtpConnection(RemoteConnection):
         if line not in known:
             raise UnknownServer("connection", "not encrypted", line, NOT_ENCRYPTED_TEXT)
         self.encrypted = False
-        return self._new_session(ftplib.FTP(timeout=SECONDS))
+        return self._new_session(_LoggedFtp(timeout=SECONDS))
 
     def _open(self) -> ftplib.FTP:
         session = self._new_session(_TlsFtp(context=ssl.create_default_context(), timeout=SECONDS))
@@ -261,6 +317,7 @@ class FtpConnection(RemoteConnection):
 
     @override
     def connect(self) -> None:
+        self.log.note(f"connect to {self.connection.host} port {self.connection.port} as {self.connection.user or 'anonymous'}")
         try:
             session = self._open()
             session.login(self.connection.user or "anonymous", self.password)
@@ -283,6 +340,7 @@ class FtpConnection(RemoteConnection):
             raise ConnectionFailed(NOT_REACHED_TEXT) from error
         self._ftp = session
         self.capabilities = abilities
+        self.log.note("logged in, " + ("encrypted with TLS" if self.encrypted else "not encrypted"))
 
     def _abilities(self, session: ftplib.FTP) -> Capabilities:
         """What this server offers for a transfer, as it says itself: nothing is assumed (D-016). A refusal of a question means no."""
@@ -295,6 +353,8 @@ class FtpConnection(RemoteConnection):
         except ftplib.Error:
             site = ""
         offered = site.split()
+        self._features = frozenset(features)
+        self._site = tuple(sorted({word for word in offered if word.isalpha() and word != "HELP"} & SITE_COMMANDS))
         return Capabilities(resume="REST" in features, timestamps="MFMT" in features, rights="CHMOD" in offered, server_copy="CPFR" in offered and "CPTO" in offered)
 
     @override
@@ -388,6 +448,7 @@ class FtpConnection(RemoteConnection):
                 raise RemoteActionFailed("The server did not answer.") from error
         entries = [entry for name, facts in found if (entry := entry_from(name, facts)) is not None]
         left_out = [name for name, facts in found if facts.get("type", "").lower() not in ("cdir", "pdir") and name not in (".", "..") and not safe_name(name)]
+        log_listing(self.log, entries, left_out)
         return entries, left_out
 
     def _do(self, *commands: tuple[str, str]) -> None:
@@ -787,6 +848,52 @@ class FtpConnection(RemoteConnection):
             self._data(fetch, True)
         if got != wanted:
             raise RemoteActionFailed(SHORT_RANGE_TEXT)
+
+    @override
+    def server_info(self) -> ServerInfo:
+        """The greeting, SYST, TLS with its certificate, and FEAT (FP-03)."""
+        with self._lock:
+            try:
+                session = self._session()
+                try:
+                    system = session.sendcmd("SYST").removeprefix("215").strip()
+                except ftplib.Error:
+                    system = ""  # a server may refuse to say
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except FTP_ERRORS as error:
+                raise RemoteActionFailed(_refusal(error, "The server did not answer.")) from error
+            welcome = " ".join(line[4:].strip() for line in (session.welcome or "").splitlines() if line[4:].strip())
+            sock = session.sock
+        software = ", ".join(part for part in (welcome, system) if part)
+        encryption: list[tuple[str, str]] = []
+        identity: list[tuple[str, str]] = []
+        if isinstance(sock, ssl.SSLSocket):
+            cipher = sock.cipher()
+            encryption.append(("TLS version", sock.version() or ""))
+            if cipher is not None:
+                encryption.append(("Cipher", f"{cipher[0]} ({cipher[2]} bits)"))
+            certificate = sock.getpeercert(binary_form=True)
+            if certificate:
+                identity.extend(certificate_lines(certificate))
+        protocol = "FTP over TLS" if isinstance(sock, ssl.SSLSocket) else "FTP, not encrypted"
+        offers = tuple(sorted(self._features)) + tuple(f"SITE {command}" for command in self._site)
+        return ServerInfo(protocol, software, tuple(encryption), tuple(identity), offers)
+
+    @override
+    def free_space(self, path: str) -> FreeSpace | None:
+        """AVBL where FEAT offers it; FTP has no other way to tell."""
+        if "AVBL" not in self._features:
+            return None
+        with self._lock:
+            try:
+                reply = self._session().sendcmd(f"AVBL {path}")
+            except LOST_ERRORS as error:
+                raise ConnectionLost(LOST_TEXT) from error
+            except FTP_ERRORS:
+                return None  # refused for this folder
+        found = AVBL_REPLY.fullmatch(reply.strip())
+        return FreeSpace(int(found.group(1)), None, "AVBL") if found is not None else None
 
     @override
     def for_a_transfer(self) -> "FtpConnection":

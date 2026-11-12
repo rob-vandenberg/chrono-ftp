@@ -17,13 +17,14 @@ from chrono_ftp.connections.ftp import FtpConnection, _TlsFtp, entry_from
 from chrono_ftp.connections.ssh import SshConnection, sendable
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import ConnectionFailed, RemoteActionFailed
-from tests.conftest import REAL_DATA, REAL_FOLDERS_BEFORE, REAL_HOME, REAL_SETTINGS, _snapshot
+from tests.conftest import REAL_DATA, REAL_FOLDERS_BEFORE, REAL_HOME, REAL_SETTINGS, REAL_STATE, _snapshot
 from tests.fakeservers import PASSWORD, USER, SshServer, end_the_servers, ftp_server, self_signed_certificate, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_connections.py 0.0.13"
+__version__ = "test_connections.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The run's guard also watches the real state folder, where the session logs go (FP-02)
 # v0.0.13: A fake SSH server leaves no thread nor descriptor behind, also when a connection to it is still open at the end of its block
 # v0.0.12: No test reads this computer's own known hosts; the run's guard sees a real folder of Chrono FTP appear; SITE CHMOD is
 #          known by its own word in SITE HELP
@@ -385,8 +386,8 @@ def test_no_test_reads_this_computers_own_known_hosts() -> None:
     assert not any(Path(name).is_relative_to(REAL_HOME / ".ssh") for name in files), files
 
 
-def test_the_runs_guard_watches_the_real_settings_and_data_folders_and_sees_one_appear(tmp_path: Path) -> None:
-    assert set(REAL_FOLDERS_BEFORE) == {REAL_SETTINGS, REAL_DATA}
+def test_the_runs_guard_watches_the_real_settings_data_and_state_folders_and_sees_one_appear(tmp_path: Path) -> None:
+    assert set(REAL_FOLDERS_BEFORE) == {REAL_SETTINGS, REAL_DATA, REAL_STATE}
     folder = tmp_path / "chrono-ftp"
     before = _snapshot(folder)
     folder.mkdir()

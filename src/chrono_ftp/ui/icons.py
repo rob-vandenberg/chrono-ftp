@@ -8,9 +8,10 @@ from PySide6.QtSvg import QSvgRenderer
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.37"
+__version__ = "icons.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Server Information (documentinfo) and Session Log (view-list-text) (FP-02, FP-03)
 # v0.0.37: Open in the file manager (folder-open) and Install my public key (database-change-key) (FM-09, FM-11)
 # v0.0.34: Add a bookmark, open a folder, and the link of synchronized browsing (FH-02, FH-05)
 # v0.0.23: Also drawn at 24 and 48 pixels, so the icons of the side bars are sharp
@@ -23,6 +24,8 @@ __version__ = "icons.py 0.0.37"
 ICON_FOLDER: Path = Path(__file__).resolve().parent / "resources" / "icons"
 APPLICATION_ICON_FILE: Path = Path(__file__).resolve().parent / "resources" / "chrono-ftp.svg"  # the program icon
 ICON_NAMES: tuple[str, ...] = (
+    "documentinfo",
+    "view-list-text",
     "folder-sync",
     "utilities-terminal",
     "view-task",

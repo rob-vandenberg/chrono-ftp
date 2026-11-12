@@ -32,15 +32,18 @@ from chrono_ftp.ui.windowlocal import LocalPart
 from chrono_ftp.ui.windownavigation import NavigationPart
 from chrono_ftp.ui.windowqueue import QueuePart, stoppable
 from chrono_ftp.ui.windowproperties import NO_FILE_MANAGER_TEXT, PropertiesPart
+from chrono_ftp.ui.windowprogram import ProgramPart
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowtabs import TabsPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.37"
+__version__ = "mainwindow.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Block FP: the program-wide part (windowprogram.py): a double-click on a file opens or transfers it as Settings say, the
+#          automatic refresh, the Session Log, Server Information and Clean Up windows (FP-01 to FP-04)
 # v0.0.37: Block FM: Properties (F9), New File (Shift+F4), Link (Alt+F6) on both sides, Open in File Manager (Ctrl+Alt+E) on the left,
 #          Duplicate and Copy to (Shift+F5) on the right; what can't act is greyed with its reason as hover text (OR-20); whether
 #          Properties of either side is being prepared
@@ -70,7 +73,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -164,8 +167,6 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.remote_side.folder_requested.connect(self.open_remote_folder)
         self.remote_side.children_requested.connect(self._load_tree_children)
         self.remote_side.selection_changed.connect(self.update_actions)
-        self.local_side.file_opened.connect(self._open_local_file)
-        self.remote_side.file_opened.connect(self._remote_file_opened)
         self.local_side.file_list.dropped.connect(self._dropped_on_local)
         self.remote_side.file_list.dropped.connect(self._dropped_on_remote)
         self.local_side.file_list.customContextMenuRequested.connect(self._local_menu_wanted)
@@ -189,6 +190,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.check_timer.setInterval(CHECK_MILLISECONDS)
         self.check_timer.timeout.connect(self.check_connections)
         self.check_timer.start()
+        self._build_program()  # a double-click on a file, the automatic refresh and the windows of block FP
         self.settings = saved_settings.load()
         self._apply_settings()
         self._restore_sizes()

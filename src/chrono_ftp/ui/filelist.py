@@ -4,15 +4,16 @@ import os
 from typing import cast, override
 
 from PySide6.QtCore import QAbstractTableModel, QByteArray, QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, QPersistentModelIndex, QPoint, Qt, QUrl, Signal
-from PySide6.QtGui import QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent
+from PySide6.QtGui import QDrag, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QStyle, QTreeView, QWidget
 
 from chrono_ftp.connections.base import RemoteEntry, shown_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.6"
+__version__ = "filelist.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Whether a drag runs from this list or over it, so the automatic refresh waits for its end (FP-01)
 # v0.0.6: Initial: the one file list of both sides: sorting, selection kept, drag and drop, names that aren't valid UTF-8
 
 COLUMNS: tuple[str, ...] = ("Name", "Size", "Changed", "Rights", "Owner", "Group", "Link target")
@@ -173,6 +174,8 @@ class FileList(QTreeView):
 
     def __init__(self, column_count: int, kind: str, accepts: frozenset[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.dragging_out: bool = False  # a drag started here runs (startDrag waits for its end)
+        self.dragged_over: bool = False  # a drag this list would take is over it now
         self.kind: str = kind
         self.folder: str = ""
         self.accepts: frozenset[str] = accepts
@@ -282,7 +285,21 @@ class FileList(QTreeView):
         mime = self.drag_data()
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)  # copying only: a file manager may never take a file away from here
+        self.dragging_out = True
+        try:
+            drag.exec(Qt.DropAction.CopyAction)  # copying only: a file manager may never take a file away from here
+        finally:
+            self.dragging_out = False
+
+    @property
+    def in_drag(self) -> bool:
+        """A drag runs from this list or over it: the list must not change under it."""
+        return self.dragging_out or self.dragged_over
+
+    @override
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self.dragged_over = False
+        super().dragLeaveEvent(event)
 
     def drag_data(self) -> QMimeData:
         mime = QMimeData()
@@ -324,6 +341,7 @@ class FileList(QTreeView):
         if source in self.accepts:
             event.setDropAction(Qt.DropAction.CopyAction)
             event.accept()
+            self.dragged_over = True
         else:
             event.ignore()
 
@@ -338,6 +356,7 @@ class FileList(QTreeView):
 
     @override
     def dropEvent(self, event: QDropEvent) -> None:
+        self.dragged_over = False
         mime = event.mimeData()
         position = event.position().toPoint()
         if mime is None or not self._wanted(mime, position):

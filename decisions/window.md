@@ -28,3 +28,6 @@
 26. [[D-059]] The About window
 27. [[D-060]] Properties and rights
 28. [[D-063]] New file, the file manager and the terminal's folder
+29. [[D-064]] Preferences
+30. [[D-067]] Clean up stored data
+31. [[D-068]] The licence and the update check

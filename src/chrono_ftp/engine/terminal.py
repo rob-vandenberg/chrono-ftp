@@ -7,9 +7,10 @@ from chrono_ftp.core import colours
 from chrono_ftp.core.connection import Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "terminal.py 0.0.37"
+__version__ = "terminal.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The folder of the colour schemes is known outside, so Clean Up can list them (FP-04)
 # v0.0.37: The terminal opens in the folder on the screen; a folder it can't enter leaves it open in the home folder with a calm line,
 #          instead of closing at once; without a folder yet it opens in the home folder (FM-12)
 # v0.0.9: A connection without a colour opens with the normal terminal colours
@@ -24,7 +25,7 @@ def terminal_available() -> bool:
     return shutil.which(TERMINAL_PROGRAM) is not None
 
 
-def _scheme_folder() -> Path:
+def scheme_folder() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "konsole"
 
 
@@ -40,7 +41,7 @@ def scheme_for(colour: str) -> str:
     lines = ["[General]", f"Description=Chrono FTP {colour}", "Opacity=1"]
     for part, value in (("Background", colour), ("BackgroundIntense", colour), ("Foreground", text), ("ForegroundIntense", text)):
         lines += [f"[{part}]", f"Color={_channels(value)}"]
-    folder = _scheme_folder()
+    folder = scheme_folder()
     folder.mkdir(parents=True, exist_ok=True)
     (folder / f"{name}.colorscheme").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return name

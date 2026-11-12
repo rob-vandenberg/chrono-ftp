@@ -10,3 +10,5 @@
 8. [[D-058]] Starting folders
 9. [[D-061]] Links and copies on the server
 10. [[D-062]] My key and my password on the server
+11. [[D-065]] The session log
+12. [[D-066]] Server information

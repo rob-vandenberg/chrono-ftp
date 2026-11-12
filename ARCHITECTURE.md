@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.37; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.38; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -136,3 +136,17 @@ The modules of block FM, one line each:
 8. `engine/terminal.py`: the terminal opens in the folder on the screen, and stays open in the home folder when that folder can't be entered (D-063).
 9. `ui/rightseditor.py`, `ui/propertiesdialog.py`, `ui/actiondialogs.py`: the rights editor, the Properties window, and the windows of a link, Copy To, a new folder with rights and a new password.
 10. `ui/windowproperties.py`: the part of the main window that ties them together; every server call goes through the tab's own thread, and long work on this computer through a thread of its own, so the window never freezes (D-019).
+
+## 11. Program-wide (block FP, version 0.0.38)
+
+The modules of block FP, one line each:
+
+1. `ui/settingsdialog.py`: Settings with pages on the left: General, Panels, Transfers, Queue, Confirmations, Log; `config/settings.py` keeps the new choices, each checked when read (D-064).
+2. `core/logrules.py`: the levels, size and kept logs of the session log, shared by the settings and the log (D-065).
+3. `connections/sessionlog.py`: the log of one connection in the state folder, cleaned of every password and key before it is written or shown, rotated by size and count; `ssh.py` and `ftp.py` write their requests and answers to it (D-065).
+4. `connections/base.py`, `ssh.py`, `ftp.py`: `server_info` and `free_space` of a connection (D-066).
+5. `engine/serverinfo.py`: the report of the Server Information window, read on the tab's own thread (D-066).
+6. `engine/cleanup.py`: what Chrono FTP keeps, each kind with its size, and the removal of exactly the kinds ticked (D-067).
+7. `engine/updatecheck.py`: the newest version tag on GitHub against the running version; `core/appinfo.py` also gives the repository and the licence text (D-068).
+8. `ui/logwindow.py`, `ui/serverinfodialog.py`, `ui/cleanupdialog.py`, `ui/aboutdialog.py`: the Session Log, Server Information, Clean Up and About windows; the update check runs on a thread of its own (D-019).
+9. `ui/windowprogram.py`: the part of the main window that ties them together, with the double-click on a file, the automatic refresh and the columns per tab (D-064).

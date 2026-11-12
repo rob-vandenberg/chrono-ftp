@@ -24,9 +24,11 @@ from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, Windo
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtransfers.py 0.0.36"
+__version__ = "windowtransfers.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: A drop asks first: through the transfer window, or a short question where that window is off; with the question switched off
+#          in Settings, a drop starts at once (FP-01)
 # v0.0.36: The question about a missing local folder is titled with the program's name, not the window title with its version (D-059)
 # v0.0.13: A job knows its tab, also after a reconnect; Stop in the question also stops the paused jobs of the action; Edit's saves start by themselves; a question of a paused job ends it paused; Stop All stops every running, waiting and paused item; a job that left the
 #          queue stays out of the list; the speed limit of the status bar holds at once, also for a running transfer
@@ -50,6 +52,9 @@ __version__ = "windowtransfers.py 0.0.36"
 
 
 IS_A_FILE_TEXT: str = "{folder} on the server of {connection} is a file, not a folder, so nothing was sent. Please choose a folder."
+DROP_TEXTS: tuple[str, str] = ("1 item", "{count} items")
+UPLOAD_DROP_TEXT: str = "Upload {items} to {folder} on the server?"
+DOWNLOAD_DROP_TEXT: str = "Download {items} to {folder} on this computer?"
 MISSING: str = "missing"
 A_FILE: str = "file"
 A_FOLDER: str = "folder"
@@ -145,18 +150,25 @@ class TransfersPart(WindowBase):
         if screen is not None:
             self._offer(screen[0], [joined(screen[1], entry.name) for entry in screen[2]], target, False, after_a_drop)
 
-    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False) -> None:
+    @override
+    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False, dropped: bool = False) -> None:
         """The transfer window first, unless the person switched it off (FB-09). sources: local paths for an upload, server paths for a
         download; target: the folder they go into. After a drop the window waits until the drop has finished, so the drag lets go of
-        what it held first: what was dropped is taken now."""
+        what it held first: what was dropped is taken now. A drop is confirmed by the transfer window, or by a question where that window
+        is off, unless the person switched that off too (FP-01)."""
         if after_a_drop:
-            QTimer.singleShot(0, self, lambda: self._offer(session, sources, target, upload))  # with the window as context: never runs on a deleted window
+            QTimer.singleShot(0, self, lambda: self._offer(session, sources, target, upload, dropped=True))  # with the window as context: never runs on a deleted window
             return
         if not sources or session not in self.sessions:
             return
         never_again = False
         options, reasons = usable(self.settings.transfer_options, session.capabilities, session.connection.protocol, upload)  # what will happen
-        if self.settings.show_transfer_window:
+        if dropped and self.settings.confirm_drop and not self.settings.show_transfer_window:
+            count = DROP_TEXTS[0] if len(sources) == 1 else DROP_TEXTS[1].format(count=len(sources))
+            text = (UPLOAD_DROP_TEXT if upload else DOWNLOAD_DROP_TEXT).format(items=count, folder=fitting(shown_name(target), self))
+            if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
+                return
+        if self.settings.show_transfer_window and (self.settings.confirm_drop or not dropped):
             names = [Path(source).name if upload else source.rsplit("/", 1)[-1] for source in sources]
             def browse(start: str) -> str | None:
                 return self._pick_remote_folder(session, start) if upload else self._pick_local_folder(start)

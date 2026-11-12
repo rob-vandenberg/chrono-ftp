@@ -15,9 +15,10 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowfolders.py 0.0.34"
+__version__ = "windowfolders.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Marking a tab as lost is shared, so the automatic refresh can do it (FP-01)
 # v0.0.34: A folder that can't be opened can go back to the one who asked, for a calm message of its own; each folder that arrives
 #          is told to synchronized browsing, and a step it asked for is forgotten on every way out; a lost connection ends it; a
 #          caller can be told once the folder shows (FH-02, FH-04, FH-05); Reconnect of a dropped tab logs in with the connection as
@@ -52,6 +53,7 @@ class FoldersPart(WindowBase):
 
         session.worker.submit(lambda: work(remote), done, failed)
 
+    @override
     def _mark_lost(self, session: Session) -> None:
         session.alive = False
         self._sync_ends(session)

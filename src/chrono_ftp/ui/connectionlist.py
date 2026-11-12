@@ -37,9 +37,10 @@ from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.34"
+__version__ = "connectionlist.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The list can be read again, after Clean Up Stored Data (FP-04)
 # v0.0.34: A local starting folder next to the remote one, and "Remember the last folders" (FH-06); a renamed connection keeps its
 #          bookmarks and location profiles; a saved connection is told to the window, so its open tabs follow; a deleted one too,
 #          so its own bookmarks go; a local starting folder is kept absolute, a relative one read from the home folder
@@ -216,6 +217,11 @@ class ConnectionList(QDialog):
         self._fill_list()
         if loaded.set_aside is not None:
             QMessageBox.information(self, WINDOW_TITLE, box_text(f"{SET_ASIDE_TEXT}\n{loaded.set_aside}"))
+
+    def reload(self) -> None:
+        """The list read again, as after Clean Up Stored Data removed it (FP-04)."""
+        self._load()
+        self.clear_fields()
 
     def user_accepted(self, name: str, user: str) -> None:
         """A login kept this user name; the fields follow, so Save can't put back the old one."""

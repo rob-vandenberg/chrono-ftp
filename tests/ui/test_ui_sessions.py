@@ -34,15 +34,16 @@ from chrono_ftp.ui.overwritedialog import OverwriteDialog
 from chrono_ftp.ui.session import Session, same_server
 from chrono_ftp.ui.transferdialog import TransferDialog
 from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES
-from chrono_ftp.ui.windowedit import EDIT_FOLDER_PREFIX
+from chrono_ftp.engine.cleanup import EDIT_FOLDER_PREFIX
 from chrono_ftp.ui.plaintext import NAME_SHARE
 from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.37"
+__version__ = "test_ui_sessions.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The name of the edit folders comes from engine/cleanup.py
 # v0.0.37: Owner and permissions are changed in the Properties window, its rights as a chmod that sets exactly the shown boxes, for
 #          everything inside through find, files first and folders deepest first, only the touched boxes; a
 #          copy on the server is no longer an action only for a shell (D-061); a new folder is named in the New folder window (FM-08)

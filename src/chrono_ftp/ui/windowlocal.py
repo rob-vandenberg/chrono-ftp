@@ -15,9 +15,10 @@ from chrono_ftp.ui.windowbase import NOT_OPENABLE_TEXT, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlocal.py 0.0.37"
+__version__ = "windowlocal.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Delete asks first unless the person switched that question off (FP-01)
 # v0.0.37: New folder moved to windowproperties.py, where it can set rights (FM-08)
 # v0.0.12: Names in message boxes are shown as written, never read as HTML, long ones shortened in their middle
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
@@ -59,8 +60,8 @@ class LocalPart(WindowBase):
         if not paths:
             return
         names = ", ".join(fitting(shown_name(Path(path).name), self) for path in paths)
-        if QMessageBox.question(self, "Delete", box_text(f"Move to the Trash from {fitting(shown_name(self.local_side.folder), self)}: {names}?")) != QMessageBox.StandardButton.Yes:
-            return
+        if self.settings.confirm_delete and QMessageBox.question(self, "Delete", box_text(f"Move to the Trash from {fitting(shown_name(self.local_side.folder), self)}: {names}?")) != QMessageBox.StandardButton.Yes:
+            return  # asked unless the person switched it off in Settings, Confirmations (FP-01)
         left = [fitting(shown_name(Path(path).name), self) for path in paths if not cast(object, QFile.moveToTrash(path)) is True]  # a plain bool, whatever the stub says
         if left:
             QMessageBox.information(self, "Delete", box_text(f"These could not go to the Trash and are still here: {', '.join(left)}"))

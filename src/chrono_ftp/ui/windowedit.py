@@ -9,16 +9,19 @@ from typing import override
 
 from PySide6.QtWidgets import QMessageBox
 
-from chrono_ftp.connections.base import joined, RemoteConnection, RemoteEntry, shown_name
+from chrono_ftp.connections.base import joined, RemoteConnection, shown_name
+from chrono_ftp.engine.cleanup import EDIT_FOLDER_PREFIX
 from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.session import EditedFile, is_at_or_below, login_of, no_progress, same_server, Session
 from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES, NOT_OPENABLE_TEXT, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import asked, box_text, fitting, told, wrapped
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowedit.py 0.0.37"
+__version__ = "windowedit.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: The name of the edit folders comes from engine/cleanup.py, which finds the leftover ones (FP-04); a double-click on a
+#          server file reaches Edit through windowprogram.py, which knows what the double-click does (FP-01)
 # v0.0.37: The edit of a server file is declared in the base, so a new empty file opens in it (FM-07)
 # v0.0.13: A save starts by itself also when queue items wait to be started; a paused save has not ended; a stopped or refused save
 #          retried or resumed from the queue is the edit's save again
@@ -28,7 +31,6 @@ __version__ = "windowedit.py 0.0.37"
 #          unsent changes is shown whole, over several lines, and unbroken in the box's details, to copy
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
-EDIT_FOLDER_PREFIX: str = "chrono-ftp-edit-"
 
 
 class EditPart(WindowBase):
@@ -70,11 +72,6 @@ class EditPart(WindowBase):
                     os.rmdir(os.path.dirname(copy))
                 except OSError:
                     pass  # something else is in it, perhaps the program's own copy: it stays
-
-    def _remote_file_opened(self, entry: RemoteEntry) -> None:
-        screen = self._on_screen()
-        if screen is not None:
-            self._edit_entry(screen[0], screen[1], entry.name)
 
     def edit(self) -> None:
         """A copy goes to a temporary folder and opens in the person's own program; every save goes back to the server."""

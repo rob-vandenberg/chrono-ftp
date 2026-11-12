@@ -25,9 +25,11 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.37"
+__version__ = "windowbase.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Block FP: the automatic refresh, the open Session Log and Server Information windows, the columns per tab, the program's
+#          settings applied, Clean Up, and whether the window places were cleaned up; _mark_lost and _offer are shared
 # v0.0.37: Block FM: Properties, New File, Link and the file manager on the left; Properties, Duplicate, Copy to, New File and Link on
 #          the right; copy on the server is no longer an action only for a shell (D-061); a thread for long work on this computer; the
 #          edit of a server file is shared, so a new file opens in it; whether Properties is being prepared, on each side
@@ -120,6 +122,10 @@ class WindowBase(QMainWindow):
     local_properties_waiting: bool  # the same for the left side, whose users and groups are read on a thread of their own
     properties_waiting: bool  # the names for the Properties of the server are being read: a second F9 waits for that window
     local_worker: Worker | None  # long work on this computer (Properties of everything inside a folder), made at its first use
+    refresh_timer: QTimer  # the automatic refresh of the right side (FP-01)
+    log_windows: dict[str, QWidget]  # the open Session Log windows, by connection name (FP-02)
+    info_windows: dict[str, QWidget]  # the open Server Information windows, by connection name (FP-03)
+    sizes_forgotten: bool  # the window places were cleaned up: closing writes none (FP-04)
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -254,4 +260,31 @@ class WindowBase(QMainWindow):
         raise NotImplementedError
 
     def _apply_queue_settings(self) -> None:
+        raise NotImplementedError
+
+    def _apply_program_settings(self) -> None:
+        raise NotImplementedError
+
+    def _apply_settings(self) -> None:
+        raise NotImplementedError
+
+    def _leave_columns(self, session: Session | None) -> None:
+        raise NotImplementedError
+
+    def _enter_columns(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def show_server_info(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def show_session_log(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def clean_up_stored_data(self) -> bool:
+        raise NotImplementedError
+
+    def _mark_lost(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False, dropped: bool = False) -> None:
         raise NotImplementedError

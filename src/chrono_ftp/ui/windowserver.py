@@ -21,9 +21,10 @@ from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowserver.py 0.0.37"
+__version__ = "windowserver.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Delete asks first unless the person switched that question off (FP-01)
 # v0.0.37: New folder, copy, and owner and permissions moved to windowproperties.py (block FM); the terminal opens in the folder on the
 #          screen (FM-12)
 # v0.0.12: Synchronize does exactly the ticked rows: no overwrite question and no "only newer", with the dates, rights and resume of
@@ -86,8 +87,8 @@ class ServerPart(WindowBase):
             return
         session, folder, chosen = screen
         names = ", ".join(fitting(shown_name(entry.name), self) for entry in chosen)
-        if QMessageBox.question(self, "Delete", box_text(f"Delete in {fitting(shown_name(folder), self)} on the server: {names}?")) != QMessageBox.StandardButton.Yes:
-            return
+        if self.settings.confirm_delete and QMessageBox.question(self, "Delete", box_text(f"Delete in {fitting(shown_name(folder), self)} on the server: {names}?")) != QMessageBox.StandardButton.Yes:
+            return  # asked unless the person switched it off in Settings, Confirmations (FP-01)
 
         finished: list[str] = []  # a refusal halfway: what went before it is gone all the same
 

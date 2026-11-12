@@ -7,12 +7,16 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, cast
 
 from chrono_ftp.connections.passwordchange import PasswordAnswer
+from chrono_ftp.connections.sessionlog import QUIET, SessionLog
+from chrono_ftp.core.logrules import DETAILED
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "base.py 0.0.37"
+__version__ = "base.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: Every connection has its session log, a quiet one unless it makes its own (FP-02); what a connection tells about itself for
+#          the server information window, and the free space of a folder where the server tells it (FP-03)
 # v0.0.37: What a connection can do without a shell: copy a file on the server, make a symbolic or hard link; a link made, a file
 #          copied on the server, and the password changed on the server, each raising its calm reason where the connection can't (FM-05,
 #          FM-06, FM-10); a rename that replaces in one step, where the server offers it; the text for a half copy that stays; a command that
@@ -138,6 +142,32 @@ class CommandResult:
     errors: str
 
 
+@dataclass(frozen=True)
+class ServerInfo:
+    """What a connection tells about itself (FP-03): each value as label and text, in the order shown; a value that can't be known is
+    left out here and said as unknown by the window."""
+
+    protocol: str = ""  # "SFTP version 3", "FTP over TLS", "FTP"
+    software: str = ""  # what the server says it is: the SSH banner, or the FTP greeting and SYST
+    encryption: tuple[tuple[str, str], ...] = ()  # cipher, MAC, key exchange, compression, TLS version
+    identity: tuple[tuple[str, str], ...] = ()  # the host key and its fingerprint, or the TLS certificate
+    offers: tuple[str, ...] = ()  # the extensions or features the server offers, as it names them
+
+
+@dataclass(frozen=True)
+class FreeSpace:
+    """The room in a folder of the server, in bytes, as the server tells it; None where it does not."""
+
+    available: int | None
+    total: int | None
+    how: str  # how it was found: "statvfs@openssh.com", "df", "AVBL"
+
+
+def size_from(value: object) -> int | None:
+    """A number of bytes from a server is input: only a whole number from 0 up is one (OR-15)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**63 else None
+
+
 class UnknownServer(ChronoFtpError):
     """The server's identity is not known yet: the person decides (OR-19). It holds what to show and what to remember."""
 
@@ -237,6 +267,20 @@ def shown_name(name: str) -> str:
     return name.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
 
 
+def log_listing(log: SessionLog, entries: list[RemoteEntry], left_out: list[str]) -> None:
+    """Every entry of a listing in the session log, at the detailed level (FP-02)."""
+    if not log.wanted(DETAILED):
+        return
+    lines: list[str] = []
+    for entry in entries:
+        kind = "folder" if entry.is_folder else "special" if entry.special else "file"
+        size = str(entry.size) if entry.size_known else "?"
+        link = f" -> {entry.link_target}" if entry.is_link else ""
+        lines.append(f"{entry.name}{link}  {kind}  {size}  {entry.permissions or '-'}  {entry.owner or '-'}:{entry.group or '-'}  {entry.modified if entry.modified is not None else '-'}")
+    lines.extend(f"{name}  left out: a name that can't be handled safely" for name in left_out)
+    log.answered_lines(lines)
+
+
 def joined(folder: str, name: str) -> str:
     return str(PurePosixPath(folder) / name)
 
@@ -258,6 +302,7 @@ class RemoteConnection(ABC):
 
     capabilities: Capabilities = Capabilities()
     encrypted: bool = True  # False only for FTP without TLS, which the person chose (OR-19)
+    log: SessionLog = QUIET  # what is asked and answered, where the person switched the log on (FP-02)
 
     @abstractmethod
     def connect(self) -> None: ...
@@ -441,3 +486,11 @@ class RemoteConnection(ABC):
     def change_password(self, old: str, new: str) -> PasswordAnswer:
         """The password of this login changed on the server, by its own passwd (FM-10). Neither password is ever written anywhere."""
         raise RemoteActionFailed(NO_PASSWORD_TEXT)
+
+    def server_info(self) -> ServerInfo:
+        """What the connection tells about itself (FP-03); a connection that knows nothing of it tells nothing."""
+        return ServerInfo()
+
+    def free_space(self, path: str) -> FreeSpace | None:
+        """The room in this folder, where the server tells it; None where it can't be known. Raises only ConnectionLost."""
+        return None
