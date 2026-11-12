@@ -15,6 +15,7 @@ from chrono_ftp.engine import commands
 from chrono_ftp.engine.terminal import terminal_available
 from chrono_ftp.transfers.queue import LINE, State, TransferQueue
 from chrono_ftp.ui import icons
+from chrono_ftp.ui.aboutdialog import AboutWindow
 from chrono_ftp.ui.afterqueue import Power
 from chrono_ftp.ui.bridge import Bridge
 from chrono_ftp.ui.localside import LocalSide
@@ -35,9 +36,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.34"
+__version__ = "mainwindow.py 0.0.35"
 
 # --- Version history ----------------------------------------------------
+# v0.0.35: F1 opens the About window (D-059)
 # v0.0.34: Navigation (block FH): Sync Browsing and Location Profiles on the top bar; Ctrl+O, Ctrl+B, Ctrl+. and Ctrl+L on each side,
 #          greyed where they can't act; closing keeps the last folders of the connections that remember them
 # v0.0.27: A right-click on a tab opens its menu
@@ -183,6 +185,9 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self._restore_sizes()
         self.update_actions()
 
+    def show_about(self) -> None:
+        AboutWindow(self).open()
+
     def _button(self, bar: QToolBar, name: str, text: str, icon_name: str, key: str, handler: Callable[[], None], view: QWidget | None) -> None:
         action = QAction(icons.icon(icon_name), text, self)
         if key and view is not None:
@@ -231,6 +236,12 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         ):
             self._button(bar, name, text, icon_name, key, handler, None)
         self.actions_by_name["stop_all"].setToolTip(STOP_ALL_TEXT)
+        about = QAction("About Chrono FTP", self)
+        about.setShortcut(QKeySequence("F1"))
+        about.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        self.addAction(about)
+        about.triggered.connect(self.show_about)
+        self.about_action: QAction = about  # always usable, so not among the actions that are greyed by the connection
         bar.setMinimumWidth(bar.sizeHint().width())
         refresh = QAction(icons.icon("view-refresh"), "Refresh", self)
         refresh.setShortcut(QKeySequence("F5"))

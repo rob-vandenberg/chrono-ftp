@@ -25,3 +25,4 @@
 23. [[D-056]] Bookmarks and location profiles
 24. [[D-057]] Synchronized browsing
 25. [[D-058]] Starting folders
+26. [[D-059]] The About window
