@@ -8,9 +8,10 @@ from PySide6.QtSvg import QSvgRenderer
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.34"
+__version__ = "icons.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: Open in the file manager (folder-open) and Install my public key (database-change-key) (FM-09, FM-11)
 # v0.0.34: Add a bookmark, open a folder, and the link of synchronized browsing (FH-02, FH-05)
 # v0.0.23: Also drawn at 24 and 48 pixels, so the icons of the side bars are sharp
 # v0.0.21: The eye of a password field (view-visible, view-hidden)
@@ -69,6 +70,8 @@ ICON_NAMES: tuple[str, ...] = (
     "bookmark-new",
     "document-open-folder",
     "edit-link",
+    "folder-open",
+    "database-change-key",
 )
 SIZES: tuple[int, ...] = (22, 24, 33, 44, 48)  # the sizes in use, and sharp on a scaled screen
 _TEXT_COLOUR: re.Pattern[str] = re.compile(r"(\.ColorScheme-Text\s*\{\s*color:\s*)#[0-9a-fA-F]{3,6}")

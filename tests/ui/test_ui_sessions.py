@@ -22,7 +22,9 @@ from chrono_ftp.core import colours
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.transfers.options import Answer, Choice
 from chrono_ftp.transfers.queue import Job, State
-from chrono_ftp.ui.changedialog import ChangeDialog
+from chrono_ftp.engine.rights import rights_of
+from chrono_ftp.ui.actiondialogs import NewFolderDialog
+from chrono_ftp.ui.propertiesdialog import PropertiesDialog
 from chrono_ftp.ui.comparedialog import CompareDialog
 from chrono_ftp.ui.filelist import DRAG_MARK, LOCAL_FILES, REMOTE_FILES, FileList
 from chrono_ftp.engine.jobs import Worker
@@ -38,9 +40,12 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.34"
+__version__ = "test_ui_sessions.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: Owner and permissions are changed in the Properties window, its rights as a chmod that sets exactly the shown boxes, for
+#          everything inside through find, files first and folders deepest first, only the touched boxes; a
+#          copy on the server is no longer an action only for a shell (D-061); a new folder is named in the New folder window (FM-08)
 # v0.0.34: A starting folder that is gone says so calmly (FH-06)
 # v0.0.33: A dropped tab is NOT_CONNECTED_TAB
 # v0.0.25: A connection that already has a tab switches to it
@@ -227,13 +232,15 @@ def test_shell_actions_are_not_shown_on_ftp(qtbot: QtBot, window: MainWindow, tm
     (tmp_path / "a.txt").write_text("x", encoding="utf-8")
     with ftp_server(tmp_path) as port:
         connected(qtbot, window, Connection(name="Shop", host="127.0.0.1", port=port, user=USER, protocol=FTP, start_folder="/"))
-        for name in ("copy", "search", "change", "terminal"):
+        for name in ("search", "terminal"):
             assert not visible(window, name), name
-        for name in ("upload", "rename", "delete", "new_folder"):
+        for name in ("upload", "rename", "delete", "new_folder", "properties", "duplicate", "link"):
             assert visible(window, name), name
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
-        assert enabled(window, "rename") and enabled(window, "delete")
+        assert enabled(window, "rename") and enabled(window, "delete") and enabled(window, "properties")
+        assert not enabled(window, "duplicate") and window.actions_by_name["duplicate"].toolTip()  # greyed with its reason: no SITE CPFR here
+        assert not enabled(window, "link") and window.actions_by_name["link"].toolTip()
 
 
 def test_shell_actions_are_greyed_on_sftp_without_a_shell(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -243,10 +250,11 @@ def test_shell_actions_are_greyed_on_sftp_without_a_shell(qtbot: QtBot, window: 
         connected(qtbot, window, ssh_settings(server))
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
-        for name in ("copy", "search", "change", "terminal"):
+        for name in ("search", "terminal"):
             assert visible(window, name), name
             assert not enabled(window, name), name
-        assert enabled(window, "rename")
+        assert enabled(window, "rename") and enabled(window, "properties")
+        assert enabled(window, "duplicate")  # this server copies a file itself (copy-data), without a shell
 
 
 def test_shell_actions_work_with_a_shell(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -256,7 +264,7 @@ def test_shell_actions_work_with_a_shell(qtbot: QtBot, window: MainWindow, tmp_p
         connected(qtbot, window, ssh_settings(server))
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
-        assert enabled(window, "change") and enabled(window, "search") and enabled(window, "copy")
+        assert enabled(window, "properties") and enabled(window, "search") and enabled(window, "duplicate")
 
 
 def text_answer(text: str) -> Callable[..., tuple[str, bool]]:
@@ -264,6 +272,14 @@ def text_answer(text: str) -> Callable[..., tuple[str, bool]]:
         return text, True
 
     return answer
+
+
+def folder_named(name: str) -> Callable[[NewFolderDialog], int]:
+    def named(dialog: NewFolderDialog) -> int:
+        dialog.name.setText(name)
+        return NewFolderDialog.DialogCode.Accepted.value
+
+    return named
 
 
 def test_rename_new_folder_and_delete_from_the_window(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -275,7 +291,7 @@ def test_rename_new_folder_and_delete_from_the_window(qtbot: QtBot, window: Main
         monkeypatch.setattr(QInputDialog, "getText", text_answer("b.txt"))
         window.actions_by_name["rename"].trigger()
         qtbot.waitUntil(lambda: "b.txt" in names_on_the_right(window))
-        monkeypatch.setattr(QInputDialog, "getText", text_answer("made"))
+        monkeypatch.setattr(NewFolderDialog, "exec", folder_named("made"))
         window.actions_by_name["new_folder"].trigger()
         qtbot.waitUntil(lambda: "made" in names_on_the_right(window))
         assert (tmp_path / "made").is_dir()
@@ -317,9 +333,10 @@ def test_a_recursive_change_shows_the_exact_command_and_runs_it_on_the_whole_tre
         select(window, "my tree")
         window.remote_side.folder = str(tmp_path)
 
-        def accepted(dialog: ChangeDialog) -> int:
-            dialog.mode.setText("700")
-            return ChangeDialog.DialogCode.Accepted.value
+        def accepted(dialog: PropertiesDialog) -> int:
+            dialog.rights.set_rights(rights_of(0o700))
+            dialog.inside.setChecked(True)
+            return PropertiesDialog.DialogCode.Accepted.value
 
         shown: list[str] = []
 
@@ -330,12 +347,15 @@ def test_a_recursive_change_shows_the_exact_command_and_runs_it_on_the_whole_tre
         def ignored(*args: object) -> None:
             pass  # the jailed SFTP can't list the real path afterwards: only the command is under test here
 
-        monkeypatch.setattr(ChangeDialog, "exec", accepted)
+        monkeypatch.setattr(PropertiesDialog, "exec", accepted)
         monkeypatch.setattr(QMessageBox, "question", confirm)
         monkeypatch.setattr(QMessageBox, "information", ignored)
-        window.actions_by_name["change"].trigger()
-        assert f"chmod -R -- 700 '{tree}'" in shown[0]
-        qtbot.waitUntil(lambda: stat.S_IMODE((tree / "deep" / "f.txt").stat().st_mode) == 0o700)
+        window.actions_by_name["properties"].trigger()
+        qtbot.waitUntil(lambda: bool(shown))  # the names of users and groups come from the server first
+        assert f"find '{tree}' ! -type d ! -type l -exec chmod -- " in shown[0]  # files first, with only the touched boxes
+        assert f"find '{tree}' -depth -type d -exec chmod -- " in shown[0]  # folders deepest first
+        assert ",-t " not in shown[0] and "u-s" not in shown[0] and "u+r" not in shown[0]  # boxes that did not change are never in it
+        qtbot.waitUntil(lambda: stat.S_IMODE((tree / "deep" / "f.txt").stat().st_mode) & 0o077 == 0)
 
 
 def test_no_means_no_command_runs(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,16 +367,20 @@ def test_no_means_no_command_runs(qtbot: QtBot, window: MainWindow, tmp_path: Pa
         qtbot.waitUntil(lambda: "a.txt" in names_on_the_right(window))
         select(window, "a.txt")
 
-        def accepted(dialog: ChangeDialog) -> int:
-            dialog.mode.setText("700")
-            return ChangeDialog.DialogCode.Accepted.value
+        asked: list[str] = []
+
+        def accepted(dialog: PropertiesDialog) -> int:
+            dialog.rights.set_rights(rights_of(0o700))
+            return PropertiesDialog.DialogCode.Accepted.value
 
         def no(*args: object) -> QMessageBox.StandardButton:
+            asked.append(str(args[2]))
             return QMessageBox.StandardButton.No
 
-        monkeypatch.setattr(ChangeDialog, "exec", accepted)
+        monkeypatch.setattr(PropertiesDialog, "exec", accepted)
         monkeypatch.setattr(QMessageBox, "question", no)
-        window.actions_by_name["change"].trigger()
+        window.actions_by_name["properties"].trigger()
+        qtbot.waitUntil(lambda: bool(asked))
         assert stat.S_IMODE((tmp_path / "a.txt").stat().st_mode) == before
 
 
@@ -657,7 +681,7 @@ def test_arrow_keys_in_the_remote_tree_open_the_folder(qtbot: QtBot, window: Mai
         qtbot.waitUntil(lambda: window.remote_side.folder == "/a")
 
 
-def test_a_selected_link_can_not_get_a_recursive_change(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+def test_a_selected_link_can_not_get_a_recursive_change(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "server"
     (root / "real").mkdir(parents=True)
     (root / "link").symlink_to(root / "real")
@@ -665,10 +689,21 @@ def test_a_selected_link_can_not_get_a_recursive_change(qtbot: QtBot, window: Ma
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         qtbot.waitUntil(lambda: "link" in names_on_the_right(window))
+        seen: list[tuple[bool, bool, bool]] = []
+
+        def looked(dialog: PropertiesDialog) -> int:
+            seen.append((dialog.rights.isEnabled(), dialog.inside.isEnabled(), dialog.owner.isEnabled() or dialog.group.isEnabled()))
+            return PropertiesDialog.DialogCode.Rejected.value
+
+        monkeypatch.setattr(PropertiesDialog, "exec", looked)
         select(window, "real")
-        assert enabled(window, "change")
+        window.actions_by_name["properties"].trigger()
+        qtbot.waitUntil(lambda: len(seen) == 1)
+        assert seen[0][0] and seen[0][1]
         select(window, "link")
-        assert not enabled(window, "change")
+        window.actions_by_name["properties"].trigger()
+        qtbot.waitUntil(lambda: len(seen) == 2)
+        assert seen[1] == (False, False, False)  # shown, but nothing can go through the link
 
 
 def test_a_download_asks_before_it_replaces_a_local_file(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1094,11 +1129,8 @@ def test_a_name_with_a_slash_is_refused_on_the_server(qtbot: QtBot, window: Main
     def note(_parent: object, _title: str, text: str) -> None:
         told.append(text)
 
-    def answer(*_args: object) -> str:
-        return "../outside"
-
     monkeypatch.setattr(QMessageBox, "information", note)
-    monkeypatch.setattr(window, "_ask_text", answer)
+    monkeypatch.setattr(NewFolderDialog, "exec", folder_named("../outside"))
     with ssh_server(root) as server:
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))

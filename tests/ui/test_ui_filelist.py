@@ -11,6 +11,7 @@ from chrono_ftp.config import settings
 from chrono_ftp.connections.base import CommandResult, RemoteEntry
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.transfers.queue import Job, State
+from chrono_ftp.ui.actiondialogs import NewFolderDialog
 from chrono_ftp.ui.filelist import DRAG_MARK, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, LOCAL_FILES, REMOTE_FILES, FileList, rights_text, size_text, summary_text
 from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
 from chrono_ftp.ui.logindialog import WIDTH, LoginDialog
@@ -20,9 +21,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.34"
+__version__ = "test_ui_filelist.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: The menus hold the actions of block FM; a new folder is named in the New folder window (FM-08)
 # v0.0.34: A typed path that is no folder is told calmly, never put back in silence (D-055)
 # v0.0.16: The splitter of the connections window is where it was after a restart
 # v0.0.15: The connections window opens with the size and place it had last time, also after a run without it
@@ -329,8 +331,8 @@ def test_back_skips_a_folder_that_was_removed(qtbot: QtBot, tmp_path: Path) -> N
 
 def test_each_side_has_its_own_menu_with_only_its_own_actions(qtbot: QtBot) -> None:
     window = window_for(qtbot)
-    assert [action.text() for action in window.menu_for(LOCAL_MENU).actions()] == ["Upload", "Edit", "Rename", "Delete", "New"]
-    assert [action.text() for action in window.menu_for(REMOTE_MENU).actions()] == ["Download", "Edit", "Rename", "Move", "Copy", "Delete", "Properties", "New"]
+    assert [action.text() for action in window.menu_for(LOCAL_MENU).actions()] == ["Upload", "Edit", "Rename", "Delete", "New Folder", "New File", "Link…", "Properties", "Open in File Manager"]
+    assert [action.text() for action in window.menu_for(REMOTE_MENU).actions()] == ["Download", "Edit", "Rename", "Move", "Duplicate…", "Copy To…", "Delete", "New Folder", "New File", "Link…", "Properties"]
 
 
 def test_a_file_on_this_computer_can_be_renamed_and_made_with_the_buttons(qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,12 +341,15 @@ def test_a_file_on_this_computer_can_be_renamed_and_made_with_the_buttons(qtbot:
     side = window.local_side
     side.go_to(str(tmp_path))
     pick(side.file_list, "old.txt")
-    answers = iter(["new.txt", "made"])
-
     def answer(*_args: object) -> str:
-        return next(answers)
+        return "new.txt"
+
+    def named(dialog: NewFolderDialog) -> int:
+        dialog.name.setText("made")
+        return NewFolderDialog.DialogCode.Accepted.value
 
     monkeypatch.setattr(window, "_ask_text", answer)
+    monkeypatch.setattr(NewFolderDialog, "exec", named)
     window.actions_by_name["local_rename"].trigger()
     assert (tmp_path / "new.txt").exists()
     window.actions_by_name["local_new"].trigger()

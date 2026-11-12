@@ -1,4 +1,4 @@
-"""The actions of the main window on this computer: open, edit, new folder, rename and delete to the Trash."""
+"""The actions of the main window on this computer: open, edit, rename and delete to the Trash."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -15,15 +15,16 @@ from chrono_ftp.ui.windowbase import NOT_OPENABLE_TEXT, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlocal.py 0.0.12"
+__version__ = "windowlocal.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: New folder moved to windowproperties.py, where it can set rights (FM-08)
 # v0.0.12: Names in message boxes are shown as written, never read as HTML, long ones shortened in their middle
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
 
 
 class LocalPart(WindowBase):
-    """The actions of the main window on this computer: open, edit, new folder, rename and delete to the Trash."""
+    """The actions of the main window on this computer: open, edit, rename and delete to the Trash."""
 
     def _on_this_computer(self, work: Callable[[], None]) -> None:
         try:
@@ -43,12 +44,6 @@ class LocalPart(WindowBase):
         paths = self.local_side.selected_paths()
         if len(paths) == 1:
             self._open_local_file(paths[0])
-
-    def _new_local_folder(self) -> None:
-        folder = self.local_side.folder
-        name = self._ask_text("New folder", "Name of the new folder")
-        if name:
-            self._on_this_computer(lambda: localfiles.make_folder(folder, name))
 
     def _rename_local(self) -> None:
         chosen = self.local_side.selected_entries()

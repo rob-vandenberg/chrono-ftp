@@ -1,4 +1,4 @@
-"""The actions of the main window on the server: new folder, rename, move, copy, delete, owner and permissions, find, synchronize and the terminal."""
+"""The actions of the main window on the server: rename, move, delete, find, synchronize and the terminal."""
 
 import os
 import subprocess
@@ -14,7 +14,6 @@ from chrono_ftp.core.errors import RemoteActionFailed
 from chrono_ftp.engine import commands
 from chrono_ftp.engine.compare import compare_folders, Found
 from chrono_ftp.engine.terminal import terminal_arguments
-from chrono_ftp.ui.changedialog import ChangeDialog
 from chrono_ftp.ui.comparedialog import CompareDialog, uploads
 from chrono_ftp.ui.searchdialog import SearchDialog
 from chrono_ftp.ui.session import Session
@@ -22,9 +21,11 @@ from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowserver.py 0.0.12"
+__version__ = "windowserver.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: New folder, copy, and owner and permissions moved to windowproperties.py (block FM); the terminal opens in the folder on the
+#          screen (FM-12)
 # v0.0.12: Synchronize does exactly the ticked rows: no overwrite question and no "only newer", with the dates, rights and resume of
 #          Settings; names in message boxes are shown as plain text, long ones shortened in their middle; a Synchronize whose connection
 #          was lost meanwhile queues nothing and says so in a box
@@ -32,19 +33,7 @@ __version__ = "windowserver.py 0.0.12"
 
 
 class ServerPart(WindowBase):
-    """The actions of the main window on the server: new folder, rename, move, copy, delete, owner and permissions, find, synchronize and the terminal."""
-
-    def new_folder(self) -> None:
-        screen = self._on_screen()
-        if screen is None:
-            return
-        session, folder, _chosen = screen
-        name = self._ask_text("New folder", "Name of the new folder")
-        if name and not safe_name(name):
-            QMessageBox.information(self, "New folder", box_text(NOT_A_NAME_TEXT))
-        elif name:
-            path = joined(folder, name)
-            self._ask(session, lambda remote: remote.make_folder(path), self._then_refresh(session))
+    """The actions of the main window on the server: rename, move, delete, find, synchronize and the terminal."""
 
     def rename(self) -> None:
         screen = self._on_screen()
@@ -91,17 +80,6 @@ class ServerPart(WindowBase):
 
         self._ask(session, work, self._gone_and_refresh(session, folder, finished), refresh_after_failure=True, on_failure=lambda: self._stop_editing(session, folder, finished))
 
-    def copy(self) -> None:
-        screen = self._on_screen()
-        if screen is None or len(screen[2]) != 1:
-            return
-        session, folder, chosen = screen
-        source = joined(folder, chosen[0].name)
-        target = self._ask_text("Copy", "Copy on the server to", f"{shown_name(source)}-copy")
-        if target:
-            line = commands.without_overwriting(target, commands.copy_command(source, target))
-            self._ask(session, lambda remote: commands.run_checked(remote, line), self._then_refresh(session), refresh_after_failure=True)
-
     def delete(self) -> None:
         screen = self._on_screen()
         if screen is None or not screen[2]:
@@ -119,27 +97,6 @@ class ServerPart(WindowBase):
                 finished.append(entry.name)
 
         self._ask(session, work, self._gone_and_refresh(session, folder, finished), refresh_after_failure=True, on_failure=lambda: self._stop_editing(session, folder, finished))
-
-    def change(self) -> None:
-        screen = self._on_screen()
-        if screen is None or not screen[2]:
-            return
-        session, folder, chosen = screen
-        paths = [joined(folder, entry.name) for entry in chosen]
-        dialog = ChangeDialog(commands.can_change_owner(session.capabilities), self)
-        if dialog.exec() != ChangeDialog.DialogCode.Accepted.value:
-            return
-        lines = dialog.commands_for(paths)
-        text = "This will run on the server:\n\n" + "\n".join(shown_name(line) for line in lines) + "\n\nGo ahead?"  # OR-6: the exact command, first
-        if QMessageBox.question(self, "Owner and permissions", box_text(text)) != QMessageBox.StandardButton.Yes:
-            return
-
-        def work(remote: RemoteConnection) -> None:
-            for line in lines:
-                commands.run_checked(remote, line)
-
-        self.status.showMessage("Running on the server")
-        self._ask(session, work, self._then_refresh(session), refresh_after_failure=True)
 
     def search(self) -> None:
         screen = self._on_screen()
@@ -210,4 +167,5 @@ class ServerPart(WindowBase):
     def open_terminal(self) -> None:
         session = self.current()
         if session is not None:
-            subprocess.Popen(terminal_arguments(session.connection, session.remote_folder), start_new_session=True)
+            folder = self.remote_side.folder or session.remote_folder  # the folder on the screen (FM-12)
+            subprocess.Popen(terminal_arguments(session.connection, folder), start_new_session=True)

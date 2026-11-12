@@ -12,7 +12,7 @@ from chrono_ftp.config.bookmarks import LOCAL
 from chrono_ftp.connections.base import Capabilities
 from chrono_ftp.core.appinfo import program_version
 from chrono_ftp.core.connection import FTP
-from chrono_ftp.engine import commands
+from chrono_ftp.engine import commands, localfiles
 from chrono_ftp.engine.terminal import terminal_available
 from chrono_ftp.transfers.queue import LINE, State, TransferQueue
 from chrono_ftp.ui import icons
@@ -31,15 +31,19 @@ from chrono_ftp.ui.windowlayout import LayoutPart
 from chrono_ftp.ui.windowlocal import LocalPart
 from chrono_ftp.ui.windownavigation import NavigationPart
 from chrono_ftp.ui.windowqueue import QueuePart, stoppable
+from chrono_ftp.ui.windowproperties import NO_FILE_MANAGER_TEXT, PropertiesPart
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowtabs import TabsPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.36"
+__version__ = "mainwindow.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: Block FM: Properties (F9), New File (Shift+F4), Link (Alt+F6) on both sides, Open in File Manager (Ctrl+Alt+E) on the left,
+#          Duplicate and Copy to (Shift+F5) on the right; what can't act is greyed with its reason as hover text (OR-20); whether
+#          Properties of either side is being prepared
 # v0.0.36: The title bar shows the version: Chrono FTP 0.0.36 (D-059)
 # v0.0.35: F1 opens the About window (D-059)
 # v0.0.34: Navigation (block FH): Sync Browsing and Location Profiles on the top bar; Ctrl+O, Ctrl+B, Ctrl+. and Ctrl+L on each side,
@@ -66,7 +70,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, TransfersPart, NavigationPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -91,6 +95,9 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.focused_side = LOCAL
         self.quiet_local = False
         self.bookmark_keys = []
+        self.local_worker = None
+        self.properties_waiting = False
+        self.local_properties_waiting = False
         self.tab_bar = ConnectionTabBar()
         self.new_tab_button = QToolButton()
         self.new_tab_button.setIcon(icons.icon("tab-new"))
@@ -207,7 +214,11 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             ("local_edit", "Edit", "document-edit", "F4", self._edit_local),
             ("local_delete", "Delete", "edit-delete", "Del", self._delete_local),
             ("local_rename", "Rename", "edit-rename", "F2", self._rename_local),
-            ("local_new", "New", "folder-new", "F7", self._new_local_folder),
+            ("local_new", "New Folder", "folder-new", "F7", self.new_local_folder),
+            ("local_new_file", "New File", "document-new", "Shift+F4", self.new_local_file),
+            ("local_link", "Link…", "edit-link", "Alt+F6", self.local_link),
+            ("local_properties", "Properties", "document-properties", "F9", self.local_properties),
+            ("local_explore", "Open in File Manager", "folder-open", "Ctrl+Alt+E", self.open_in_file_manager),
         ):
             self._button(local.actions_bar, name, text, icon_name, key, handler, local.file_list)
         for name, text, icon_name, key, handler in (
@@ -216,9 +227,12 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             ("delete", "Delete", "edit-delete", "Del", self.delete),
             ("rename", "Rename", "edit-rename", "F2", self.rename),
             ("move", "Move", "edit-cut", "", self.move_on_server),
-            ("copy", "Copy", "edit-copy", "", self.copy),
-            ("change", "Properties", "document-properties", "", self.change),
-            ("new_folder", "New", "folder-new", "F7", self.new_folder),
+            ("duplicate", "Duplicate…", "edit-copy", "", self.duplicate),
+            ("copy_to", "Copy To…", "edit-copy", "Shift+F5", self.copy_to),
+            ("properties", "Properties", "document-properties", "F9", self.remote_properties),
+            ("new_folder", "New Folder", "folder-new", "F7", self.new_remote_folder),
+            ("new_file", "New File", "document-new", "Shift+F4", self.new_remote_file),
+            ("link", "Link…", "edit-link", "Alt+F6", self.remote_link),
         ):
             self._button(remote.actions_bar, name, text, icon_name, key, handler, remote.file_list)
         bar = self.general_bar
@@ -286,6 +300,8 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             event.ignore()
             return
         self.bridge.close()  # from here on nothing happens in this window: what its threads still answer goes nowhere
+        if self.local_worker is not None:
+            self.local_worker.stop()
         self._save_sizes()
         if self.countdown is not None:
             self.countdown.reject()
@@ -304,10 +320,25 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         selected = bool(self.remote_side.selected_entries())
         one = len(self.remote_side.selected_entries()) == 1
         local_chosen = len(self.local_side.selected_entries())
+        chosen = self.remote_side.selected_entries()
+        on_ftp = session is not None and session.connection.protocol == FTP
+        why_no_copy = commands.why_no_copy(capabilities, chosen, on_ftp) if alive else ""
+        why_no_link = commands.why_no_link(capabilities, on_ftp) if alive else ""
+        file_manager = localfiles.file_manager_available()
+        reasons = {"duplicate": why_no_copy, "copy_to": why_no_copy, "link": why_no_link, "local_explore": "" if file_manager else NO_FILE_MANAGER_TEXT}
         enabled = {
             "upload": alive and bool(self.local_side.selected_paths()) and session is not None and bool(session.remote_folder),
             "download": alive and selected,
             "new_folder": alive,
+            "new_file": alive,
+            "link": alive and not why_no_link and len(chosen) <= 1,
+            "properties": alive and selected,
+            "duplicate": alive and one and not why_no_copy,
+            "copy_to": alive and selected and not why_no_copy,
+            "local_new_file": True,
+            "local_link": local_chosen <= 1,
+            "local_properties": local_chosen > 0,
+            "local_explore": file_manager,
             "rename": alive and one,
             "edit": alive and one and not self.remote_side.selected_entries()[0].is_folder,
             "local_new": True,
@@ -317,10 +348,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             "queue": True,
             "compare": alive and session is not None and bool(session.remote_folder),
             "move": alive and selected,
-            "copy": alive and one and commands.can_copy(capabilities),
             "delete": alive and selected,
-            # A selected link is left out: a recursive change would go through it into whatever it points at.
-            "change": alive and selected and not any(entry.is_link for entry in self.remote_side.selected_entries()) and (commands.can_change_mode(capabilities) or commands.can_change_owner(capabilities)),
             "search": alive and commands.can_search(capabilities),
             "terminal": alive and capabilities.shell and terminal_available(),
             "refresh": alive,
@@ -338,8 +366,9 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             "remote_other_side": alive and bool(self.remote_side.folder),
             "remote_type": alive and bool(self.remote_side.folder),
         }
-        on_ftp = session is not None and session.connection.protocol == FTP
         for name, action in self.actions_by_name.items():
             action.setEnabled(enabled[name])
             action.setVisible(not (on_ftp and name in SHELL_ACTIONS))  # D-027
+            if name in reasons:
+                action.setToolTip(reasons[name] if reasons[name] and not enabled[name] else action.text().removesuffix("…"))  # greyed with its reason (OR-20)
         self.update_queue_actions()

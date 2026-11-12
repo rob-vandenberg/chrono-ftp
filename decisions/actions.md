@@ -8,3 +8,7 @@
 6. [[D-027]] Actions that need a shell
 7. [[D-037]] Edit
 8. [[D-038]] Synchronize
+9. [[D-060]] Properties and rights
+10. [[D-061]] Links and copies on the server
+11. [[D-062]] My key and my password on the server
+12. [[D-063]] New file, the file manager and the terminal's folder

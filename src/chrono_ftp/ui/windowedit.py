@@ -16,9 +16,10 @@ from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES, NOT_OPENABLE_TEXT, WINDOW_
 from chrono_ftp.ui.plaintext import asked, box_text, fitting, told, wrapped
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowedit.py 0.0.13"
+__version__ = "windowedit.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: The edit of a server file is declared in the base, so a new empty file opens in it (FM-07)
 # v0.0.13: A save starts by itself also when queue items wait to be started; a paused save has not ended; a stopped or refused save
 #          retried or resumed from the queue is the edit's save again
 # v0.0.12: A save goes with the default transfer options, never asks the overwrite question, is never skipped as not newer, and never
@@ -81,6 +82,7 @@ class EditPart(WindowBase):
         if screen is not None and len(screen[2]) == 1 and not screen[2][0].is_folder:
             self._edit_entry(screen[0], screen[1], screen[2][0].name)
 
+    @override
     def _edit_entry(self, session: Session, folder: str, name: str) -> None:
         if shown_name(name) != name:
             QMessageBox.information(self, WINDOW_TITLE, box_text(NOT_OPENABLE_TEXT))

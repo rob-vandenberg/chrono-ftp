@@ -15,14 +15,16 @@ from pathlib import Path
 from typing import BinaryIO, cast, override
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
+from chrono_ftp.connections.base import HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, NoMoreLogins, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.13"
+__version__ = "ftp.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: A file is copied on the server itself with SITE CPFR and CPTO, where SITE HELP offers both (FM-06); never onto a name
+#          that is taken; a copy that failed halfway is removed, and where it can't be, the message says so
 # v0.0.13: The speed limit is asked again for every block, so a new limit takes effect at once; its pauses are short steps, so a stop
 #          is never kept waiting; a passing refusal of a new connection (421: too many) is told apart from a server that can't be reached;
 #          after a broken-off transfer the new login comes only when the connection is next needed, so a stop ends at once, and a server
@@ -292,7 +294,8 @@ class FtpConnection(RemoteConnection):
             site = session.sendcmd("SITE HELP").upper()
         except ftplib.Error:
             site = ""
-        return Capabilities(resume="REST" in features, timestamps="MFMT" in features, rights="CHMOD" in site.split())
+        offered = site.split()
+        return Capabilities(resume="REST" in features, timestamps="MFMT" in features, rights="CHMOD" in offered, server_copy="CPFR" in offered and "CPTO" in offered)
 
     @override
     def close(self) -> None:
@@ -470,6 +473,29 @@ class FtpConnection(RemoteConnection):
     @override
     def set_rights(self, path: str, mode: str) -> None:
         self._do(("voidcmd", f"SITE CHMOD {mode} {path}"))
+
+    @override
+    def copy_file(self, source: str, target: str) -> None:
+        """SITE CPFR names the original and SITE CPTO the copy; the server copies it itself, nothing travels through this computer. RNFR
+        asks right before whether the name is taken, as a copy never replaces anything."""
+        if not self.capabilities.server_copy:
+            raise RemoteActionFailed(NO_COPY_TEXT)
+        if self._exists(target):
+            raise NameTaken(NAME_TAKEN_TEXT)
+        try:
+            self._do(("sendcmd", f"SITE CPFR {source}"), ("voidcmd", f"SITE CPTO {target}"))
+        except RemoteActionFailed as error:
+            self._remove_half_copy(target, error)  # the name was free before: whatever has it now is this copy, unfinished
+            raise
+        self._keep(target, RemoteEntry(target.rsplit("/", 1)[-1], False, size_known=False))
+
+    def _remove_half_copy(self, target: str, error: RemoteActionFailed) -> None:
+        try:
+            if self._exists(target):
+                self._do(("delete", target))
+        except RemoteActionFailed as problem:
+            text = f"{error} {HALF_COPY_LEFT_TEXT.format(path=target)}"
+            raise (ConnectionLost(text) if isinstance(problem, ConnectionLost) or isinstance(error, ConnectionLost) else RemoteActionFailed(text)) from error
 
     @override
     def set_time(self, path: str, modified: float) -> None:

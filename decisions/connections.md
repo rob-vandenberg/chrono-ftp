@@ -8,3 +8,5 @@
 6. [[D-036]] Names that are not valid UTF-8
 7. [[D-040]] The login window
 8. [[D-058]] Starting folders
+9. [[D-061]] Links and copies on the server
+10. [[D-062]] My key and my password on the server

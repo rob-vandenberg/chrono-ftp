@@ -1,11 +1,12 @@
 import asyncio
 import os
 import re
+import shutil
 import socket
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Coroutine, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast, override
@@ -19,9 +20,12 @@ from pyftpdlib.handlers import DTPHandler, FTPHandler, TLS_FTPHandler
 from pyftpdlib.servers import FTPServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeservers.py 0.0.13"
+__version__ = "fakeservers.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: An SSH server whose commands a test answers itself, so nothing runs on this computer: a stand-in for passwd that asks as
+#          the real one does (FM-10), or never says it is done, or drops the line after the new password; an FTP server that copies a file itself with SITE CPFR and CPTO (FM-06),
+#          or stops halfway
 # v0.0.13: The SSH server leaves nothing behind: its event loop and its thread end with its block, or at the end of the test when a
 #          window still held a connection to it then (end_the_servers);
 #          an FTP server that takes only so many logins at once, as servers that limit them do (FC-01); one that answers a download the
@@ -76,9 +80,13 @@ CLOSE_SECONDS: float = 5.0  # the end of a fake server never waits longer than t
 ENDING: list[Callable[[], None]] = []  # the ends of fake SSH servers that still had a connection open when their block ended
 
 
+Commands = Callable[[asyncssh.SSHServerProcess[str]], Coroutine[object, object, None]]
+
+
 @contextmanager
-def ssh_server(root: Path, shell: bool = True) -> Generator[SshServer]:
-    """Real SSH and SFTP on a free local port; every SFTP path is inside root. At the end of its block it takes no new connection; once
+def ssh_server(root: Path, shell: bool = True, commands: Commands | None = None) -> Generator[SshServer]:
+    """Real SSH and SFTP on a free local port; every SFTP path is inside root. commands: the test answers every command itself, and
+    nothing runs on this computer (the plain shell runs its commands here, on real paths). At the end of its block it takes no new connection; once
     none is open any more (else at the end of the test, end_the_servers) it closes its event loop and its thread: nothing stays behind."""
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
@@ -96,7 +104,7 @@ def ssh_server(root: Path, shell: bool = True) -> Generator[SshServer]:
             super().__init__(channel, chroot=str(root).encode())
 
     async def start() -> asyncssh.SSHAcceptor:
-        return await asyncssh.listen("127.0.0.1", 0, server_host_keys=[key], server_factory=Server, sftp_factory=Sftp, process_factory=_shell if shell else _no_shell, encoding="utf-8")
+        return await asyncssh.listen("127.0.0.1", 0, server_host_keys=[key], server_factory=Server, sftp_factory=Sftp, process_factory=commands or (_shell if shell else _no_shell), encoding="utf-8")
 
     acceptor = asyncio.run_coroutine_threadsafe(start(), loop).result(10)
     try:
@@ -133,6 +141,67 @@ def ssh_server(root: Path, shell: bool = True) -> Generator[SshServer]:
             finish()
 
 
+PROBE_ANSWER: str = "chrono-ftp-probe\nLinux\n1000\ntool:passwd\n"  # a shell with passwd, as the probe of SshConnection reads it
+
+
+class Passwd:
+    """A stand-in for passwd that asks as the real one does on Linux, without echo, and keeps the password of the account here. refuse:
+    the first new password is refused as too simple, and asked again; as_root: no current password is asked. Nothing runs on this
+    computer: the probe of the program and passwd are answered, any other command is refused."""
+
+    def __init__(self, password: str, refuse: bool = False, as_root: bool = False, echo: bool = False, silent_end: bool = False, drop_at_end: bool = False) -> None:
+        self.password: str = password
+        self.drop_at_end: bool = drop_at_end  # the line drops right after the new password was typed twice
+        self.silent_end: bool = silent_end  # after its last word it closes its output but never says it is done
+        self.refuse: bool = refuse
+        self.as_root: bool = as_root
+        self.echo: bool = echo
+        self.commands: list[str] = []
+
+    async def __call__(self, process: asyncssh.SSHServerProcess[str]) -> None:
+        command = process.command or ""
+        self.commands.append(command)
+        if command.startswith("echo chrono-ftp-probe"):
+            process.stdout.write(PROBE_ANSWER)
+            process.exit(0)
+            return
+        if command != "env LC_ALL=C passwd":
+            process.stderr.write("Not here.\n")
+            process.exit(127)
+            return
+        set_echo = cast(Callable[[bool], None] | None, getattr(process.channel, "set_echo", None))  # the line editor of a terminal has it
+        if set_echo is not None:
+            set_echo(self.echo)
+        process.stdout.write("Changing password for anna.\n")
+        if not self.as_root:
+            process.stdout.write("Current password: ")
+            if (await process.stdin.readline()).rstrip("\r\n") != self.password:
+                process.stdout.write("\npasswd: Authentication token manipulation error\npasswd: password unchanged\n")
+                process.exit(10)
+                return
+        process.stdout.write("New password: ")
+        new = (await process.stdin.readline()).rstrip("\r\n")
+        if self.refuse:
+            process.stdout.write("\nBAD PASSWORD: The password is shorter than 8 characters\nNew password: ")
+            new = (await process.stdin.readline()).rstrip("\r\n")
+        process.stdout.write("\nRetype new password: ")
+        again = (await process.stdin.readline()).rstrip("\r\n")
+        if self.drop_at_end:
+            self.password = new if new == again else self.password  # it took the new one, and then the line went
+            process.channel.get_connection().abort()
+            return
+        if new != again:
+            process.stdout.write("\nSorry, passwords do not match.\npasswd: Authentication token manipulation error\npasswd: password unchanged\n")
+            process.exit(10)
+            return
+        self.password = new
+        process.stdout.write("\npasswd: password updated successfully\n")
+        if self.silent_end:
+            process.stdout.write_eof()
+            await asyncio.sleep(CLOSE_SECONDS * 6)  # ended by the end of the server
+        process.exit(0)
+
+
 def end_the_servers() -> None:
     """When a test is over (conftest): every fake SSH server whose block ended while a connection to it was still open ends now, after
     the window of the test closed its connections: the connections it still has, then its event loop and its thread."""
@@ -145,7 +214,7 @@ NOT_AS_ROOT: pytest.MarkDecorator = pytest.mark.skipif(AS_ROOT, reason="as root 
 
 
 @contextmanager
-def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False, without: tuple[str, ...] = (), size_reply: str = "", drops_at_feat: bool = False, refuses_restart: bool = False, drops_data_after: int = 0, write_only: tuple[str, ...] = (), refuses_store: tuple[tuple[str, str], ...] = (), sizes_anywhere: bool = False, links_as_links: bool = False, full_modes: bool = False, noop_heard: Callable[[], None] | None = None, drops_at_noop: bool = False, command_heard: Callable[[str], None] | None = None, most_logins: int = 0, early_end_reply: str = "") -> Generator[int]:
+def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False, without: tuple[str, ...] = (), size_reply: str = "", drops_at_feat: bool = False, refuses_restart: bool = False, drops_data_after: int = 0, write_only: tuple[str, ...] = (), refuses_store: tuple[tuple[str, str], ...] = (), sizes_anywhere: bool = False, links_as_links: bool = False, full_modes: bool = False, noop_heard: Callable[[], None] | None = None, drops_at_noop: bool = False, command_heard: Callable[[str], None] | None = None, most_logins: int = 0, early_end_reply: str = "", copies: bool | str = False) -> Generator[int]:
     """Real FTP on a free local port; with a certificate it offers TLS. trusted: the person already said yes to plain FTP on this port.
     without: commands this server does not know, so it does not offer them in FEAT or SITE HELP either. size_reply: what it answers to
     SIZE instead of the size. drops_at_feat: the line drops when the client asks what the server can do. refuses_restart: it offers
@@ -156,7 +225,9 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
     and date, as some servers do. full_modes: unix.mode holds the kind as well as the rights (0010644 for a pipe). noop_heard: called at every NOOP. drops_at_noop: the first NOOP closes the connection, as a server
     that closed an idle connection all the same. command_heard: called with the name of every command. most_logins: it takes no more
     connections at once than this (0: any number); one more is answered with 421 and closed, as servers that limit them do.
-    early_end_reply: what it answers when the client ends a download's data connection before the end (instead of 426)."""
+    early_end_reply: what it answers when the client ends a download's data connection before the end (instead of 426). copies: it
+    copies a file itself with SITE CPFR and CPTO, and says so in SITE HELP; "halfway": each copy stops after its first byte, as on a full
+    disk, and leaves that much behind."""
     authorizer = DummyAuthorizer()
     authorizer.add_user(USER, PASSWORD, str(root), perm=rights)
     for folder in write_only:
@@ -265,6 +336,23 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
                 return
             super().ftp_NOOP(line)
 
+        def ftp_SITE_CPFR(self, path: str) -> None:
+            self.copy_from = cast(AbstractedFS, self.fs).ftp2fs(path)
+            self.respond("350 File or directory exists, ready for destination name" if os.path.isfile(self.copy_from) else "550 No such file")
+
+        def ftp_SITE_CPTO(self, path: str) -> None:
+            source = getattr(self, "copy_from", "")
+            target = cast(AbstractedFS, self.fs).ftp2fs(path)
+            if not source or os.path.lexists(target) or not cast(AbstractedFS, self.fs).validpath(target):
+                self.respond("550 Copy refused")
+                return
+            if copies == "halfway":
+                Path(target).write_bytes(Path(source).read_bytes()[:1])  # the disk filled up after the first byte
+                self.respond("552 No room left on the device")
+                return
+            shutil.copyfile(source, target)
+            self.respond("250 Copy successful")
+
         @override
         def ftp_FEAT(self, line: str) -> None:
             if drops_at_feat:
@@ -289,6 +377,8 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
         Handler.dtp_handler = EarlyEnd
     known = (FTPHandler if certificate is None else TLS_FTPHandler).proto_cmds
     handler.proto_cmds = {name: ({**details, "perm": None} if sizes_anywhere and name == "SIZE" else details) for name, details in known.items() if name not in without}
+    if copies:
+        handler.proto_cmds = {**handler.proto_cmds, **{name: {"perm": None, "auth": True, "arg": True, "help": f"Syntax: {name} <SP> path"} for name in ("SITE CPFR", "SITE CPTO")}}
     if links_as_links:
         handler.abstracted_fs = LinksAsLinks
     if full_modes:

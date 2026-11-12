@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.34; sections 3 to 5 date from 0.0.5). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.37; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -49,7 +49,7 @@ Each connection reports what it can do after connecting (D-016): the system, the
 
 1. Recursive owner, group and permissions: one `chown -R` or `chmod -R` on the server, after the exact command is shown and confirmed (D-012, D-013).
 2. Rename, move, copy, delete and search: `mv`, `cp -a`, `find` and the like on the server (D-015).
-3. Without a shell: rename, move and delete through the protocol, which is slower; copy, search, the recursive changes, the terminal and the `sha256sum` step of compare are not available (D-027). Comparing by size and date works on every connection (D-020).
+3. Without a shell: rename, move, delete and rights through the protocol, which is slower; a copy of a file through the protocol where the server offers it (SFTP copy-data, FTP SITE CPFR and CPTO, D-061); search, the recursive changes, the terminal, the password and the `sha256sum` step of compare are not available (D-027). Comparing by size and date works on every connection (D-020).
 4. Every path in a shell command goes through `shlex.quote`.
 
 ## 6. The window
@@ -72,7 +72,8 @@ Each connection reports what it can do after connecting (D-016): the system, the
    9. `ui/windowlocal.py`: actions on this computer;
    10. `ui/windowserver.py`: actions on the server;
    11. `ui/windowtransfers.py`: upload, download, drag and drop, the speed limit and stop;
-   12. `ui/windownavigation.py`: navigation (block FH): Ctrl+L, Ctrl+O, Ctrl+B and Ctrl+. on the focused side, the bookmark menus and keys, location profiles, synchronized browsing and the last folders written back.
+   12. `ui/windownavigation.py`: navigation (block FH): Ctrl+L, Ctrl+O, Ctrl+B and Ctrl+. on the focused side, the bookmark menus and keys, location profiles, synchronized browsing and the last folders written back;
+   13. `ui/windowproperties.py`: Properties and server actions (block FM): Properties on both sides, new folders with rights, new files, links, Duplicate and Copy To, my key and my password on the server, the file manager.
 8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).
 
 ## 7. Transfers (block FB, version 0.0.12)
@@ -120,3 +121,18 @@ The modules of navigation, one line each:
 5. `engine/browsing.py`: the folder on the other side that matches a step of one side (D-057).
 6. `ui/windownavigation.py`: the part of the main window that ties them together; a step on a server goes through the tab's own thread like every other request (D-019, D-057).
 7. `core/connection.py`, `config/connections.py`, `ui/connectionlist.py`: the local starting folder and "Remember the last folders" of a connection (D-058).
+
+## 10. Properties and server actions (block FM, version 0.0.37)
+
+The modules of block FM, one line each:
+
+1. `engine/rights.py`: the twelve boxes of the rights editor, each on, off or "leave as it is"; octal both ways, one file's new rights, and the `chmod` that sets exactly the boxes that are set, with `X` for folders that get read (D-060).
+2. `engine/properties.py`: one view of several files, where a field that differs says so; the names of users and groups from the server's own lists, or from the names seen in listings; a typed name checked (D-060).
+3. `engine/commands.py`: also the names of copies from a pattern, a copy on the server through the shell or the protocol, links and another target for a link, and why an action can't be done, for its hover text (D-061).
+4. `engine/localfiles.py`: also Properties on this computer (owner, group, rights, everything inside without following links), new files, links and the file manager (D-060, D-063).
+5. `engine/keyinstall.py`: a public key read and checked, and added to `~/.ssh/authorized_keys` over SFTP alone, with the rights the SSH server accepts (D-062).
+6. `connections/passwordchange.py`: the talk with the server's `passwd` and what of its answer is shown, never a password; `SshConnection.change_password` runs it in a terminal of its own (D-062).
+7. `connections/base.py`, `ssh.py`, `ftp.py`: what a connection can do without a shell (`server_copy`, `symlinks`, `hardlinks`), links, a copy on the server and the password, each raising its calm reason where it can't (D-061, D-062).
+8. `engine/terminal.py`: the terminal opens in the folder on the screen, and stays open in the home folder when that folder can't be entered (D-063).
+9. `ui/rightseditor.py`, `ui/propertiesdialog.py`, `ui/actiondialogs.py`: the rights editor, the Properties window, and the windows of a link, Copy To, a new folder with rights and a new password.
+10. `ui/windowproperties.py`: the part of the main window that ties them together; every server call goes through the tab's own thread, and long work on this computer through a thread of its own, so the window never freezes (D-019).

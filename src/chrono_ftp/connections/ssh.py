@@ -13,14 +13,22 @@ from typing import BinaryIO, cast, override
 import asyncssh
 
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
+from chrono_ftp.connections.passwordchange import PASSWD_COMMAND, AskedTooOften, PasswordAnswer, PasswordTalk, shown_answer
+from chrono_ftp.connections.base import HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.13"
+__version__ = "ssh.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: Symbolic and hard links and a copy of a file on the server itself through SFTP, where the server offers them (copy-data,
+#          hardlink@openssh.com); the password changed by the server's passwd in a terminal of its own, never written anywhere;
+#          whether passwd is there is detected (FM-05, FM-06, FM-10); posix-rename and ln detected, for a link led elsewhere in one step;
+#          a copy that fails removes the half copy it made; a name is taken also by a link that leads nowhere (lstat); passwd that
+#          never says it is done, or a talk that breaks off, gives a calm and true message, never "no shell"; a line lost after both new
+#          passwords were typed says the server may have taken the new one; a command that should answer at once is ended after a few
+#          seconds, and the connection goes on; passwd gets 60 seconds per answer
 # v0.0.13: The speed limit is asked again for every block, also in a copy that started without one, so a new limit takes effect at
 #          once; its pauses are short steps, so a stop is never kept waiting; one range of a file and another login of its own, for a file
 #          split over several connections (FC-05)
@@ -54,7 +62,7 @@ HIGHEST_TIME: int = 2**32  # SFTP carries a date as an unsigned 32-bit number of
 IN_FLIGHT_BYTES: int = 4 * 1024 * 1024  # as asyncssh's own copy: about this much travels at once, in 16 to 128 requests
 FEWEST_REQUESTS: int = 16
 MOST_REQUESTS: int = 128
-TOOLS: tuple[str, ...] = ("rsync", "find", "chown", "chmod", "cp", "mv", "rm", "sha256sum")
+TOOLS: tuple[str, ...] = ("rsync", "find", "chown", "chmod", "cp", "mv", "rm", "sha256sum", "passwd", "ln")
 PROBE_MARK: str = "chrono-ftp-probe"
 PROBE: str = f"echo {PROBE_MARK}; uname -s; id -u; for tool in " + " ".join(TOOLS) + "; do command -v $tool >/dev/null 2>&1 && echo tool:$tool; done; exit 0"
 PROBE_SECONDS: float = 15.0
@@ -66,6 +74,14 @@ LOGIN_TEXT: str = "The server did not accept this login. Please check the user, 
 NOT_CUT_TEXT: str = "The server would not cut the unfinished copy back to where it was to be continued."
 STOPPED_TAKING_TEXT: str = "The server stopped this file ({reply}) and does not say why; perhaps it has no room. The other files go on; you can send this one again later."
 LOST_TEXT: str = "The connection to the server was lost."
+SLOW_COMMAND_TEXT: str = "it did not answer within {seconds} seconds"
+PASSWORD_READ_BYTES: int = 4096
+PASSWORD_ANSWER_SECONDS: float = 60.0  # per answer of passwd: a slow PAM or LDAP check may take a while
+PASSWORD_REFUSED_TEXT: str = "The server did not change the password and gave no reason. The old password still works."
+PASSWORD_NO_ANSWER_TEXT: str = "The server did not answer in time, so the password was left as it was."
+PASSWORD_NO_SESSION_TEXT: str = "The server opened no session to run passwd, so the password was left as it was."
+PASSWORD_FAILED_TEXT: str = "The talk with passwd broke off ({reason}), so the server did not confirm a change; your stored password was left as it was."
+PASSWORD_UNKNOWN_TEXT: str = "The server did not say whether the password changed, and it may have taken the new one. Your stored password was left as it was; if the old password is refused at the next login, type the new one there."
 LOST_ERRORS: tuple[type[BaseException], ...] = (asyncssh.ConnectionLost, asyncssh.SFTPConnectionLost, asyncssh.SFTPNoConnection, ConnectionError)
 
 
@@ -210,8 +226,13 @@ class SshConnection(RemoteConnection):
             raise LoginRefused(LOGIN_TEXT) from error
         except (OSError, asyncssh.Error, RemoteActionFailed) as error:
             raise ConnectionFailed(NOT_REACHED_TEXT) from error
-        durable = bool(getattr(getattr(self._sftp, "_handler", None), "_supports_fsync", False))  # asyncssh learns from the server's hello whether it offers fsync, and tells it only here
-        self.capabilities = replace(self._detect(), resume=True, timestamps=True, rights=True, cut=True, durable=durable)  # SFTP itself can do these, with or without a shell
+        handler = getattr(self._sftp, "_handler", None)  # asyncssh learns from the server's hello what it offers, and tells some only here
+        durable = bool(getattr(handler, "_supports_fsync", False))
+        hardlinks = bool(getattr(handler, "_supports_hardlink", False)) or self._sftp_now().version >= 6
+        copies = bool(getattr(handler, "_supports_copy_data", False))
+        atomic = bool(getattr(handler, "_supports_posix_rename", False))
+        # SFTP itself can do these, with or without a shell
+        self.capabilities = replace(self._detect(), resume=True, timestamps=True, rights=True, cut=True, durable=durable, server_copy=copies, symlinks=True, hardlinks=hardlinks, atomic_rename=atomic)
 
     def _detect(self) -> Capabilities:
         try:
@@ -699,6 +720,19 @@ class SshConnection(RemoteConnection):
             return None
 
     @override
+    def name_taken(self, path: str) -> bool:
+        """Whether anything has this name: the name itself (lstat), so a link that leads nowhere has it too. A refusal to tell is raised."""
+        try:
+            self._sftp_call(self._sftp_now().lstat(path))
+        except ConnectionLost:
+            raise
+        except RemoteActionFailed as error:
+            if isinstance(error.__cause__, asyncssh.SFTPNoSuchFile):
+                return False
+            raise
+        return True
+
+    @override
     def details_or_refusal(self, path: str) -> RemoteEntry | None:
         """None only where the server says there is no such file; a refusal (no permission to look) is raised as one."""
         try:
@@ -747,6 +781,133 @@ class SshConnection(RemoteConnection):
     @override
     def run(self, command: str) -> CommandResult:
         return self._run(command, COMMAND_SECONDS)
+
+    @override
+    def make_link(self, target: str, path: str, hard: bool = False) -> None:
+        sftp = self._sftp_now()
+        if self.name_taken(path):
+            raise NameTaken(NAME_TAKEN_TEXT)  # a link never replaces what has its name
+        if hard:
+            if not self.capabilities.hardlinks:
+                raise RemoteActionFailed(NO_HARD_LINKS_TEXT)
+            self._sftp_call(sftp.link(target, path))
+        else:
+            self._sftp_call(sftp.symlink(target, path))
+
+    @override
+    def replace_atomically(self, source: str, target: str) -> None:
+        if not self.capabilities.atomic_rename:
+            raise RemoteActionFailed(NO_ATOMIC_TEXT)
+        self._sftp_call(self._sftp_now().posix_rename(source, target))
+
+    @override
+    def copy_file(self, source: str, target: str) -> None:
+        """The server copies the file itself (copy-data): nothing travels through this computer. The copy is made only where nothing is,
+        and keeps the rights of the original."""
+        if not self.capabilities.server_copy:
+            raise RemoteActionFailed(NO_COPY_TEXT)
+        sftp = self._sftp_now()
+
+        made_here: list[bool] = []  # the copy this call made itself: only that one is removed after a failure
+
+        async def copy() -> None:
+            async with await sftp.open(source, "rb", block_size=0) as original:
+                rights = (await original.stat()).permissions
+                async with await _opened(sftp, target, "xb") as made:
+                    made_here.append(True)
+                    await sftp.remote_copy(original, made)
+            if rights is not None:
+                try:
+                    await sftp.chmod(target, rights & 0o7777)
+                except asyncssh.SFTPError:
+                    pass  # the copy is whole; only the rights of the original could not be given to it
+
+        try:
+            self._run_copy(copy())
+        except CreateRefused as refused:
+            if self.name_taken(target):
+                raise NameTaken(NAME_TAKEN_TEXT) from refused.__cause__
+            raise RemoteActionFailed(str(refused.__cause__) or "The server refused to make the copy.") from refused.__cause__
+        except RemoteActionFailed as error:
+            if made_here:
+                self._remove_half_copy(target, error)
+            raise
+
+    def _remove_half_copy(self, target: str, error: RemoteActionFailed) -> None:
+        """A copy that failed halfway goes again; when it can't, because the connection is gone, the message says it is still there."""
+        try:
+            self._sftp_call(self._sftp_now().remove(target))
+        except RemoteActionFailed as problem:
+            text = f"{error} {HALF_COPY_LEFT_TEXT.format(path=target)}"
+            raise (ConnectionLost(text) if isinstance(problem, ConnectionLost) or isinstance(error, ConnectionLost) else RemoteActionFailed(text)) from error
+
+    @override
+    def change_password(self, old: str, new: str) -> PasswordAnswer:
+        """passwd asks in a terminal of its own; each question is answered as it comes, and the talk ends when passwd asks more than it
+        does when all goes well. The passwords go to passwd only: they are never in what is returned, nor written anywhere."""
+        if not self.capabilities.has("passwd"):
+            raise RemoteActionFailed(NO_PASSWORD_TEXT)
+        talk = PasswordTalk(old, new)
+
+        async def go() -> PasswordAnswer:
+            process = await self._client_now().create_process(PASSWD_COMMAND, term_type="dumb", encoding="utf-8", errors="replace")
+            heard: list[str] = []
+            screen = ""
+            try:
+                while True:
+                    chunk = await asyncio.wait_for(process.stdout.read(PASSWORD_READ_BYTES), PASSWORD_ANSWER_SECONDS)
+                    if not chunk:
+                        break
+                    heard.append(chunk)
+                    screen += chunk
+                    answer = talk.reply(screen)
+                    if answer is not None:
+                        process.stdin.write(answer + "\n")
+                        screen = ""
+            except AskedTooOften:
+                process.terminate()
+                return PasswordAnswer(False, shown_answer("".join(heard), (old, new)) or PASSWORD_REFUSED_TEXT)
+            except TimeoutError:
+                process.terminate()
+                unknown = PASSWORD_UNKNOWN_TEXT if talk.new_given == 2 else PASSWORD_NO_ANSWER_TEXT  # both asked: it may have changed
+                return PasswordAnswer(False, shown_answer("".join(heard), (old, new)) or unknown)
+            try:
+                done = await asyncio.wait_for(process.wait(), PASSWORD_ANSWER_SECONDS)
+            except TimeoutError:
+                process.terminate()
+                return PasswordAnswer(False, PASSWORD_UNKNOWN_TEXT)  # it never said it was done: the stored password stays
+            text = shown_answer("".join(heard), (old, new))
+            return PasswordAnswer(done.exit_status == 0, text if text or done.exit_status == 0 else PASSWORD_REFUSED_TEXT)
+
+        try:
+            return self._await(go(), PASSWORD_ANSWER_SECONDS * 4)
+        except (ConnectionLost, *LOST_ERRORS) as error:
+            # both new passwords were typed: the server may have taken the new one before the line went
+            lost = str(error) if isinstance(error, ConnectionLost) else LOST_TEXT
+            raise ConnectionLost(f"{lost} {PASSWORD_UNKNOWN_TEXT}" if talk.new_given == 2 else lost) from error
+        except asyncssh.ChannelOpenError as error:
+            raise RemoteActionFailed(PASSWORD_NO_SESSION_TEXT) from error  # the server opened no session for passwd: no shell here
+        except (asyncssh.Error, OSError) as error:
+            raise RemoteActionFailed(PASSWORD_FAILED_TEXT.format(reason=str(error) or type(error).__name__)) from error
+
+    @override
+    def run_briefly(self, command: str, seconds: float) -> CommandResult:
+        """The command is ended on the server after seconds, and the connection goes on: a slow directory service never holds the
+        tab's thread."""
+
+        async def go() -> CommandResult:
+            try:
+                result = await asyncio.wait_for(self._client_now().run(sendable(command), check=False, stdin=asyncssh.DEVNULL, encoding="utf-8", errors="surrogateescape"), seconds)
+            except TimeoutError as error:
+                raise RemoteActionFailed(SLOW_COMMAND_TEXT.format(seconds=round(seconds))) from error
+            return CommandResult(result.exit_status if result.exit_status is not None else -1, _text(cast("bytes | str | None", result.stdout)), _text(cast("bytes | str | None", result.stderr)))
+
+        try:
+            return self._await(go(), seconds + CLOSE_SECONDS)
+        except LOST_ERRORS as error:
+            raise ConnectionLost(LOST_TEXT) from error
+        except (asyncssh.Error, OSError) as error:
+            raise RemoteActionFailed(str(error) or "The server refused this command.") from error
 
     def _run(self, command: str, seconds: float) -> CommandResult:
         async def go() -> CommandResult:

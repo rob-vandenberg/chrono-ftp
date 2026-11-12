@@ -12,12 +12,19 @@ from chrono_ftp.engine import commands
 from chrono_ftp.engine.jobs import Worker
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine.py 0.0.13"
+__version__ = "test_engine.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: Owner and group names of directories are accepted; only a hyphen first, a colon and control characters are refused
 # v0.0.13: Scripted takes a speed limit that may be asked again for every block
 # v0.0.12: Scripted takes the offset, append and exclusive of a transfer, and knows the size of what was uploaded
 # v0.0.5: Initial
+
+
+def test_any_owner_name_stays_one_quoted_argument() -> None:
+    import shlex
+
+    assert shlex.split(commands.owner_command(["/srv"], "domain users", "$(id)", False)) == ["chown", "--", "domain users:$(id)", "/srv"]
 
 
 def test_a_recursive_change_is_one_command_with_every_path_quoted() -> None:
@@ -38,7 +45,7 @@ def test_a_hostile_file_name_stays_one_argument(path: str, tmp_path: Path) -> No
     assert shlex.split(commands.search_command(path, path))[3] == path
 
 
-@pytest.mark.parametrize("name,good", [("www-data", True), ("web.user", True), ("_apt", True), ("-R", False), ("a b", False), ("a;b", False), ("", False), ("$(id)", False)])
+@pytest.mark.parametrize("name,good", [("www-data", True), ("web.user", True), ("_apt", True), ("user@corp.example", True), ("DOMAIN\\user", True), ("domain users", True), ("$(id)", True), ("-R", False), ("", False), ("a:b", False), ("a\nb", False), ("a\0b", False), ("a\x7fb", False)])
 def test_owner_names_are_checked(name: str, good: bool) -> None:
     assert commands.valid_name(name) is good
 

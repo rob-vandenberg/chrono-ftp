@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.36: the title bar shows the version, "Chrono FTP 0.0.36" (D-059).
+Version 0.0.37: block FM, Properties and server actions. Properties (F9) on both sides and for several files: what they are, owner, group and rights, a field that differs says so; a rights editor with set user, set group and sticky, an octal field and Copy, where a box the files differ in starts as "leave as it is", and only the boxes touched change, also for everything inside, where folders get Run only for Read switched on and only when chosen; on the server one command line with exactly the boxes set, shown and confirmed first, for everything inside through `find` (files first, folders deepest first, never `X`), with Run for folders where they get Read, the same as on this computer, and without a shell the rights file by file through the protocol; owner and group suggested from the server's own lists or from the listing, any name of valid form accepted (the server refuses an unknown one in its own words); without a shell and unknown rights, rights are set only as a whole; the New Folder window can set rights (D-060). Link… (Alt+F6) makes a symbolic or hard link on both sides and leads a selected link elsewhere without ever losing it, greyed on FTP; Duplicate… and Copy To… (Shift+F5, with a name pattern) copy on the server itself, with its shell or, without one, through SFTP copy-data or FTP SITE CPFR and CPTO where offered, greyed with the reason otherwise; Copy To goes on after a refused item and says what was and was not copied, and reads ~ and relative folders; a link that leads nowhere is a taken name; a copy that fails halfway is removed again, and one that can't be is said; every action whose connection was lost while its window was open says nothing was changed (D-061, which changes D-027). The menu of a tab installs my public key over SFTP alone and changes the password through the server's passwd, the stored password replaced (D-062). New File (Shift+F4) makes an empty file and opens it, on the server through Edit; Open in File Manager (Ctrl+Alt+E) on the left; the terminal opens in the folder shown and stays open where that folder can't be entered (D-063).
+
+Before that, version 0.0.36: the title bar shows the version, "Chrono FTP 0.0.36" (D-059).
 
 Before that, version 0.0.35: F1 opens the About window, with the program icon, the version, what Chrono FTP is and its license (D-059).
 
@@ -48,14 +50,14 @@ Tested by the owner on real work: the connection and terminal colours, the start
 
 ## Next task
 
-Block FM of the private `FEATURES.md`: Properties and server actions, the next in the order of D-054.
+Block FP of the private `FEATURES.md`: program-wide (preferences, a session log, a server information window, cleaning up stored data, an update check; the About window is done since 0.0.35), the next in the order of D-054.
 
 ## Open questions
 
 1. Is `rsync` over SSH fast enough against FTP? Waits for the test on a real FTP server.
 2. [Not tested] An FTP connection may need a second login to browse during a transfer.
 3. Right after a folder is made, `setRootPath` once gave an invalid index in a probe. The tree of the left side still uses that call.
-4. Known limits: over FTP a link can't be resolved, so a stop while writing through one leaves a half file; the folder tree of the left side can't show a folder whose name is not valid UTF-8, though the list can; a server file can't be dragged to a file manager; Properties works only on the right side; a name that is not valid UTF-8 can't be opened in another program or sent to the Trash.
+4. Known limits: over FTP a link can't be resolved, so a stop while writing through one leaves a half file; the folder tree of the left side can't show a folder whose name is not valid UTF-8, though the list can; a server file can't be dragged to a file manager; a name that is not valid UTF-8 can't be opened in another program or sent to the Trash.
 5. Known limits of the transfers (0.0.13):
    1. On FTP, a file that appears between the last check and the rename can be replaced.
    2. An FTP server that lists a link as a plain file can't be told apart: an upload replaces such a link with a file.
@@ -77,3 +79,10 @@ Block FM of the private `FEATURES.md`: Properties and server actions, the next i
 7. Known limits of navigation (0.0.34):
    1. A bookmark or location profile belongs to a connection by its name; a connection renamed in the connections window takes them along, also while its tab is open; a duplicate does not.
    2. The live tests of navigation ran on this computer's SSH server only (`tests/ui/test_ui_live_navigation.py`).
+8. Known limits of Properties and server actions (0.0.37):
+   1. The SFTP extension copy-file is not used, as asyncssh does not tell whether a server offers it; copy-data is. Without a shell only files are copied on the server.
+   2. Owner and group change only with a shell; without one they are shown and greyed. Over the protocol a file whose rights the server did not tell is left as it was when a box says "leave as it is".
+   3. Change Password reads passwd's questions in English (`LC_ALL=C`); a passwd that asks in another way than "current/old" and "new/retype" ends calmly without a change. It was tried only against the fake server's stand-in for passwd (OR-26), never on a real account; so was Install My Public Key.
+   4. A password shorter than a word inside the server's answer is taken out only where it stands as a word of its own.
+   5. Size in Properties counts the files only, not what is in the folders (folder sizes come with block FE).
+   6. The live tests of block FM ran on this computer's SSH server only (`tests/test_live_serveractions.py`).

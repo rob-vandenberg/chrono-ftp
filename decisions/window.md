@@ -26,3 +26,5 @@
 24. [[D-057]] Synchronized browsing
 25. [[D-058]] Starting folders
 26. [[D-059]] The About window
+27. [[D-060]] Properties and rights
+28. [[D-063]] New file, the file manager and the terminal's folder

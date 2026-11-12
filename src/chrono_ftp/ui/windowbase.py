@@ -11,6 +11,7 @@ from chrono_ftp.config.settings import Settings
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.transferoptions import TransferOptions
+from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.transfers.options import Answers
 from chrono_ftp.transfers.queue import Job, TransferQueue
 from chrono_ftp.ui.afterqueue import Countdown, Power
@@ -24,9 +25,12 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.34"
+__version__ = "windowbase.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: Block FM: Properties, New File, Link and the file manager on the left; Properties, Duplicate, Copy to, New File and Link on
+#          the right; copy on the server is no longer an action only for a shell (D-061); a thread for long work on this computer; the
+#          edit of a server file is shared, so a new file opens in it; whether Properties is being prepared, on each side
 # v0.0.34: Navigation (block FH): the bookmarks and profiles, the side with the focus, the bookmark keys; load_folder can hand a
 #          failure to the one who asked, and tell once the folder shows; the steps of each side, the last folders, a saved connection
 #          and an ended or deleted connection go to the navigation part
@@ -48,9 +52,9 @@ START_HEIGHT: int = 800
 EMPTY_TAB_BAR_LINES: int = 2  # the row of the tabs keeps this height in lines, with or without tabs
 HIGHEST_LIMIT: int = 1_000_000
 CHECK_MILLISECONDS: int = 30_000  # how often an idle connection is checked, so a dropped one goes grey (OR-3)
-SHELL_ACTIONS: tuple[str, ...] = ("copy", "search", "change", "terminal")  # hidden on FTP, greyed on SFTP without a shell (D-027)
-LOCAL_MENU: tuple[str, ...] = ("upload", "local_edit", "local_rename", "local_delete", "local_new")
-REMOTE_MENU: tuple[str, ...] = ("download", "edit", "rename", "move", "copy", "delete", "change", "new_folder")
+SHELL_ACTIONS: tuple[str, ...] = ("search", "terminal")  # hidden on FTP, greyed on SFTP without a shell (D-027)
+LOCAL_MENU: tuple[str, ...] = ("upload", "local_edit", "local_rename", "local_delete", "local_new", "local_new_file", "local_link", "local_properties", "local_explore")
+REMOTE_MENU: tuple[str, ...] = ("download", "edit", "rename", "move", "duplicate", "copy_to", "delete", "new_folder", "new_file", "link", "properties")
 CLOCK_MILLISECONDS: int = 1000
 LOCK_SIZE: int = 16
 CENTRE_MARGIN: int = 2
@@ -113,6 +117,9 @@ class WindowBase(QMainWindow):
     quiet_local: bool  # the left side is set by the program itself: its move is no step for synchronized browsing (FH-05)
     bookmark_keys: list[QAction]  # the keys of the bookmarks, on their side
     places_writable: bool  # False: bookmarks.json is there but can't be read; it is never overwritten then
+    local_properties_waiting: bool  # the same for the left side, whose users and groups are read on a thread of their own
+    properties_waiting: bool  # the names for the Properties of the server are being read: a second F9 waits for that window
+    local_worker: Worker | None  # long work on this computer (Properties of everything inside a folder), made at its first use
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -189,6 +196,21 @@ class WindowBase(QMainWindow):
         raise NotImplementedError
 
     def _open_local_file(self, path: str) -> None:
+        raise NotImplementedError
+
+    def _edit_entry(self, session: Session, folder: str, name: str) -> None:
+        raise NotImplementedError
+
+    def install_my_key(self, session: Session | None = None) -> None:
+        raise NotImplementedError
+
+    def change_password(self, session: Session | None = None) -> None:
+        raise NotImplementedError
+
+    def key_reason(self, session: Session) -> str:
+        raise NotImplementedError
+
+    def password_reason(self, session: Session) -> str:
         raise NotImplementedError
 
     def _show_queue(self) -> None:

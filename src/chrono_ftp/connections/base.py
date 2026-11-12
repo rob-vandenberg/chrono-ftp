@@ -6,12 +6,17 @@ from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, cast
 
+from chrono_ftp.connections.passwordchange import PasswordAnswer
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "base.py 0.0.13"
+__version__ = "base.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: What a connection can do without a shell: copy a file on the server, make a symbolic or hard link; a link made, a file
+#          copied on the server, and the password changed on the server, each raising its calm reason where the connection can't (FM-05,
+#          FM-06, FM-10); a rename that replaces in one step, where the server offers it; the text for a half copy that stays; a command that
+#          should answer at once is ended after a few seconds
 # v0.0.13: A speed limit may be a function, asked again for every block, so a new limit takes effect while a file is on its way; the
 #          pauses it asks for are cut in short steps; one range of a file, for a file split over several connections, and another login
 #          of the same connection for such a part (FC-05)
@@ -41,6 +46,12 @@ NO_ROOM_TEXT: str = "The server has no room for this file ({reply}). The other f
 LOCAL_READ_TEXT: str = "This computer could not read the file it was sending: {reason}."
 LOCAL_WRITE_TEXT: str = "This computer could not write what arrived: {reason}."
 NO_SPLIT_TEXT: str = "This connection sends a file in one piece."
+NO_LINKS_TEXT: str = "This server can't make links over this connection."
+NO_HARD_LINKS_TEXT: str = "This server makes symbolic links only."
+NO_COPY_TEXT: str = "This server can't copy a file on itself. You can download it and upload it under the new name instead."
+HALF_COPY_LEFT_TEXT: str = "The unfinished copy {path} could not be removed; you can delete it once the connection is back."
+NO_ATOMIC_TEXT: str = "This server can't replace a name in one step."
+NO_PASSWORD_TEXT: str = "The password can be changed only on an SFTP connection with a shell."
 Progress = Callable[[int], None]  # bytes done since the last call; it may raise to stop the transfer
 Limit = int | Callable[[], int]  # KB per second, 0 for none; a function is asked again for every block, so a change takes effect at once
 LIMIT_STEP_SECONDS: float = 0.2  # a pause for the limit is cut in steps this long, so a stop or a new limit is never kept waiting
@@ -111,6 +122,10 @@ class Capabilities:
     rights: bool = False  # the permissions of a file can be set (FB-06)
     cut: bool = False  # a file on the server can be cut back to a length, so a broken-off append can be undone (FB-03)
     durable: bool = False  # the server confirms on request that a file is on its disk (SFTP's fsync@openssh.com)
+    server_copy: bool = False  # a file can be copied on the server without a shell: SFTP's copy-data, or FTP's SITE CPFR and CPTO (FM-06)
+    symlinks: bool = False  # a symbolic link can be made through the protocol (FM-05)
+    hardlinks: bool = False  # a hard link can be made through the protocol (SFTP's hardlink@openssh.com or version 6)
+    atomic_rename: bool = False  # a rename replaces its target in one step (SFTP's posix-rename@openssh.com)
 
     def has(self, tool: str) -> bool:
         return self.shell and tool in self.tools
@@ -281,6 +296,11 @@ class RemoteConnection(ABC):
     def run(self, command: str) -> CommandResult:
         raise NotImplementedError
 
+    def run_briefly(self, command: str, seconds: float) -> CommandResult:
+        """A command that should answer at once (a list of names); one that takes longer than seconds is ended and refused
+        (RemoteActionFailed), while the connection itself goes on. Where a connection can't end a command early, it is run."""
+        return self.run(command)
+
     def resolved(self, path: str) -> str | None:
         """Where a link really leads; None when the protocol can't tell."""
         return None
@@ -401,5 +421,23 @@ class RemoteConnection(ABC):
         raise RemoteActionFailed(NO_SPLIT_TEXT)
 
     def make_empty(self, remote: str) -> None:
-        """An empty file made only where nothing is (NameTaken otherwise): the part a split upload writes its ranges into."""
+        """An empty file made only where nothing is (NameTaken otherwise): the part a split upload writes its ranges into, and a new
+        empty file (FM-07)."""
         raise RemoteActionFailed(NO_SPLIT_TEXT)
+
+    def make_link(self, target: str, path: str, hard: bool = False) -> None:
+        """A link at path that leads to target, only where nothing is: symbolic, or hard where capabilities.hardlinks says so (FM-05)."""
+        raise RemoteActionFailed(NO_LINKS_TEXT)
+
+    def replace_atomically(self, source: str, target: str) -> None:
+        """source takes the name of target in one step, replacing it; only where capabilities.atomic_rename says so."""
+        raise RemoteActionFailed(NO_ATOMIC_TEXT)
+
+    def copy_file(self, source: str, target: str) -> None:
+        """A copy of one file made by the server itself, only where nothing is (NameTaken otherwise); nothing travels through this
+        computer (FM-06, D-027). Only where capabilities.server_copy says so."""
+        raise RemoteActionFailed(NO_COPY_TEXT)
+
+    def change_password(self, old: str, new: str) -> PasswordAnswer:
+        """The password of this login changed on the server, by its own passwd (FM-10). Neither password is ever written anywhere."""
+        raise RemoteActionFailed(NO_PASSWORD_TEXT)

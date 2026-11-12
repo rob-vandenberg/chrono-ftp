@@ -16,7 +16,7 @@ from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import RemoteConnection, UnknownServer, shown_name
 from chrono_ftp.connections.factory import remote_connection
 from chrono_ftp.core import credentials
-from chrono_ftp.core.connection import Connection
+from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import ConnectionLost, CredentialError, LoginRefused, RemoteActionFailed
 from chrono_ftp.engine.browsing import local_start_folder
 from chrono_ftp.engine.jobs import Worker
@@ -30,9 +30,11 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.34"
+__version__ = "windowtabs.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: The menu of a tab also installs my public key on its server and changes the password there, each greyed with its reason;
+#          Change Password is not shown on FTP, as it needs a shell (FM-09, FM-10, D-027)
 # v0.0.34: A connection opens in its local starting folder too; a starting folder that is gone says so calmly and opens the home
 #          folder; closing a tab keeps its last folders when its connection remembers them; each step of the left side and each tab
 #          shown is told to navigation; a connection saved in the connections window reaches its open tabs; a new login ends
@@ -55,6 +57,8 @@ __version__ = "windowtabs.py 0.0.34"
 
 RECONNECT_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and reconnect?", "{count} transfers on {name} are not finished. Stop them and reconnect?")
 EDIT_TEXT: str = "Edit settings…"
+KEY_TEXT: str = "Install My Public Key…"
+PASSWORD_TEXT: str = "Change Password…"
 MENU_WIDTH_CHARACTERS: int = 22  # a menu of normal width, also with one short entry
 EDIT_GONE_TEXT: str = "This connection is no longer in your connection list."
 LOCAL_START_GONE_TEXT: str = "The starting folder {path} of {name} is no longer on this computer, so your home folder opens instead."
@@ -116,6 +120,19 @@ class TabsPart(WindowBase):
             edit.setToolTip(EDIT_GONE_TEXT)
             menu.setToolTipsVisible(True)
         menu.addAction(edit)
+        session = self.sessions[index]
+        key = QAction(icons.icon("database-change-key"), KEY_TEXT, menu)
+        key.triggered.connect(lambda: self.install_my_key(session))
+        password = QAction(icons.icon("object-locked"), PASSWORD_TEXT, menu)
+        password.triggered.connect(lambda: self.change_password(session))
+        for action, why in ((key, self.key_reason(session)), (password, self.password_reason(session))):
+            if action is password and session.connection.protocol == FTP:
+                continue  # it needs a shell: not shown on FTP (D-027)
+            if why:
+                action.setEnabled(False)  # greyed with its reason (OR-20)
+                action.setToolTip(why)
+                menu.setToolTipsVisible(True)
+            menu.addAction(action)
         return menu
 
     def _show_tab_menu(self, place: QPoint) -> None:

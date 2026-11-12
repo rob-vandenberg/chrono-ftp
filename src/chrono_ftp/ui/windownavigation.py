@@ -28,9 +28,10 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windownavigation.py 0.0.35"
+__version__ = "windownavigation.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: F9, Shift+F4, Shift+F5, Alt+F6 and Ctrl+Alt+E are keys of the program: a bookmark can't take them (block FM)
 # v0.0.35: F1 is a key of the program: a bookmark can't take it (D-059)
 # v0.0.34: Initial: Ctrl+L, Ctrl+O, Ctrl+B and Ctrl+. on the focused side, the bookmark menus and keys, location profiles,
 #          synchronized browsing per tab, and the last folders written back (FH-01 to FH-06); a typed path is read the same for Ctrl+L
@@ -58,6 +59,11 @@ PROGRAM_KEYS: dict[str, str] = {  # the keys of the program itself: a bookmark c
     "Ctrl+.": "the same folder on the other side",
     "Ctrl+L": "typing a path",
     "F1": "About Chrono FTP",
+    "F9": "Properties",
+    "Shift+F4": "New file",
+    "Shift+F5": "Copy to",
+    "Alt+F6": "Link",
+    "Ctrl+Alt+E": "Open in the file manager",
 }
 SIDE_ACTIONS: tuple[tuple[str, str, str, str], ...] = (  # name after the side, text, icon, key
     ("open", "Open Folder…", "document-open-folder", "Ctrl+O"),

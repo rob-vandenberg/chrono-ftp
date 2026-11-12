@@ -7,14 +7,17 @@ from chrono_ftp.core import colours
 from chrono_ftp.core.connection import Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "terminal.py 0.0.9"
+__version__ = "terminal.py 0.0.37"
 
 # --- Version history ----------------------------------------------------
+# v0.0.37: The terminal opens in the folder on the screen; a folder it can't enter leaves it open in the home folder with a calm line,
+#          instead of closing at once; without a folder yet it opens in the home folder (FM-12)
 # v0.0.9: A connection without a colour opens with the normal terminal colours
 # v0.0.6: The terminal has the colour of its connection (D-007)
 # v0.0.5: Initial: a terminal on the server, in the folder shown (D-018)
 
 TERMINAL_PROGRAM: str = "konsole"
+CANT_ENTER_TEXT: str = "Chrono FTP: this folder could not be entered, so the terminal starts in your home folder:"
 
 
 def terminal_available() -> bool:
@@ -49,4 +52,13 @@ def terminal_arguments(connection: Connection, folder: str) -> list[str]:
     if connection.key_file:
         ssh += ["-i", connection.key_file]
     colours_of_terminal = ["-p", f"ColorScheme={scheme_for(connection.colour)}"] if connection.colour else []
-    return [TERMINAL_PROGRAM, *colours_of_terminal, "-e", *ssh, "--", login, f"cd {shlex.quote(folder)} && exec \"$SHELL\" -l"]
+    return [TERMINAL_PROGRAM, *colours_of_terminal, "-e", *ssh, "--", login, shell_start(folder)]
+
+
+def shell_start(folder: str) -> str:
+    """What the server runs first: into the folder, then the person's own shell. A folder that can't be entered (gone meanwhile, no
+    rights) is said in one line, and the shell opens in the home folder all the same (FM-12)."""
+    if not folder:
+        return 'exec "$SHELL" -l'
+    quoted = shlex.quote(folder)
+    return f"cd {quoted} || echo {shlex.quote(CANT_ENTER_TEXT)} {quoted}; exec \"$SHELL\" -l"
