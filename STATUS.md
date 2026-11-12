@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.35: F1 opens the About window, with the program icon, the version, what Chrono FTP is and its license (D-059).
+Version 0.0.36: the title bar shows the version, "Chrono FTP 0.0.36" (D-059).
+
+Before that, version 0.0.35: F1 opens the About window, with the program icon, the version, what Chrono FTP is and its license (D-059).
 
 Before that, version 0.0.34: block FH, navigation. The path above each side is a row of folder parts, each opens its folder; a click on the empty part or Ctrl+L types a path, Escape returns; the path of the focused side is highlighted, and on the right its hover text names user@host; a long path makes room from the left (D-055). Ctrl+B makes the folder of the focused side a bookmark, Ctrl+O opens a folder with the paths typed before and the bookmarks of that side, each side has a Bookmarks button, remote bookmarks belong to their connection or to all, and a key can open a bookmark; location profiles open a local and a remote folder with one click from Location Profiles on the top bar; one window organizes both, kept in `bookmarks.json` (D-056). Ctrl+. opens the folder of the focused side on the other side; Sync Browsing, per tab, makes each step on the other side too, makes a missing folder after a question when its parent is there, turns itself off and says why when it can't follow, and turns off when its connection ends (D-057). A typed path (Ctrl+L or Ctrl+O, also in the bookmarks window) is read from the folder shown on both sides, keeps the real bytes of a name that is not valid UTF-8, and one that leads nowhere is told calmly. A deleted connection takes its own bookmarks along; Reconnect logs in as the connection is saved now. A connection has a local starting folder and "Remember the last folders"; a starting folder that is gone says so calmly and opens the home folder (D-058).
 

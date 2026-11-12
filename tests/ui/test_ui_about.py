@@ -11,9 +11,10 @@ from chrono_ftp.ui.aboutdialog import TITLE, AboutWindow
 from chrono_ftp.ui.mainwindow import MainWindow
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_about.py 0.0.35"
+__version__ = "test_ui_about.py 0.0.36"
 
 # --- Version history ----------------------------------------------------
+# v0.0.36: The title bar shows the version
 # v0.0.35: Initial: F1 opens the About window, which shows the version and closes with Close, Enter and Escape
 
 
@@ -52,3 +53,9 @@ def test_escape_closes_the_about_window(qtbot: QtBot) -> None:
     _window, about = about_opened_by_f1(qtbot)
     QTest.keyClick(about, Qt.Key.Key_Escape)
     qtbot.waitUntil(lambda: not about.isVisible())
+
+
+def test_the_title_bar_shows_the_version(qtbot: QtBot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.windowTitle() == f"Chrono FTP {program_version()}"

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QSizePolicy, QSp
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.config.bookmarks import LOCAL
 from chrono_ftp.connections.base import Capabilities
+from chrono_ftp.core.appinfo import program_version
 from chrono_ftp.core.connection import FTP
 from chrono_ftp.engine import commands
 from chrono_ftp.engine.terminal import terminal_available
@@ -36,9 +37,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.35"
+__version__ = "mainwindow.py 0.0.36"
 
 # --- Version history ----------------------------------------------------
+# v0.0.36: The title bar shows the version: Chrono FTP 0.0.36 (D-059)
 # v0.0.35: F1 opens the About window (D-059)
 # v0.0.34: Navigation (block FH): Sync Browsing and Location Profiles on the top bar; Ctrl+O, Ctrl+B, Ctrl+. and Ctrl+L on each side,
 #          greyed where they can't act; closing keeps the last folders of the connections that remember them
@@ -69,7 +71,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(WINDOW_TITLE)
+        self.setWindowTitle(f"{WINDOW_TITLE} {program_version()}")  # the version in the title bar (D-059)
         self.resize(START_WIDTH, START_HEIGHT)
         self.bridge = Bridge(self)
         self.sessions = []

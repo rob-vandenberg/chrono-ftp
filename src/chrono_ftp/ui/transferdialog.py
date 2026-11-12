@@ -13,9 +13,10 @@ from chrono_ftp.ui.transferoptionsform import TransferOptionsDialog, summary_tex
 from chrono_ftp.ui.plaintext import box_text, fitting, plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "transferdialog.py 0.0.12"
+__version__ = "transferdialog.py 0.0.36"
 
 # --- Version history ----------------------------------------------------
+# v0.0.36: The question about a missing local folder can be given its title: the main window's title holds the version (D-059)
 # v0.0.12: Initial: the target folder with Browse, the options in one line, Transfer settings, move, and never show again (FB-09, FB-08);
 #          ~ is the home folder, a relative local path is refused, Browse starts at the real folder; a server folder is taken in its one
 #          form; names are shown as plain text
@@ -152,11 +153,11 @@ class TransferDialog(QDialog):
         return replace(self.options, delete_source=self.move_tick.isChecked())
 
 
-def agreed_to_make(parent: QWidget, folder: str) -> bool:
+def agreed_to_make(parent: QWidget, folder: str, title: str = "") -> bool:
     """A folder on this computer that isn't there yet is offered to be made. It is made only when the transfer really starts (made_now),
     so a transfer that never starts leaves no empty folder behind."""
     shown = fitting(shown_name(folder), parent)
-    return QMessageBox.question(parent, parent.windowTitle(), box_text(NO_LOCAL_FOLDER_YET_TEXT.format(folder=shown))) == QMessageBox.StandardButton.Yes
+    return QMessageBox.question(parent, title or parent.windowTitle(), box_text(NO_LOCAL_FOLDER_YET_TEXT.format(folder=shown))) == QMessageBox.StandardButton.Yes
 
 
 def made_now(parent: QWidget, folder: str) -> str:

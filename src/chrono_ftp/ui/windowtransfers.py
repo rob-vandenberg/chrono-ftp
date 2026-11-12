@@ -24,9 +24,10 @@ from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, Windo
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtransfers.py 0.0.13"
+__version__ = "windowtransfers.py 0.0.36"
 
 # --- Version history ----------------------------------------------------
+# v0.0.36: The question about a missing local folder is titled with the program's name, not the window title with its version (D-059)
 # v0.0.13: A job knows its tab, also after a reconnect; Stop in the question also stops the paused jobs of the action; Edit's saves start by themselves; a question of a paused job ends it paused; Stop All stops every running, waiting and paused item; a job that left the
 #          queue stays out of the list; the speed limit of the status bar holds at once, also for a running transfer
 # v0.0.12: The transfer window before an upload, a download or a drop (FB-09); every job carries its options, greyed by what the
@@ -190,7 +191,7 @@ class TransfersPart(WindowBase):
         try:
             os.lstat(folder)
         except FileNotFoundError:
-            if agreed_to_make(self, folder):
+            if agreed_to_make(self, folder, WINDOW_TITLE):  # the program's name, not the title with its version
                 start(folder)
             return
         except OSError as error:

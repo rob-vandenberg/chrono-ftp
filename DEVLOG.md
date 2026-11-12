@@ -151,3 +151,7 @@ The plain path field of each side became a clickable path (`ui/pathbar.py`): fol
 ## 0.0.35 (2026-11-12): the About window
 
 F1 opens "About Chrono FTP" (`ui/aboutdialog.py`): the icon, the version, what the program is and the license, with Close; Enter and Escape close it (D-059). The version comes from `pyproject.toml` through `core/appinfo.py`, because the record of a source install still said 0.0.5. F1 is a program key, so a bookmark can't take it. Tests: `tests/ui/test_ui_about.py`.
+
+## 0.0.36 (2026-11-12): the version in the title bar
+
+The main window's title is "Chrono FTP" and the version (D-059). The question about a missing local folder took the main window's title, so it is now given the program's name. Test: `tests/ui/test_ui_about.py::test_the_title_bar_shows_the_version`.
