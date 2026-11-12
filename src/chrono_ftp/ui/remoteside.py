@@ -4,19 +4,24 @@ from typing import cast
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QColor, QPalette, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QSplitter, QStyle, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QSplitter, QStyle, QTreeView, QVBoxLayout, QWidget
 
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, joined, parent_of, shown_name
 from chrono_ftp.core import colours
+from chrono_ftp.engine.browsing import typed_remote_path
 from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, button_row
 from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, mask_text, summary_text
+from chrono_ftp.ui.pathbar import PathBar
 from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.33"
+__version__ = "remoteside.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: The path is a row of clickable folder parts, its hover text names user@host; a click on its empty part or Ctrl+L types a
+#          path, read as Ctrl+O reads it; a click on a part gives this side the focus (FH-01); the path bar keeps the real path; on a
+#          dropped tab the path can't be typed in or clicked, its hover text says to reconnect
 # v0.0.33: Not connected: the darker row colour of the left side, light text and the usual selection (D-007)
 # v0.0.12: The count line is shown as written, never read as HTML
 # v0.0.9: A connection without a colour looks like the left side
@@ -31,6 +36,8 @@ LIST_WIDTH: int = 420
 PATH_ROLE: int = Qt.ItemDataRole.UserRole + 1
 LOADED_ROLE: int = Qt.ItemDataRole.UserRole + 2
 ROOT_FOLDER: str = "/"
+DROPPED_TEXT: str = "The connection was lost. Reconnect first to open a folder here."
+PATH_HINT: str = "Click a folder to open it; click the empty part, or press Ctrl+L, to type a path."
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,16 @@ class Place:
     """A folder of the tree. A plain str would pass through Qt, which changes a name that is not valid UTF-8."""
 
     path: str
+
+
+def remote_parts(folder: str) -> list[tuple[str, str]]:
+    """The folder parts of a path on the server, each with the path it opens; from the root down."""
+    found: list[tuple[str, str]] = [(ROOT_FOLDER, ROOT_FOLDER)]
+    walked = ROOT_FOLDER
+    for part in [piece for piece in folder.split("/") if piece]:
+        walked = joined(walked, part)
+        found.append((shown_name(part), walked))
+    return found
 
 
 class RemoteSide(QWidget):
@@ -49,12 +66,14 @@ class RemoteSide(QWidget):
     selection_changed = Signal()
     refresh_wanted = Signal()
     filter_wanted = Signal()
+    path_typed = Signal(object)  # a path typed in the path field, read as Ctrl+O reads it
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.navigation = NavigationBar()
         self.actions_bar = action_bar()
-        self.path_line = QLineEdit(NOT_CONNECTED_TEXT)
+        self.path_bar = PathBar()
+        self.path_line = self.path_bar.line  # the field to type a path in
         self.count_label = plain_label()
         self.history = FolderHistory()
         self.home_folder: str = ""
@@ -68,6 +87,7 @@ class RemoteSide(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.file_list = FileList(len(COLUMNS), FROM_REMOTE, frozenset({FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE}))
+        self.path_bar.next_focus = self.file_list
         self.set_colour(None)
         self.parts = QSplitter(Qt.Orientation.Horizontal)
         self.parts.setChildrenCollapsible(False)
@@ -79,7 +99,7 @@ class RemoteSide(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(1)
         layout.addLayout(button_row(self.navigation, self.actions_bar))
-        layout.addWidget(self.path_line)
+        layout.addWidget(self.path_bar)
         layout.addWidget(self.parts, 1)
         layout.addWidget(self.count_label)
         tree_selection = self.tree.selectionModel()
@@ -91,7 +111,11 @@ class RemoteSide(QWidget):
         self.file_list.selection_changed.connect(self._show_count)
         self.navigation.wanted.connect(self._button_pressed)
         self.path_line.returnPressed.connect(self._path_typed)
+        self.path_bar.folder_chosen.connect(self._part_chosen)
         self.navigation.show_state(self.history, False, False)
+        self.set_login("")
+        self.path_bar.show_path("", [], NOT_CONNECTED_TEXT, NOT_CONNECTED_TEXT)
+        self.path_bar.typing_allowed = False  # nowhere to go until a connection is live
 
     def set_tree_place(self, place: str) -> None:
         self.tree.setVisible(place != TREE_HIDDEN)
@@ -139,11 +163,31 @@ class RemoteSide(QWidget):
             self.filter_wanted.emit()
 
     def _path_typed(self) -> None:
-        path = self.path_line.text().strip()
-        if path.startswith(ROOT_FOLDER):
-            self.folder_requested.emit(path.rstrip(ROOT_FOLDER) or ROOT_FOLDER)
-        else:
-            self.path_line.setText(shown_name(self.folder))
+        """Enter in the path field: read as Ctrl+O reads it (~ is the home folder of the login, a relative path starts here); the window
+        opens it, or says calmly why not."""
+        typed = self.path_bar.typed_path()
+        self.path_bar.stop_typing()
+        if typed and self.folder:
+            self.path_typed.emit(typed_remote_path(self.folder, typed, self.home_folder))
+
+    def _part_chosen(self, path: object) -> None:
+        """A click on a folder part opens it, and this side takes the keyboard focus, as with a click in its list."""
+        self.file_list.setFocus(Qt.FocusReason.MouseFocusReason)
+        if isinstance(path, str) and path != self.folder:
+            self.folder_requested.emit(path)
+
+    def set_live(self, live: bool) -> None:
+        """A dropped connection: the path can't be typed in or clicked, as while not connected, and its hover text says to reconnect
+        first; once the tab is live again both work."""
+        self.path_bar.typing_allowed = live and bool(self.folder)
+        if not live:
+            self.path_bar.stop_typing()
+            if self.folder:
+                self.path_bar.setToolTip(DROPPED_TEXT)
+
+    def set_login(self, login: str) -> None:
+        """user@host of the connection shown, in the hover text of the path; empty while not connected."""
+        self.path_bar.setToolTip(f"{login}\n{PATH_HINT}" if login else NOT_CONNECTED_TEXT)
 
     def _show_count(self) -> None:
         self.count_label.setText(summary_text(self.selected_entries(), self.file_list.visible_entries()) + mask_text(self.file_list.name_mask) if self.folder else "")
@@ -154,7 +198,9 @@ class RemoteSide(QWidget):
         self._walk = None
         self.home_folder = ""
         self.navigation.show_state(self.history, False, False)
-        self.path_line.setText(NOT_CONNECTED_TEXT)
+        self.path_bar.stop_typing()
+        self.path_bar.show_path("", [], NOT_CONNECTED_TEXT, NOT_CONNECTED_TEXT)
+        self.path_bar.typing_allowed = False
         self.tree_model.removeRows(0, self.tree_model.rowCount())
         self.file_list.show_entries([], False, False)
         self.set_colour(None)
@@ -227,7 +273,8 @@ class RemoteSide(QWidget):
         self._filling = True
         self.folder = path
         self.file_list.folder = path
-        self.path_line.setText(shown_name(path))
+        self.path_bar.show_path(path, remote_parts(path))
+        self.path_bar.typing_allowed = True
         self.fill_tree(path, entries)
         current = self._tree_item(path)
         self._open_down_to(current)

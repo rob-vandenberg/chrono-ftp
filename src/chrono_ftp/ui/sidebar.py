@@ -5,9 +5,10 @@ from PySide6.QtWidgets import QHBoxLayout, QToolBar, QWidget
 from chrono_ftp.ui import icons
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebar.py 0.0.23"
+__version__ = "sidebar.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: A Bookmarks button, whose menu adds, opens and organizes the bookmarks of the side (FH-02)
 # v0.0.23: The icons of the side bars are 24 pixels
 # v0.0.7: One compact row of buttons per side, icons only with the text on hover
 # v0.0.6: Initial: the buttons every side has for walking through folders, and where it has been
@@ -20,6 +21,7 @@ BUTTONS: tuple[tuple[str, str, str], ...] = (
     ("parent", "Parent folder", "go-parent-folder"),
     ("root", "Root folder", "folder-root"),
     ("home", "Home folder", "go-home"),
+    ("bookmarks", "Bookmarks: add this folder, open a folder, organize", "bookmarks"),
     ("refresh", "Refresh", "view-refresh"),
     ("filter", "Filter", "view-filter"),
 )
@@ -78,7 +80,7 @@ class NavigationBar(QToolBar):
         self.buttons["back"].setEnabled(usable and bool(history.behind))
         self.buttons["forward"].setEnabled(usable and bool(history.ahead))
         self.buttons["parent"].setEnabled(usable and has_parent)
-        for name in ("root", "home", "refresh", "filter"):
+        for name in ("root", "home", "bookmarks", "refresh", "filter"):
             self.buttons[name].setEnabled(usable)
 
 

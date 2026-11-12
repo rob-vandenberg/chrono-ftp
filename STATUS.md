@@ -2,7 +2,9 @@
 
 ## Now
 
-Version 0.0.33: not connected, the right side is dark grey, the darker row colour of the left side, with light text; a dropped tab stays light grey (D-007). Before that, version 0.0.32: Connect is the default button of the connections window, so Enter connects the selected connection (D-050). Before that, version 0.0.31: the connection that last went live is remembered, and at start the connections window opens on it, selected and in view; when it is gone, the window starts as before (D-053). Before that, version 0.0.30: the right side shows the connection colour again: the menu style is given to each menu, not to the whole program, where it kept the right side grey; the menu border is a visible grey (D-052). Before that, version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
+Version 0.0.34: block FH, navigation. The path above each side is a row of folder parts, each opens its folder; a click on the empty part or Ctrl+L types a path, Escape returns; the path of the focused side is highlighted, and on the right its hover text names user@host; a long path makes room from the left (D-055). Ctrl+B makes the folder of the focused side a bookmark, Ctrl+O opens a folder with the paths typed before and the bookmarks of that side, each side has a Bookmarks button, remote bookmarks belong to their connection or to all, and a key can open a bookmark; location profiles open a local and a remote folder with one click from Location Profiles on the top bar; one window organizes both, kept in `bookmarks.json` (D-056). Ctrl+. opens the folder of the focused side on the other side; Sync Browsing, per tab, makes each step on the other side too, makes a missing folder after a question when its parent is there, turns itself off and says why when it can't follow, and turns off when its connection ends (D-057). A typed path (Ctrl+L or Ctrl+O, also in the bookmarks window) is read from the folder shown on both sides, keeps the real bytes of a name that is not valid UTF-8, and one that leads nowhere is told calmly. A deleted connection takes its own bookmarks along; Reconnect logs in as the connection is saved now. A connection has a local starting folder and "Remember the last folders"; a starting folder that is gone says so calmly and opens the home folder (D-058).
+
+Before that, version 0.0.33: not connected, the right side is dark grey, the darker row colour of the left side, with light text; a dropped tab stays light grey (D-007). Before that, version 0.0.32: Connect is the default button of the connections window, so Enter connects the selected connection (D-050). Before that, version 0.0.31: the connection that last went live is remembered, and at start the connections window opens on it, selected and in view; when it is gone, the window starts as before (D-053). Before that, version 0.0.30: the right side shows the connection colour again: the menu style is given to each menu, not to the whole program, where it kept the right side grey; the menu border is a visible grey (D-052). Before that, version 0.0.29: every right-click menu lets go of the keyboard once it is open, so the desktop's shortcuts, such as a screenshot, work while a menu is open (D-052); menus have a border, room around them and roomy items.
 
 Before that, 0.0.28: the menu of a tab is a menu of normal width with an icon, and its entry says "Edit settings…".
 
@@ -42,7 +44,7 @@ Tested by the owner on real work: the connection and terminal colours, the start
 
 ## Next task
 
-Block FH of the private `FEATURES.md`: navigation, the first of the order in D-054.
+Block FM of the private `FEATURES.md`: Properties and server actions, the next in the order of D-054.
 
 ## Open questions
 
@@ -68,3 +70,6 @@ Block FH of the private `FEATURES.md`: navigation, the first of the order in D-0
    15. Over a real SSH server, the server's rsync may put its unfinished copy away a moment after Chrono FTP removed that folder (resume Never); Delete tries again, and tidying takes the rest an hour later.
    16. A file split in parts asks for its further logins only when it starts; places that free up later are not used for it.
 6. The live test on the SFTP test account without a shell has not run for 0.0.12 and 0.0.13.
+7. Known limits of navigation (0.0.34):
+   1. A bookmark or location profile belongs to a connection by its name; a connection renamed in the connections window takes them along, also while its tab is open; a duplicate does not.
+   2. The live tests of navigation ran on this computer's SSH server only (`tests/ui/test_ui_live_navigation.py`).

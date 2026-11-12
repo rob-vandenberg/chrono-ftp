@@ -38,9 +38,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.33"
+__version__ = "test_ui_sessions.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: A starting folder that is gone says so calmly (FH-06)
 # v0.0.33: A dropped tab is NOT_CONNECTED_TAB
 # v0.0.25: A connection that already has a tab switches to it
 # v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
@@ -478,11 +479,20 @@ def test_closing_another_tab_keeps_the_selection_of_this_one(qtbot: QtBot, windo
         assert [entry.name for entry in window.remote_side.selected_entries()] == ["a.txt"]
 
 
-def test_a_wrong_starting_folder_opens_the_home_folder(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
+def test_a_wrong_starting_folder_opens_the_home_folder_and_says_so_calmly(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    told: list[str] = []
+
+    def note(*args: object) -> QMessageBox.StandardButton:
+        told.append(str(args[2]))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", note)
     with ssh_server(tmp_path) as server:
         trust_server(server)
         connected(qtbot, window, Connection(name="Shop", host="127.0.0.1", port=server.port, user=USER, start_folder="/gone"))
         assert window.sessions[0].remote_folder == "/"
+        qtbot.waitUntil(lambda: bool(told))
+        assert "/gone" in told[0] and "home folder" in told[0]
 
 
 def test_a_typed_password_is_stored_only_after_the_server_accepted_it(qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:

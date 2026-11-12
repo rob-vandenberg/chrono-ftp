@@ -8,19 +8,30 @@ from PySide6.QtWidgets import QMessageBox
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry, shown_name
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost
 from chrono_ftp.transfers.queue import LINE, Owned, State, spared_partials, tidy
+from chrono_ftp.config import connections as saved_connections
+from chrono_ftp.core.connection import Connection
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowfolders.py 0.0.13"
+__version__ = "windowfolders.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: A folder that can't be opened can go back to the one who asked, for a calm message of its own; each folder that arrives
+#          is told to synchronized browsing, and a step it asked for is forgotten on every way out; a lost connection ends it; a
+#          caller can be told once the folder shows (FH-02, FH-04, FH-05); Reconnect of a dropped tab logs in with the connection as
+#          it is saved now
 # v0.0.13: A folder is not tidied while a transfer of its connection is paused either, and never takes what a paused job goes on from
 # v0.0.12: Tidying keeps a part file only while the next transfer of that file can continue it, and a part it removes loses its note
 #          (FB-02); _failed is declared in the base
 #          names are shown as written, never read as HTML; tidying touches only the leftovers this program made itself
 # v0.0.11: Initial: moved here from mainwindow.py, unchanged (D-041)
+
+
+def login_changed(before: Connection, now: Connection) -> bool:
+    """Whether what a login uses differs: host, port, user, protocol or key file."""
+    return (before.host, before.port, before.user, before.protocol, before.key_file) != (now.host, now.port, now.user, now.protocol, now.key_file)
 
 
 class FoldersPart(WindowBase):
@@ -43,6 +54,7 @@ class FoldersPart(WindowBase):
 
     def _mark_lost(self, session: Session) -> None:
         session.alive = False
+        self._sync_ends(session)
         if session in self.sessions:
             self._set_tab(session)
         self.update_actions()
@@ -72,7 +84,9 @@ class FoldersPart(WindowBase):
                 session.worker.submit(remote.check, lambda _nothing: None, gone)
 
     @override
-    def load_folder(self, session: Session, folder: str) -> None:
+    def load_folder(self, session: Session, folder: str, when_failed: Callable[[Exception], None] | None = None, when_shown: Callable[[], None] | None = None) -> None:
+        """when_failed: a refusal of the server (not a lost connection) goes there instead of the usual message. when_shown: called once
+        the folder is on the screen. Whatever way the request ends, a step synchronized browsing asked for is no longer awaited."""
         session.wanted_folder = folder
         place = (session.connection.host, session.connection.port)
         busy = any((job.connection.host, job.connection.port) == place and job.state in (*LINE, State.RUNNING) for job in self.queue.jobs)  # a paused one too
@@ -85,18 +99,45 @@ class FoldersPart(WindowBase):
         def show(found: object) -> None:
             assert isinstance(found, list)
             if folder != session.wanted_folder:
+                forget_the_step()
                 return  # the person has moved on
+            previous = session.remote_folder
             session.remote_folder = folder
             session.entries = tuple(found)
             if session is self.current():
                 self.remote_side.show_folder(folder, list(session.entries))
                 self.update_actions()
+            self._remote_moved(session, previous, folder)
+            if when_shown is not None:
+                when_shown()
+
+        def forget_the_step() -> None:
+            if session.sync_asked == folder:
+                session.sync_asked = ""
 
         def not_there() -> None:
+            forget_the_step()
             if session.wanted_folder == folder:
                 session.wanted_folder = session.remote_folder  # Refresh goes on with the folder on the screen
 
-        self._ask(session, read, show, on_failure=not_there)
+        remote = session.remote
+        if remote is None or not session.alive:
+            forget_the_step()
+            return
+        if when_failed is None:
+            self._ask(session, read, show, on_failure=not_there)
+            return
+
+        def failed(error: Exception) -> None:
+            not_there()
+            if session not in self.sessions:
+                return
+            if isinstance(error, ChronoFtpError) and not isinstance(error, ConnectionLost):
+                when_failed(error)
+            else:
+                self._failed(session, error)
+
+        session.worker.submit(lambda: read(remote), show, failed)
 
     @override
     def _reload(self, session: Session) -> None:
@@ -126,9 +167,20 @@ class FoldersPart(WindowBase):
             self._reload(session)
 
     def reconnect(self) -> None:
+        """Reconnect of a dropped tab logs in with the connection as it is saved now, as Connect in the connections window does: a
+        changed host, user, port, protocol or key is never passed over in silence (D-051)."""
         session = self.current()
-        if session is not None and not session.alive:
-            self._connect(session)
+        if session is None or session.alive:
+            return
+        now = next((connection for connection in saved_connections.load().connections if connection.name == session.connection.name), None)
+        if now is not None and now != session.connection:
+            if login_changed(session.connection, now):
+                session.password = None  # read from the store again: the new login may have a new password
+                session.typed_password = False
+            session.connection = now
+            if session in self.sessions:
+                self._set_tab(session)
+        self._connect(session)
 
     @override
     def _then_refresh(self, session: Session) -> Callable[[object], None]:

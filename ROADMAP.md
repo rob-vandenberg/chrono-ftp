@@ -55,8 +55,8 @@ One milestone per block of the private `FEATURES.md` (D-001, OR-13), in the orde
 5. FA, the main window split into modules: done in 0.0.11.
 6. FB, transfer options: done in 0.0.12.
 7. FC, the queue: done in 0.0.13.
-8. FH, navigation, medium: next. A clickable path, bookmarks, location profiles, the same folder on the other side, synchronized browsing, and remembered starting folders.
-9. FM, Properties and server actions, large: open. Properties for several files, a rights editor, owner and group lists, links, duplicating, a new file, a new folder with rights, installing your key, changing the server password, and a terminal.
+8. FH, navigation, medium: done in 0.0.34. A clickable path, bookmarks, location profiles, the same folder on the other side, synchronized browsing, and remembered starting folders (D-055 to D-058).
+9. FM, Properties and server actions, large: next. Properties for several files, a rights editor, owner and group lists, links, duplicating, a new file, a new folder with rights, installing your key, changing the server password, and a terminal.
 10. FP, program-wide, medium: open. Preferences, a session log, a server information window, cleaning up stored data, an About window, and an update check.
 11. FQ, looks, small: open. File colours by mask, thumbnails, and a customisable toolbar.
 12. FG, selection and keys, large: open. Type-ahead, selection keys, a keyboard-driven two-pane mode, the full key set, size format, column menu, natural sort, path in the title, clipboard copies, and selection totals.

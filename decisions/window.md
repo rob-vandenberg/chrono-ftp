@@ -21,3 +21,7 @@
 19. [[D-051]] One Chrono FTP at a time
 20. [[D-052]] Menus hold the mouse, not the keyboard
 21. [[D-053]] The connections window starts on the last connection
+22. [[D-055]] The clickable path
+23. [[D-056]] Bookmarks and location profiles
+24. [[D-057]] Synchronized browsing
+25. [[D-058]] Starting folders

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import os
+from dataclasses import replace
 import stat
 import sys
 import time
@@ -46,9 +47,10 @@ from tests.test_engine import Scripted
 from tests.ui.test_ui_sessions import MAGENTA, connected, names_on_the_right, pick_local, select, ssh_settings, transfers_ended, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_transfers.py 0.0.12"
+__version__ = "test_ui_transfers.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: The test of two tabs on one login opens two differently named connections, as one connection opens one tab only (D-051)
 # v0.0.12: Initial: the transfer window, Transfer settings greyed by the server, the overwrite question, the rights field, Settings; the
 #          window starts from what the server can do, ~ and relative folders, Browse both ways, the folder picker without a connection,
 #          closing the question is Stop, Yes to all, a download-move refreshes the right side, Edit keeps the rights, Synchronize asks;
@@ -1174,7 +1176,9 @@ def test_only_the_queue_sets_back_a_file_an_append_left_half_done_never_a_tab_th
         os.utime(root / "log.txt", (OLD_TIME, OLD_TIME))
         parts.mark_append(settings, "/log.txt", parts.BROKEN, len("the old content" + "half of an append"), OLD_TIME)  # how it broke off
         connected(qtbot, window, settings)
-        connected(qtbot, window, settings)
+        connected(qtbot, window, replace(settings, name="Other"))  # a second tab on the same login: one connection opens one tab only (D-051)
+        window.tab_bar.setCurrentIndex(0)
+        assert len(window.sessions) == 2
         answered: list[Session] = []
         for session in window.sessions:  # each tab's worker runs in order: this answers after everything connecting started there
             session.worker.submit(lambda: None, lambda _nothing, session=session: answered.append(session), lambda error: None)

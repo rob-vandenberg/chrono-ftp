@@ -18,9 +18,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.33"
+__version__ = "test_ui_mainwindow.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: The path above each side is the path bar, with its field to type in
 # v0.0.33: Not connected, the right side is the darker row colour of the left side, with readable text
 # v0.0.24: The tabs and New Tab share one centre line; the row, not the hidden tab bar, has the height
 # v0.0.22: Without tabs New Tab stands at the left, and the row keeps its height
@@ -74,7 +75,7 @@ def test_the_lists_get_nearly_all_the_height(qtbot: QtBot) -> None:
         window.show()
     line = window.fontMetrics().height()
     for side in (window.local_side, window.remote_side):
-        assert side.path_line.height() <= 2 * line
+        assert side.path_bar.height() <= 2 * line
         assert side.file_list.height() >= side.height() - side.navigation.height() - 4 * line
     assert window.top_row.height() <= 3 * line
 

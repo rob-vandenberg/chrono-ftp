@@ -9,9 +9,11 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.13"
+__version__ = "session.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Each tab keeps whether synchronized browsing is on, and the folder a step of it asked for on the server (FH-05); the folder
+#          each side fell back to while the person has not moved it (FH-06)
 # v0.0.13: An edited file knows the last save sent, so a retry of it in the queue counts as its save again
 # v0.0.11: Moved here from mainwindow.py, unchanged; the helpers lost their leading underscore (D-041)
 
@@ -58,6 +60,10 @@ class Session:
     remote_history: FolderHistory = field(default_factory=FolderHistory)
     local_history: FolderHistory = field(default_factory=FolderHistory)
     name_mask: str = ""  # the filter of the right side
+    sync_browsing: bool = False  # synchronized browsing, per tab (FH-05)
+    local_fallback: str = ""  # the home folder the left side opened as its starting folder was gone; empty once the person moved it
+    remote_fallback: str = ""  # the same on the server
+    sync_asked: str = ""  # the folder synchronized browsing asked the server for: its arrival is no step of the person
     leftovers: dict[str, tuple[float, int]] = field(default_factory=dict[str, tuple[float, int]])  # see tidy; only the session's thread uses it
 
     @property

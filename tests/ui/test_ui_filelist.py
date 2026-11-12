@@ -20,9 +20,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.16"
+__version__ = "test_ui_filelist.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: A typed path that is no folder is told calmly, never put back in silence (D-055)
 # v0.0.16: The splitter of the connections window is where it was after a restart
 # v0.0.15: The connections window opens with the size and place it had last time, also after a run without it
 # v0.0.13: A job is put in the queue through add, as the list of jobs is a copy now
@@ -225,7 +226,14 @@ def test_the_left_side_walks_with_its_buttons(qtbot: QtBot, tmp_path: Path) -> N
     assert not side.navigation.buttons["parent"].isEnabled()
 
 
-def test_a_typed_path_is_followed_and_a_wrong_one_puts_the_line_back(qtbot: QtBot, tmp_path: Path) -> None:
+def test_a_typed_path_is_followed_and_a_wrong_one_puts_the_line_back_and_says_so(qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    told: list[str] = []
+
+    def note(*args: object) -> QMessageBox.StandardButton:
+        told.append(str(args[2]))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", note)
     (tmp_path / "inner").mkdir()
     window = window_for(qtbot)
     side = window.local_side
@@ -235,6 +243,7 @@ def test_a_typed_path_is_followed_and_a_wrong_one_puts_the_line_back(qtbot: QtBo
     side.path_line.setText(str(tmp_path / "gone"))
     side.path_line.returnPressed.emit()
     assert side.path_line.text() == str(tmp_path / "inner")
+    assert len(told) == 1 and "gone" in told[0]  # never a silent revert (D-055)
 
 
 def test_delete_on_this_computer_moves_every_chosen_file_to_the_trash(qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

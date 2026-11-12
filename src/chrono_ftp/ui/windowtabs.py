@@ -1,22 +1,24 @@
 """The tabs of the main window: each is one connection, with its own local and remote folder (OR-4)."""
 
+import os
 import threading
 import time
 from dataclasses import replace
 from typing import override
 
-from PySide6.QtCore import QByteArray, QPoint
+from PySide6.QtCore import QByteArray, QDir, QPoint
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QMessageBox
 
 from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections import trust
-from chrono_ftp.connections.base import RemoteConnection, UnknownServer
+from chrono_ftp.connections.base import RemoteConnection, UnknownServer, shown_name
 from chrono_ftp.connections.factory import remote_connection
 from chrono_ftp.core import credentials
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.errors import ConnectionLost, CredentialError, LoginRefused, RemoteActionFailed
+from chrono_ftp.engine.browsing import local_start_folder
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.transfers.queue import LINE, State
 from chrono_ftp.ui import icons
@@ -28,9 +30,14 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.31"
+__version__ = "windowtabs.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: A connection opens in its local starting folder too; a starting folder that is gone says so calmly and opens the home
+#          folder; closing a tab keeps its last folders when its connection remembers them; each step of the left side and each tab
+#          shown is told to navigation; a connection saved in the connections window reaches its open tabs; a new login ends
+#          synchronized browsing (FH-05, FH-06); a deleted connection is told to navigation; a relative local starting folder is read
+#          from the home folder; the folder a gone starting folder fell back to is noted
 # v0.0.31: The connection that goes live is kept as the last one; at start the connections window opens on it (D-053)
 # v0.0.29: The menu of a tab opens through open_menu, which lets go of the keyboard (D-052)
 # v0.0.28: The menu of a tab is a full-width menu with an icon; Edit settings…
@@ -50,6 +57,8 @@ RECONNECT_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not fini
 EDIT_TEXT: str = "Edit settings…"
 MENU_WIDTH_CHARACTERS: int = 22  # a menu of normal width, also with one short entry
 EDIT_GONE_TEXT: str = "This connection is no longer in your connection list."
+LOCAL_START_GONE_TEXT: str = "The starting folder {path} of {name} is no longer on this computer, so your home folder opens instead."
+REMOTE_START_GONE_TEXT: str = "The starting folder {path} of {name} can't be opened on the server, so your home folder there opens instead."
 TAB_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and close the tab?", "{count} transfers on {name} are not finished. Stop them and close the tab?")
 
 
@@ -70,6 +79,8 @@ class TabsPart(WindowBase):
             self.connection_list.restoreGeometry(QByteArray.fromBase64(saved_place.encode("ascii", "replace")))
             self.connection_list.parts.restoreState(QByteArray.fromBase64(saved_parts.encode("ascii", "replace")))
             self.connection_list.connect_requested.connect(self.open_connection)
+            self.connection_list.saved.connect(self._connection_saved)
+            self.connection_list.deleted.connect(self._connection_deleted)
         self.connection_list.show()
         self.connection_list.raise_()
 
@@ -132,12 +143,24 @@ class TabsPart(WindowBase):
                 self.tab_bar.setCurrentIndex(index)  # already open: its tab, never a second one
                 self._open_again(index, open_session, connection)
                 return
-        session = Session(connection, Worker(self.bridge.deliver), self.local_side.folder)
+        local_folder, local_gone = self.local_side.folder, False
+        if connection.local_start_folder:
+            wanted = local_start_folder(connection.local_start_folder)  # a relative one starts at the home folder
+            local_gone = not os.path.isdir(wanted)
+            if not local_gone:
+                local_folder = wanted
+            elif os.path.isdir(QDir.homePath()):
+                local_folder = QDir.homePath()
+        session = Session(connection, Worker(self.bridge.deliver), local_folder)
+        if local_gone:
+            session.local_fallback = local_folder  # not written back as the starting folder unless the person moves it (D-058)
         self.sessions.append(session)
         index = self.tab_bar.addTab(connection.name)
         self.tab_bar.set_colour(index, None)  # grey until the connection is live
         self.tab_bar.setCurrentIndex(index)
         self._connect(session)
+        if local_gone:
+            QMessageBox.information(self, WINDOW_TITLE, box_text(LOCAL_START_GONE_TEXT.format(path=shown_name(connection.local_start_folder), name=connection.name)))
 
     def _ask_login(self, session: Session, password_needed: bool) -> bool:
         """False when the person cancelled: nothing about the connection has changed then."""
@@ -170,11 +193,13 @@ class TabsPart(WindowBase):
             self.update_actions()  # a login without a name would go out under a name the person never chose
             return
         session.connecting = True
+        self._sync_ends(session)  # a new login is no step: the folder it falls back to must not be mirrored
         self.status.showMessage(f"Connecting to {session.connection.host}")
         old = session.remote
         session.remote = None
         session.alive = False
         made: list[RemoteConnection] = []
+        start_gone: list[str] = []  # the starting folder of the connection, when it can't be opened
 
         def work() -> str:
             if old is not None:
@@ -196,11 +221,16 @@ class TabsPart(WindowBase):
                 except ConnectionLost:
                     raise
                 except RemoteActionFailed:
-                    pass  # a starting folder that is gone: the home folder is always there
+                    if not session.remote_folder:
+                        start_gone.append(start)  # a starting folder that is gone: the home folder is always there
             return session.home_folder
 
         def connected(folder: str) -> None:
+            if start_gone:
+                session.remote_fallback = folder  # not written back as the starting folder unless the person moves it (D-058)
             self._connected(session, made[0], folder)
+            if start_gone and session in self.sessions:
+                QMessageBox.information(self, WINDOW_TITLE, box_text(REMOTE_START_GONE_TEXT.format(path=shown_name(start_gone[0]), name=session.connection.name)))
 
         def failed(error: Exception) -> None:
             session.connecting = False
@@ -282,6 +312,7 @@ class TabsPart(WindowBase):
         self.tab_bar.set_colour(index, session.connection.colour if session.alive else None)
         if session is self.current():
             self.remote_side.set_colour(session.connection.colour if session.alive else None)
+            self._tab_shown()
         self._show_connection_state()
 
     def _tab_changed(self, index: int) -> None:
@@ -292,6 +323,7 @@ class TabsPart(WindowBase):
         self.shown = session
         if session is None:
             self.remote_side.clear()
+            self._tab_shown()
             self.update_actions()
             return
         self.local_side.history = session.local_history
@@ -303,12 +335,16 @@ class TabsPart(WindowBase):
         self.remote_side.home_folder = session.home_folder
         if session.remote_folder:
             self.remote_side.show_folder(session.remote_folder, list(session.entries))
+        self._tab_shown()
         self.update_actions()
 
     def _local_folder_changed(self, folder: str) -> None:
         session = self.current()
         if session is not None:
+            previous = session.local_folder
             session.local_folder = folder
+            if previous != folder:
+                self._local_moved(session, previous, folder)
         self.update_actions()
 
     def close_tab(self, index: int) -> None:
@@ -324,6 +360,8 @@ class TabsPart(WindowBase):
         for job in running:  # only now: every question came first
             self.queue.stop(job)
         self._forget_edits(self._edits_of(session))  # read again: a download may have ended during a question
+        self._remember_folders(session)
+        session.sync_browsing = False
         self.sessions.pop(index)
         session.alive = False
         self.tab_bar.removeTab(index)

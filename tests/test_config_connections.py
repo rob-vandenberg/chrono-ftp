@@ -8,9 +8,11 @@ from chrono_ftp.core.connection import FTP, Connection
 from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config_connections.py 0.0.12"
+__version__ = "test_config_connections.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: The local starting folder and "Remember the last folders"; an older file still loads; the last folders are written back
+#          only when the connection remembers them (FH-06); a name that is not valid UTF-8 comes back exactly; no .tmp is left behind
 # v0.0.12: A test that needs a refusal by the rights of a file skips as root
 # v0.0.9: The optional colour
 # v0.0.8: A user name the server accepted
@@ -56,7 +58,7 @@ def test_a_damaged_file_is_set_aside_and_the_list_starts_empty(damage: str) -> N
     assert loaded.set_aside is not None and loaded.set_aside.read_bytes() == damage.encode("latin-1")
 
 
-@pytest.mark.parametrize("bad", [{"host": "a"}, {"name": "a"}, {"name": "a", "host": "b", "port": 70000}, {"name": "a", "host": "b", "port": True}, {"name": "a", "host": "b", "protocol": "gopher"}, {"name": "a", "host": "b", "user": 5}, 7])
+@pytest.mark.parametrize("bad", [{"host": "a"}, {"name": "a"}, {"name": "a", "host": "b", "port": 70000}, {"name": "a", "host": "b", "port": True}, {"name": "a", "host": "b", "protocol": "gopher"}, {"name": "a", "host": "b", "user": 5}, {"name": "a", "host": "b", "local_start_folder": 5}, {"name": "a", "host": "b", "remember_folders": "yes"}, 7])
 def test_a_bad_entry_is_left_out_and_the_good_ones_stay(bad: object) -> None:
     path = connections.list_path()
     path.parent.mkdir(parents=True)
@@ -114,3 +116,58 @@ def test_a_list_with_a_damaged_entry_is_left_as_it_is_by_a_kept_user() -> None:
 def test_a_connection_without_a_colour_stays_without_one_and_a_colour_stays_a_colour() -> None:
     connections.save([Connection(name="A", host="a"), Connection(name="B", host="b", colour="#aa3355")])
     assert [item.colour for item in connections.load().connections] == ["", "#aa3355"]
+
+
+def test_the_local_starting_folder_and_remembering_come_back_as_they_were_saved() -> None:
+    saved = (Connection(name="A", host="a", start_folder="/srv", local_start_folder="/home/anna/site", remember_folders=True),)
+    connections.save(saved)
+    assert connections.load().connections == saved
+
+
+def test_a_file_of_before_the_local_starting_folder_still_loads() -> None:
+    path = connections.list_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"connections": [{"name": "Old", "host": "old.example.com", "start_folder": "/srv"}]}), encoding="utf-8")
+    loaded = connections.load()
+    assert loaded.connections == (Connection(name="Old", host="old.example.com", start_folder="/srv"),)
+    assert loaded.set_aside is None
+    assert not loaded.connections[0].remember_folders and loaded.connections[0].local_start_folder == ""
+
+
+def test_the_last_folders_become_the_starting_folders_only_when_the_connection_remembers_them() -> None:
+    connections.save([Connection(name="A", host="a", remember_folders=True), Connection(name="B", host="b", start_folder="/srv")])
+    assert connections.remember_folders("A", "/home/anna", "/var/www") == Connection(name="A", host="a", start_folder="/var/www", local_start_folder="/home/anna", remember_folders=True)
+    assert connections.remember_folders("B", "/home/anna", "/var/www") is None
+    assert connections.remember_folders("gone", "/home/anna", "/var/www") is None
+    loaded = connections.load().connections
+    assert (loaded[0].local_start_folder, loaded[0].start_folder) == ("/home/anna", "/var/www")
+    assert (loaded[1].local_start_folder, loaded[1].start_folder) == ("", "/srv")
+
+
+def test_an_empty_last_folder_keeps_the_starting_folder_there_was() -> None:
+    connections.save([Connection(name="A", host="a", start_folder="/srv", remember_folders=True)])
+    connections.remember_folders("A", "/home/anna", "")
+    assert connections.load().connections[0].start_folder == "/srv"
+
+
+def test_a_folder_whose_name_is_not_valid_utf8_is_stored_and_read_back_exactly() -> None:
+    odd = "/home/anna/b\udcffd"
+    connections.save([Connection(name="A", host="a", remember_folders=True)])
+    connections.remember_folders("A", odd, "/srv/c\udcfee")
+    loaded = connections.load()
+    assert loaded.set_aside is None
+    assert (loaded.connections[0].local_start_folder, loaded.connections[0].start_folder) == (odd, "/srv/c\udcfee")
+
+
+def test_no_new_file_is_left_behind_when_writing_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    connections.save([Connection(name="A", host="a")])
+
+    def broken(*args: object) -> None:
+        raise OSError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("os.fsync", broken)
+        with pytest.raises(OSError):
+            connections.save([Connection(name="B", host="b")])
+    assert sorted(path.name for path in connections.list_path().parent.iterdir()) == ["connections.json"]
+    assert [item.name for item in connections.load().connections] == ["A"]

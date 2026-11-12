@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QSizePolicy, QSpinBox, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget
 
 from chrono_ftp.config import settings as saved_settings
+from chrono_ftp.config.bookmarks import LOCAL
 from chrono_ftp.connections.base import Capabilities
 from chrono_ftp.core.connection import FTP
 from chrono_ftp.engine import commands
@@ -26,6 +27,7 @@ from chrono_ftp.ui.windowedit import EditPart
 from chrono_ftp.ui.windowfolders import FoldersPart
 from chrono_ftp.ui.windowlayout import LayoutPart
 from chrono_ftp.ui.windowlocal import LocalPart
+from chrono_ftp.ui.windownavigation import NavigationPart
 from chrono_ftp.ui.windowqueue import QueuePart, stoppable
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowtabs import TabsPart
@@ -33,9 +35,11 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.27"
+__version__ = "mainwindow.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Navigation (block FH): Sync Browsing and Location Profiles on the top bar; Ctrl+O, Ctrl+B, Ctrl+. and Ctrl+L on each side,
+#          greyed where they can't act; closing keeps the last folders of the connections that remember them
 # v0.0.27: A right-click on a tab opens its menu
 # v0.0.24: The tab bar has its own height and stands centred in its row, so the tabs and New Tab share one centre line
 # v0.0.22: The row of the tabs keeps the height of a tab while the tab bar is hidden
@@ -58,7 +62,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, TransfersPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, TransfersPart, NavigationPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -80,6 +84,9 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.closing_when_done = False
         self.connection_list = None
         self.saved_sizes = {}
+        self.focused_side = LOCAL
+        self.quiet_local = False
+        self.bookmark_keys = []
         self.tab_bar = ConnectionTabBar()
         self.new_tab_button = QToolButton()
         self.new_tab_button.setIcon(icons.icon("tab-new"))
@@ -135,6 +142,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.actions_by_name = {}
         self.limit = QSpinBox()
         self._build_toolbar()
+        self._build_navigation()
         self.new_tab_button.clicked.connect(self.show_connection_list)
         self.tab_bar.currentChanged.connect(self._tab_changed)
         self.tab_bar.tabCloseRequested.connect(self.close_tab)
@@ -211,6 +219,8 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         bar.setIconSize(QSize(GENERAL_ICON_SIZE, GENERAL_ICON_SIZE))
         for name, text, icon_name, key, handler in (
+            ("sync_browsing", "Sync Browsing", "edit-link", "", self.toggle_sync_browsing),
+            ("profiles", "Location Profiles", "view-split-left-right", "", self.show_profiles),
             ("compare", "Synchronize", "folder-sync", "", self.compare),
             ("search", "Find Files", "edit-find", "", self.search),
             ("terminal", "Terminal", "utilities-terminal", "", self.open_terminal),
@@ -269,6 +279,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.queue.close()
         self._forget_edits(list(self.edited))
         for session in self.sessions:
+            self._remember_folders(session)
             self._let_go_of(session)
         super().closeEvent(event)
 
@@ -303,6 +314,16 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             "reconnect": session is not None and not session.alive and not session.connecting,
             "settings": True,
             "stop_all": any(stoppable(job) for job in self.queue.jobs),
+            "sync_browsing": alive,
+            "profiles": alive,
+            "local_open": True,
+            "local_bookmark": True,
+            "local_other_side": alive,
+            "local_type": True,
+            "remote_open": alive and bool(self.remote_side.folder),
+            "remote_bookmark": alive and bool(self.remote_side.folder),
+            "remote_other_side": alive and bool(self.remote_side.folder),
+            "remote_type": alive and bool(self.remote_side.folder),
         }
         on_ftp = session is not None and session.connection.protocol == FTP
         for name, action in self.actions_by_name.items():

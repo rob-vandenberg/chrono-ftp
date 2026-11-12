@@ -31,14 +31,18 @@ from chrono_ftp.config import sessionimport
 from chrono_ftp.core import colours, credentials
 from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, HIGHEST_PORT, LOWEST_PORT, SFTP, Connection
 from chrono_ftp.core.errors import CredentialError
+from chrono_ftp.engine.browsing import local_start_folder
 from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.32"
+__version__ = "connectionlist.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: A local starting folder next to the remote one, and "Remember the last folders" (FH-06); a renamed connection keeps its
+#          bookmarks and location profiles; a saved connection is told to the window, so its open tabs follow; a deleted one too,
+#          so its own bookmarks go; a local starting folder is kept absolute, a relative one read from the home folder
 # v0.0.32: Connect is the default button: Enter in the list or a field connects the selected connection (D-050)
 # v0.0.31: start_on: the window starts on the connection that was last live, in view; the top one when it is gone (D-053)
 # v0.0.29: The right-click menu opens through open_menu, which lets go of the keyboard (D-052)
@@ -70,6 +74,10 @@ EXPORT_LATER_TEXT: str = "Export comes in a later version."
 COPY_NAME: str = "{name} (copy)"
 SAVE_CHANGES_TEXT: str = "Save changes to {name}?"
 NEXT_COPY_NAME: str = "{name} (copy {number})"
+REMEMBER_TEXT: str = "Remember the last folders"
+REMEMBER_TIP: str = "On: when its tab or Chrono FTP closes, the folders open on both sides become the starting folders of this connection."
+LOCAL_START_TIP: str = "The folder on this computer that the left side opens with this connection. Empty: the left side stays where it is."
+REMOTE_START_TIP: str = "The folder on the server that opens first. Empty: the home folder of the login."
 PROTOCOL_LABELS: dict[str, str] = {SFTP: "SFTP", FTP: "FTP"}
 
 
@@ -81,6 +89,8 @@ def colour_block(colour: str) -> QIcon:
 
 class ConnectionList(QDialog):
     connect_requested = Signal(object)  # a Connection
+    deleted = Signal(str)  # a connection was deleted: its name
+    saved = Signal(str, object)  # a connection was saved over an existing one: its name before, and the Connection as saved
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -105,6 +115,12 @@ class ConnectionList(QDialog):
         self.key_file = QLineEdit()
         self.browse_button = QPushButton("Browse")
         self.start_folder = QLineEdit()
+        self.start_folder.setToolTip(REMOTE_START_TIP)
+        self.local_start_folder = QLineEdit()
+        self.local_start_folder.setToolTip(LOCAL_START_TIP)
+        self.local_browse_button = QPushButton("Browse")
+        self.remember_folders = QCheckBox(REMEMBER_TEXT)
+        self.remember_folders.setToolTip(REMEMBER_TIP)
         self.colour_button = QPushButton("Choose colour")
         self.use_colour = QCheckBox("Use a colour")
         self.new_button = QPushButton("New")
@@ -113,7 +129,7 @@ class ConnectionList(QDialog):
         self.import_button = QPushButton(IMPORT_TEXT)
         self.export_button = QPushButton(EXPORT_TEXT)
         self.export_button.setEnabled(False)  # greyed, never hidden (OR-20)
-        for button in (self.browse_button, self.colour_button, self.new_button, self.save_button, self.import_button, self.export_button):
+        for button in (self.browse_button, self.local_browse_button, self.colour_button, self.new_button, self.save_button, self.import_button, self.export_button):
             button.setAutoDefault(False)  # Enter never goes to another button, also not to the one with the focus
         self.connect_button.setDefault(True)  # Enter connects the selected connection (D-050)
         self.export_button.setToolTip(EXPORT_LATER_TEXT)
@@ -131,7 +147,12 @@ class ConnectionList(QDialog):
         form.addRow("User", self.user)
         form.addRow("Password", self.password)
         form.addRow("Key file", key_row)
-        form.addRow("Starting folder", self.start_folder)
+        form.addRow("Remote starting folder", self.start_folder)
+        local_row = QHBoxLayout()
+        local_row.addWidget(self.local_start_folder)
+        local_row.addWidget(self.local_browse_button)
+        form.addRow("Local starting folder", local_row)
+        form.addRow("", self.remember_folders)
         colour_row = QHBoxLayout()
         colour_row.addWidget(self.use_colour)
         colour_row.addWidget(self.colour_button)
@@ -179,6 +200,7 @@ class ConnectionList(QDialog):
         self.name.textChanged.connect(self._update_buttons)
         self.host.textChanged.connect(self._update_buttons)
         self.browse_button.clicked.connect(self._browse)
+        self.local_browse_button.clicked.connect(self._browse_local)
         self.colour_button.clicked.connect(self._choose_colour)
         self.use_colour.toggled.connect(self.colour_button.setEnabled)
         self.new_button.clicked.connect(self.clear_fields)
@@ -228,6 +250,8 @@ class ConnectionList(QDialog):
         self.user.setText(connection.user)
         self.key_file.setText(connection.key_file)
         self.start_folder.setText(connection.start_folder)
+        self.local_start_folder.setText(connection.local_start_folder)
+        self.remember_folders.setChecked(connection.remember_folders)
         self.password.clear()
         self.password.setPlaceholderText("")
         try:
@@ -279,8 +303,9 @@ class ConnectionList(QDialog):
     def clear_fields(self) -> None:
         self.list.setCurrentRow(-1)
         self.list.clearSelection()
-        for field in (self.name, self.host, self.user, self.password, self.key_file, self.start_folder):
+        for field in (self.name, self.host, self.user, self.password, self.key_file, self.start_folder, self.local_start_folder):
             field.clear()
+        self.remember_folders.setChecked(False)  # off for a new connection
         self.password.setPlaceholderText("")
         self.protocol.setCurrentIndex(self.protocol.findData(SFTP))
         self.port.setValue(DEFAULT_PORTS[SFTP])
@@ -291,6 +316,11 @@ class ConnectionList(QDialog):
         path, _filter = QFileDialog.getOpenFileName(self, "Key file")
         if path:
             self.key_file.setText(path)
+
+    def _browse_local(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Local starting folder", self.local_start_folder.text().strip())
+        if path:
+            self.local_start_folder.setText(path)
 
     def _choose_colour(self) -> None:
         colour = QColorDialog.getColor(QColor(self.colour), self, "Colour of this connection")
@@ -307,6 +337,8 @@ class ConnectionList(QDialog):
             key_file=self.key_file.text().strip(),
             colour=self.colour if self.use_colour.isChecked() else "",
             start_folder=self.start_folder.text().strip(),
+            local_start_folder=local_start_folder(self.local_start_folder.text()),  # kept absolute: a relative one starts at the home folder
+            remember_folders=self.remember_folders.isChecked(),
         )
 
     def save(self) -> None:
@@ -327,8 +359,20 @@ class ConnectionList(QDialog):
             QMessageBox.information(self, WINDOW_TITLE, box_text(str(error)))
         self.connections = [other for other in self.connections if other is not edited] + [connection]
         saved.save(self.connections)
+        if edited is not None:
+            self.saved.emit(edited.name, connection)  # its open tabs, bookmarks and location profiles follow
         self._fill_list()
         self._select(connection.name)
+
+    def folders_remembered(self, connection: Connection) -> None:
+        """The last folders of a closed tab became its starting folders; the list and the fields follow, so Save can't put back the old ones."""
+        before = next((other for other in self.connections if other.name == connection.name), None)
+        if before is None:
+            return
+        self.connections = [connection if other is before else other for other in self.connections]
+        if self.selected() is connection:
+            self.start_folder.setText(connection.start_folder)
+            self.local_start_folder.setText(connection.local_start_folder)
 
     def select_connection(self, name: str) -> None:
         """Selects this connection, its fields shown and ready to change."""
@@ -357,6 +401,7 @@ class ConnectionList(QDialog):
             return
         self.connections = [other for other in self.connections if other is not connection]
         saved.save(self.connections)
+        self.deleted.emit(connection.name)  # its own bookmarks and location profiles go with it
         try:
             credentials.store.remove(connection.name)
         except CredentialError as error:

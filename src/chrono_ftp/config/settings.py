@@ -1,15 +1,15 @@
 import json
-import os
 from dataclasses import asdict, dataclass, field
 from typing import cast
 
-from chrono_ftp.config.connections import config_folder
+from chrono_ftp.config.connections import config_folder, write_whole
 from chrono_ftp.core.transferoptions import RESUME_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.31"
+__version__ = "settings.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Written through write_whole: escaped text, and no .tmp file left behind on any failure
 # v0.0.31: The connection that was last live, so the connections window starts on it (D-053)
 # v0.0.13: The queue: whether items start by themselves, how long a finished item stays in the list, and whether an error pauses the
 #          queue (FC-02, FC-03); each value is checked on load; how many transfers run at once (FC-01); splitting large files (FC-05)
@@ -84,15 +84,8 @@ def _read(name: str) -> dict[str, object]:
     return cast(dict[str, object], data) if isinstance(data, dict) else {}
 
 
-def _write(name: str, text: str) -> None:
-    path = config_folder() / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as file:
-        file.write(text)
-        file.flush()
-        os.fsync(file.fileno())
-    os.replace(temporary, path)
+def _write(name: str, data: object) -> None:
+    write_whole(config_folder() / name, data, private=False)
 
 
 def load() -> Settings:
@@ -123,7 +116,7 @@ def save(settings: Settings) -> None:
     options = data["transfer_options"]
     if isinstance(options, dict):
         options.pop("delete_source", None)  # a move is chosen for one transfer, never kept
-    _write(FILE_NAME, json.dumps(data, indent=2))
+    _write(FILE_NAME, data)
 
 
 def load_window() -> dict[str, str]:
@@ -132,4 +125,4 @@ def load_window() -> dict[str, str]:
 
 
 def save_window(state: dict[str, str]) -> None:
-    _write(WINDOW_FILE_NAME, json.dumps(state, indent=2))
+    _write(WINDOW_FILE_NAME, state)

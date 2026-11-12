@@ -6,8 +6,10 @@ from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QSpinBox, QSplitter, QStatusBar, QToolBar, QToolButton, QWidget
 
+from chrono_ftp.config.bookmarks import Places
 from chrono_ftp.config.settings import Settings
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry
+from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.transfers.options import Answers
 from chrono_ftp.transfers.queue import Job, TransferQueue
@@ -22,9 +24,12 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.24"
+__version__ = "windowbase.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Navigation (block FH): the bookmarks and profiles, the side with the focus, the bookmark keys; load_folder can hand a
+#          failure to the one who asked, and tell once the folder shows; the steps of each side, the last folders, a saved connection
+#          and an ended or deleted connection go to the navigation part
 # v0.0.24: The row of the tabs, not the tab bar, keeps the height of two lines
 # v0.0.16: The name under which the splitter of the connections window is kept
 # v0.0.15: The name under which the size and place of the connections window are kept
@@ -103,6 +108,11 @@ class WindowBase(QMainWindow):
     countdown: Countdown | None  # the countdown before the step after the queue, while it runs
     when_done_label: QLabel  # the mark in the status bar while a step is chosen for when the queue is done
     closing_when_done: bool  # the person chose to close when the queue is done: closing asks nothing, as nothing is left unsent
+    places: Places  # the bookmarks, location profiles and typed paths, as kept in bookmarks.json (FH-02, FH-03)
+    focused_side: str  # LOCAL or REMOTE of config.bookmarks: the side that had the keyboard focus last; its path is highlighted (FH-01)
+    quiet_local: bool  # the left side is set by the program itself: its move is no step for synchronized browsing (FH-05)
+    bookmark_keys: list[QAction]  # the keys of the bookmarks, on their side
+    places_writable: bool  # False: bookmarks.json is there but can't be read; it is never overwritten then
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -132,7 +142,28 @@ class WindowBase(QMainWindow):
     def _ask(self, session: Session, work: Callable[[RemoteConnection], object], done: Callable[[object], None], refresh_after_failure: bool = False, on_failure: Callable[[], None] | None = None) -> None:
         raise NotImplementedError
 
-    def load_folder(self, session: Session, folder: str) -> None:
+    def load_folder(self, session: Session, folder: str, when_failed: Callable[[Exception], None] | None = None, when_shown: Callable[[], None] | None = None) -> None:
+        raise NotImplementedError
+
+    def _tab_shown(self) -> None:
+        raise NotImplementedError
+
+    def _local_moved(self, session: Session, previous: str, folder: str) -> None:
+        raise NotImplementedError
+
+    def _remote_moved(self, session: Session, previous: str, folder: str) -> None:
+        raise NotImplementedError
+
+    def _remember_folders(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def _connection_saved(self, old: str, connection: Connection) -> None:
+        raise NotImplementedError
+
+    def _sync_ends(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def _connection_deleted(self, name: str) -> None:
         raise NotImplementedError
 
     def _failed(self, session: Session, error: Exception) -> None:
