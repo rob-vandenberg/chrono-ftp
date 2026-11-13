@@ -10,6 +10,7 @@ from typing import override
 from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.connections.base import joined, RemoteConnection, shown_name
+from chrono_ftp.core.transferoptions import plain
 from chrono_ftp.engine.cleanup import EDIT_FOLDER_PREFIX
 from chrono_ftp.transfers.queue import Job, State
 from chrono_ftp.ui.session import EditedFile, is_at_or_below, login_of, no_progress, same_server, Session
@@ -17,9 +18,10 @@ from chrono_ftp.ui.windowbase import EDIT_WAIT_TRIES, NOT_OPENABLE_TEXT, WINDOW_
 from chrono_ftp.ui.plaintext import asked, box_text, fitting, told, wrapped
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowedit.py 0.0.38"
+__version__ = "windowedit.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: A save goes byte for byte under its own name, whatever the transfer settings say of masks, text and names (FD-01 to FD-03)
 # v0.0.38: The name of the edit folders comes from engine/cleanup.py, which finds the leftover ones (FP-04); a double-click on a
 #          server file reaches Edit through windowprogram.py, which knows what the double-click does (FP-01)
 # v0.0.37: The edit of a server file is declared in the base, so a new empty file opens in it (FM-07)
@@ -150,7 +152,7 @@ class EditPart(WindowBase):
             if edited.session.alive:
                 edited.unsent = False
                 # The save is what the person wants there: no question, never skipped as not newer, and the file keeps its own rights.
-                options = replace(self.settings.transfer_options, ask_before_replacing=False, only_newer=False, set_rights=False)
+                options = replace(plain(self.settings.transfer_options), ask_before_replacing=False, only_newer=False, set_rights=False)  # byte for byte, never left out by a mask
                 edited.job = self._add_job(edited.session, copy, edited.folder, True, edited.name, options, by_itself=True)  # a save never waits to be started
                 edited.last_job = edited.job
                 self.status.showMessage(f"Sending {shown_name(edited.name)} back to the server")

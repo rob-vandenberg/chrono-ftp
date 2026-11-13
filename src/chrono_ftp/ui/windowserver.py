@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.connections.base import joined, parent_of, RemoteConnection, RemoteEntry, safe_name, shown_name
 from chrono_ftp.core.errors import RemoteActionFailed
+from chrono_ftp.core.transferoptions import plain
 from chrono_ftp.engine import commands
 from chrono_ftp.engine.compare import compare_folders, Found
 from chrono_ftp.engine.terminal import terminal_arguments
@@ -21,9 +22,10 @@ from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowserver.py 0.0.38"
+__version__ = "windowserver.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The rows ticked in Compare go byte for byte under their own names, whatever the transfer settings say of masks, text and names (FD-01 to FD-03)
 # v0.0.38: Delete asks first unless the person switched that question off (FP-01)
 # v0.0.37: New folder, copy, and owner and permissions moved to windowproperties.py (block FM); the terminal opens in the folder on the
 #          screen (FM-12)
@@ -152,7 +154,7 @@ class ServerPart(WindowBase):
             if session not in self.sessions or not session.alive or session.remote is not remote:
                 self._lost_meanwhile(session)  # nothing is queued: the tab is grey, and Reconnect brings it back
                 return
-            options = replace(self.settings.transfer_options, ask_before_replacing=False, only_newer=False)
+            options = replace(plain(self.settings.transfer_options), ask_before_replacing=False, only_newer=False)  # exactly the rows ticked, byte for byte
             for row in rows:
                 here = os.path.join(local_folder, row.folder) if row.folder else local_folder
                 there = joined(folder, row.folder) if row.folder else folder

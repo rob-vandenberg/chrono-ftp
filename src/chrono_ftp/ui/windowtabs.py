@@ -30,9 +30,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.40"
+__version__ = "windowtabs.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: A tab shows the left side with its own filter, as it left it (FD-06)
 # v0.0.40: The menu of a tab pauses the automatic refresh of that tab and clears its cached listings (FG-15)
 # v0.0.39: A tab shows each side with or without thumbnails, as it left them (FQ-02)
 # v0.0.38: The menu of a tab opens Server Information, greyed while the tab is not connected (FP-03), and the Session Log (FP-02);
@@ -368,6 +369,7 @@ class TabsPart(WindowBase):
             return
         self.local_side.history = session.local_history
         self.local_side.walk_to(session.local_folder)
+        self.local_side.file_list.set_name_mask(session.local_name_mask)  # each tab keeps the filter of both sides (FD-06)
         self.remote_side.clear()
         self.remote_side.history = session.remote_history
         self.remote_side.file_list.name_mask = session.name_mask

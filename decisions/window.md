@@ -43,3 +43,6 @@
 41. [[D-078]] Clipboard copies and the path in the title bar
 42. [[D-079]] Dragging with the right mouse button
 43. [[D-080]] Pausing the automatic refresh and clearing cached listings
+44. [[D-081]] One mask engine
+45. [[D-085]] Selecting by mask
+46. [[D-086]] The filter window

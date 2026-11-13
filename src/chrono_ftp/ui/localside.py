@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QFileSystemWatcher, QModelIndex, Qt, QTimer, Signal
-from PySide6.QtWidgets import QFileSystemModel, QSplitter, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileSystemModel, QHBoxLayout, QSplitter, QTreeView, QVBoxLayout, QWidget
 
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, shown_name
@@ -10,12 +10,13 @@ from chrono_ftp.engine import localfiles
 from chrono_ftp.engine.browsing import typed_local_path
 from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, SideStatus, action_bar, button_row
 from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, FileList, status_text
-from chrono_ftp.ui.pathbar import PathBar
+from chrono_ftp.ui.pathbar import FilterMark, PathBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "localside.py 0.0.40"
+__version__ = "localside.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The active filter shows next to the path; a click changes it, its button clears it (FD-06)
 # v0.0.40: The status line shows the selection totals, or what was typed to find a name, with the hidden and filtered counts (FG-01,
 #          FG-09, FG-13); Back and Forward go several steps from their drop-down, which leaves out folders removed since (FG-10); a folder
 #          chosen in the drop-down of the path field opens (FG-16)
@@ -54,6 +55,7 @@ class LocalSide(QWidget):
     selection_changed = Signal()
     file_opened = Signal(object)
     filter_wanted = Signal()
+    filter_cleared = Signal()
     path_not_found = Signal(object)  # a typed path that is no folder here: the window says so
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -77,6 +79,7 @@ class LocalSide(QWidget):
             self.tree.hideColumn(column)
         self.file_list = FileList(LOCAL_COLUMN_COUNT, FROM_LOCAL, frozenset({FROM_REMOTE}))
         self.path_bar.next_focus = self.file_list
+        self.filter_mark = FilterMark()
         self.file_list.setAlternatingRowColors(True)
         self.parts = QSplitter(Qt.Orientation.Horizontal)
         self.parts.setChildrenCollapsible(False)
@@ -88,7 +91,12 @@ class LocalSide(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(1)
         layout.addLayout(button_row(self.navigation, self.actions_bar))
-        layout.addWidget(self.path_bar)
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(2)
+        path_row.addWidget(self.path_bar, 1)
+        path_row.addWidget(self.filter_mark)
+        layout.addLayout(path_row)
         layout.addWidget(self.parts, 1)  # all the height goes to the lists
         layout.addWidget(self.status)
         selection = self.tree.selectionModel()
@@ -101,6 +109,8 @@ class LocalSide(QWidget):
         self.navigation.history_of = self._history_of
         self.navigation.history_chosen.connect(self._history_chosen)
         self.status.filtered_clicked.connect(self.filter_wanted)
+        self.filter_mark.change_wanted.connect(self.filter_wanted)
+        self.filter_mark.clear_wanted.connect(self.filter_cleared)
         self.navigation.wanted.connect(self._button_pressed)
         self.path_line.returnPressed.connect(self._path_typed)
         self.path_bar.folder_chosen.connect(self._part_chosen)
@@ -180,6 +190,7 @@ class LocalSide(QWidget):
         view = self.file_list
         self.count_label.setText(status_text(view))
         self.status.show_counts(view.hidden_count, view.dot_count, view.show_hidden, view.filtered_count, view.name_mask)
+        self.filter_mark.show_mask(view.name_mask)
 
     def _history_of(self, name: str) -> list[str]:
         """The folders Back or Forward lead to; one removed since is no step, and goes from the history (FG-10)."""

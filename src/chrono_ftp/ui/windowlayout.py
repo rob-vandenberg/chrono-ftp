@@ -5,20 +5,24 @@ from collections.abc import Callable
 from typing import override
 
 from PySide6.QtCore import QByteArray, QPoint
-from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu
+from PySide6.QtWidgets import QDialog, QMenu
 
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.config.bookmarks import LOCAL, REMOTE
+from chrono_ftp.config.settings import remember_mask
 from chrono_ftp.ui.filelist import FileList
+from chrono_ftp.ui.maskdialog import FILTER, MaskDialog
 from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.queueview import LOWEST_HEIGHT
 from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.40"
+__version__ = "windowlayout.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The filter is a window with the mask field and its history, and Clear; each tab keeps the filter of both sides; the button
+#          next to the path clears it (FD-06)
 # v0.0.40: The menu of a list also moves to the other side and has This File Only, Select and Copy to Clipboard (block FG); it opens
 #          and goes again after use; the settings also apply block FG
 # v0.0.39: The settings also apply the looks: file colours, thumbnails and toolbars (block FQ)
@@ -128,9 +132,32 @@ class LayoutPart(WindowBase):
                 self.status.showMessage(SETTINGS_NOT_KEPT_TEXT)
 
     def _ask_mask(self, view: FileList) -> None:
-        mask, given = QInputDialog.getText(self, "Filter", "Show only names like (for example *.txt); empty shows all", QLineEdit.EchoMode.Normal, view.name_mask)
-        if given:
-            view.set_name_mask(mask.strip())
-            session = self.current()
-            if session is not None and view is self.remote_side.file_list:
-                session.name_mask = view.name_mask
+        """The filter window of one side (FD-06): the mask field with the masks typed before; Clear shows every file again."""
+        dialog = MaskDialog(FILTER, view.name_mask, self.settings.mask_history, self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted.value
+        mask = dialog.chosen_mask()
+        dialog.deleteLater()
+        if accepted:
+            self._set_filter(view, mask)
+            self.remember_mask(mask)
+
+    def _set_filter(self, view: FileList, mask: str) -> None:
+        """The filter of one side, kept by the tab shown for that side (FD-06)."""
+        view.set_name_mask(mask)
+        session = self.current()
+        if session is not None and view is self.remote_side.file_list:
+            session.name_mask = view.name_mask
+        elif session is not None and view is self.local_side.file_list:
+            session.local_name_mask = view.name_mask
+
+    @override
+    def remember_mask(self, mask: str) -> None:
+        """A mask that was used is offered first in every mask field from now on, also after a restart."""
+        history = remember_mask(self.settings.mask_history, mask)
+        if history == self.settings.mask_history:
+            return
+        self.settings = replace(self.settings, mask_history=history)
+        try:
+            saved_settings.save(self.settings)
+        except OSError:
+            self.status.showMessage(SETTINGS_NOT_KEPT_TEXT)

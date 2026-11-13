@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.connections.base import joined, parent_of, RemoteConnection, RemoteEntry, shown_name
 from chrono_ftp.core.errors import ConnectionLost, RemoteActionFailed
+from chrono_ftp.core.presets import preset_for
 from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.transfers.options import Answer, Answers, Choice, Conflict, usable
 from chrono_ftp.transfers.queue import ENDED, LINE, Job, State
@@ -24,9 +25,12 @@ from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, Windo
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtransfers.py 0.0.40"
+__version__ = "windowtransfers.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: A transfer starts with the first preset whose rules fit its host, user and folders, also without the transfer window; the
+#          window names it and offers the others (FD-04), ~ in its folder rules being the home folder of each side; the masks used are
+#          remembered
 # v0.0.40: A transfer can be a move from the start (F6, Move Here of a right-button drag): ticked in the transfer window, or asked
 #          first where that window is off (FG-04, FG-14)
 # v0.0.38: A drop asks first: through the transfer window, or a short question where that window is off; with the question switched off
@@ -167,7 +171,15 @@ class TransfersPart(WindowBase):
         if not sources or session not in self.sessions:
             return
         never_again = False
-        options, reasons = usable(self.settings.transfer_options, session.capabilities, session.connection.protocol, upload)  # what will happen
+        source_folder = os.path.dirname(sources[0]) if upload else parent_of(sources[0])
+        remote_folder, local_folder = (target, source_folder) if upload else (source_folder, target)
+        fitting_preset = preset_for(self.settings.presets, session.connection.host, session.connection.user, remote_folder, local_folder, session.home_folder, os.path.expanduser("~"))  # FD-04
+        wanted = fitting_preset.options if fitting_preset is not None else self.settings.transfer_options
+
+        def options_of(chosen: TransferOptions) -> tuple[TransferOptions, dict[str, str]]:
+            return usable(chosen, session.capabilities, session.connection.protocol, upload)
+
+        options, reasons = options_of(wanted)  # what will happen
         window_wanted = self.settings.show_transfer_window and (self.settings.confirm_drop or not dropped)
         if not window_wanted and (move or (dropped and self.settings.confirm_drop)):
             count = DROP_TEXTS[0] if len(sources) == 1 else DROP_TEXTS[1].format(count=len(sources))
@@ -180,7 +192,7 @@ class TransfersPart(WindowBase):
             def browse(start: str) -> str | None:
                 return self._pick_remote_folder(session, start) if upload else self._pick_local_folder(start)
 
-            dialog = TransferDialog(upload, names, target, options, reasons, browse, self, session.capabilities.durable, move)
+            dialog = TransferDialog(upload, names, target, options, reasons, browse, self, session.capabilities.durable, move, self.settings.presets, fitting_preset.name if fitting_preset is not None else "", self.settings.transfer_options, options_of, self.settings.mask_history)
             accepted = dialog.exec() == QDialog.DialogCode.Accepted.value
             target, options, never_again, to_make = dialog.folder(), dialog.chosen_options(), dialog.never_again.isChecked(), dialog.to_make
             dialog.deleteLater()  # its parent is the window: without this every transfer would leave one behind
@@ -190,6 +202,8 @@ class TransfersPart(WindowBase):
             to_make = ""
             options = replace(options, delete_source=move)  # asked above where it is a move
         chosen = options
+        if options.file_mask.strip():
+            self.remember_mask(options.file_mask)  # offered first in every mask field from now on
 
         def start(make: str = to_make) -> None:
             self._start(session, sources, target, upload, chosen, never_again, make)

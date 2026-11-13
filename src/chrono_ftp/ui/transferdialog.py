@@ -5,17 +5,20 @@ import os
 from collections.abc import Callable
 from dataclasses import replace
 
-from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_ftp.connections.base import normalized, shown_name
+from chrono_ftp.core.presets import STANDARD_NAME, Preset
 from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.ui.transferoptionsform import TransferOptionsDialog, summary_text
 from chrono_ftp.ui.plaintext import box_text, fitting, plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "transferdialog.py 0.0.40"
+__version__ = "transferdialog.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The preset whose rules fit the transfer is chosen and named; another can be chosen, and its settings show at once (FD-04);
+#          Transfer settings offers the masks typed before
 # v0.0.40: The move can be ticked from the start: F6 and Move Here of a right-button drag (FG-04, FG-14)
 # v0.0.36: The question about a missing local folder can be given its title: the main window's title holds the version (D-059)
 # v0.0.12: Initial: the target folder with Browse, the options in one line, Transfer settings, move, and never show again (FB-09, FB-08);
@@ -43,14 +46,23 @@ LOCAL_FILE_TEXT: str = "This is a file on this computer, not a folder. Please ch
 NOT_WRITABLE_HERE_TEXT: str = "Files can't be saved in this folder on this computer. Please choose another folder."
 EMPTY_TEXT: str = "Please give the folder to transfer to."
 NOT_WHOLE_PATH_TEXT: str = "Please give the whole path of the folder, starting with / (or ~ for your home folder)."
+PRESET_TIP: str = "The named set of transfer settings this transfer starts with: the first preset whose rules fit, else the settings of Settings, Transfers. Presets are made in Settings, Presets."
+OptionsOf = Callable[[TransferOptions], tuple[TransferOptions, dict[str, str]]]  # what this connection can do of the options, and why not the rest
 
 
 class TransferDialog(QDialog):
     """browse: picks a target folder starting at the one given, or None when the person cancels."""
 
-    def __init__(self, upload: bool, names: list[str], target: str, options: TransferOptions, reasons: dict[str, str], browse: Callable[[str], str | None], parent: QWidget | None = None, durable: bool = True, move: bool = False) -> None:
+    def __init__(self, upload: bool, names: list[str], target: str, options: TransferOptions, reasons: dict[str, str], browse: Callable[[str], str | None], parent: QWidget | None = None, durable: bool = True, move: bool = False,
+                 presets: tuple[Preset, ...] = (), preset: str = "", standard: TransferOptions | None = None, options_of: OptionsOf | None = None, history: tuple[str, ...] = ()) -> None:
+        """presets: the person's presets; preset: the name of the one that fits ("" for the standard set, standard); options_of: what
+        this connection can do of a preset's options, for one chosen here."""
         super().__init__(parent)
         self.upload: bool = upload
+        self.presets: tuple[Preset, ...] = presets
+        self.standard: TransferOptions = standard if standard is not None else options
+        self.options_of: OptionsOf | None = options_of
+        self.history: tuple[str, ...] = history
         self.options: TransferOptions = options
         self.reasons: dict[str, str] = reasons
         self.browse: Callable[[str], str | None] = browse
@@ -68,6 +80,15 @@ class TransferDialog(QDialog):
         self.browse_button.setToolTip("Choose the folder on the server" if upload else "Choose the folder on this computer")
         self.summary = plain_label(summary_text(options, upload))
         self.summary.setWordWrap(True)
+        self.preset = QComboBox()
+        self.preset.addItem(STANDARD_NAME, "")
+        for item in presets:
+            self.preset.addItem(item.name, item.name)
+        self.preset.setCurrentIndex(max(0, self.preset.findData(preset)))
+        self.preset.setToolTip(PRESET_TIP)
+        self.preset.setVisible(bool(presets))
+        self.preset_label = QLabel("Preset")
+        self.preset_label.setVisible(bool(presets))
         self.settings_button = QPushButton("Transfer settings…")
         self.settings_button.setToolTip("The settings for this transfer only; Settings keeps the ones every transfer starts with")
         self.move_tick = QCheckBox("Delete the source once it arrived")
@@ -87,6 +108,8 @@ class TransferDialog(QDialog):
         target_row.addWidget(self.target, 1)
         target_row.addWidget(self.browse_button)
         settings_row = QHBoxLayout()
+        settings_row.addWidget(self.preset_label)
+        settings_row.addWidget(self.preset)
         settings_row.addWidget(self.summary, 1)
         settings_row.addWidget(self.settings_button)
         layout = QVBoxLayout(self)
@@ -100,6 +123,7 @@ class TransferDialog(QDialog):
         self.browse_button.clicked.connect(self._browse)
         self.target.textChanged.connect(self.problem.hide)  # typed or browsed: what was said of the folder before no longer holds
         self.settings_button.clicked.connect(self._settings)
+        self.preset.currentIndexChanged.connect(self._preset_chosen)
         self.buttons.accepted.connect(self._accept)
         self.buttons.rejected.connect(self.reject)
 
@@ -109,8 +133,20 @@ class TransferDialog(QDialog):
             self.original_target = chosen
             self.target.setText(shown_name(chosen))
 
+    def preset_name(self) -> str:
+        """The preset chosen; "" for the standard set."""
+        data = self.preset.currentData()
+        return data if isinstance(data, str) else ""
+
+    def _preset_chosen(self, _index: int) -> None:
+        """Another preset: its settings, as far as this connection can do them, replace what was shown (FD-04)."""
+        name = self.preset_name()
+        wanted = next((item.options for item in self.presets if item.name == name), self.standard)
+        self.options, self.reasons = self.options_of(wanted) if self.options_of is not None else (wanted, self.reasons)
+        self.summary.setText(summary_text(self.options, self.upload))
+
     def _settings(self) -> None:
-        dialog = TransferOptionsDialog(self.options, self.reasons, self)
+        dialog = TransferOptionsDialog(self.options, self.reasons, self, self.history)
         if dialog.exec() == QDialog.DialogCode.Accepted.value:
             self.options = dialog.form.chosen()
             self.summary.setText(summary_text(self.options, self.upload))

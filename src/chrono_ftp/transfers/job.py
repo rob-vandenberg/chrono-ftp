@@ -12,9 +12,10 @@ from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.transfers.options import Action, Answer, Answers, Conflict
 
 # --- Version ------------------------------------------------------------
-__version__ = "job.py 0.0.13"
+__version__ = "job.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The size a converted text has at the target, for a later run of the job (FD-02)
 # v0.0.13: Queue control (FC-02, FC-03): a job can be paused and knows when it continues a pause, keeps the answers given about its
 #          files for a resume or a retry, has a speed limit of its own, can be deleted while it runs, and knows when it was done; what
 #          rsync sent of a move that broke off; the tab it belongs to; each file sent, with its source as it was then; why it still
@@ -76,6 +77,8 @@ class Job:
     rsync_started: set[str] = field(default_factory=set[str])  # the files rsync named in this run: it names a file when it starts it
     sent_as: dict[str, tuple[int, float | None, bool]] = field(default_factory=dict[str, tuple[int, float | None, bool]])  # each file
     # sent in an earlier run: its source's size and date then, and whether that date was set there; sent again when either changed
+    arrived_as: dict[str, int] = field(default_factory=dict[str, int])  # of those, a text whose converted copy has another size than
+    # its source: the size it has at the target, which a later run compares with what is there (FD-02)
     rsync_sent: set[str] = field(default_factory=set[str])  # of those, the ones known to have arrived whole (rsyncway.arrived)
     paused_parts: dict[str, str] = field(default_factory=dict[str, str])  # the notes of parts a pause kept, with the resume setting they
     # would have had without the pause: a stop or a delete ends the pause, and they go back to it (filebyfile.end_pause_notes)

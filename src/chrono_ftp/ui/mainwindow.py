@@ -41,9 +41,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.40"
+__version__ = "mainwindow.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Block FD, masks: the button next to the path of each side clears its filter
 # v0.0.40: Block FG, selection and keys (windowselection.py); Shift+F6 moves on the server
 # v0.0.39: Block FQ, looks: the file colours, the thumbnail view of each side and the toolbar menu (windowlooks.py); closing stops the
 #          reading of thumbnails on this computer
@@ -178,6 +179,8 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.remote_side.file_list.customContextMenuRequested.connect(self._remote_menu_wanted)
         self.local_side.filter_wanted.connect(lambda: self._ask_mask(self.local_side.file_list))
         self.remote_side.filter_wanted.connect(lambda: self._ask_mask(self.remote_side.file_list))
+        self.local_side.filter_cleared.connect(lambda: self._set_filter(self.local_side.file_list, ""))
+        self.remote_side.filter_cleared.connect(lambda: self._set_filter(self.remote_side.file_list, ""))
         self.remote_side.refresh_wanted.connect(self.refresh)
         self.edited = {}  # the files open in a program, by their copy on this computer
         self.fetching = set()  # the edits still on their way here: a second press opens no second copy

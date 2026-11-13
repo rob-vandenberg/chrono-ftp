@@ -32,9 +32,10 @@ from tests.fakeservers import PASSWORD, Passwd, USER, ssh_server
 from tests.ui.test_ui_sessions import connected, names_on_the_right, select, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_program.py 0.0.39"
+__version__ = "test_ui_program.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The Presets page follows Transfers (FD-04)
 # v0.0.39: The Colours page follows Panels (FQ-01); a test that transfers waits until its job has ended, not only until the file is
 #          there, so closing its window never finds a transfer still finishing (AGENTS.md 4.4.4)
 # v0.0.38: Initial: block FP in the window (FP-01 to FP-06); review: the automatic refresh writes a summary to the log and waits for a
@@ -63,10 +64,10 @@ def test_the_settings_window_has_its_pages_and_keeps_every_choice(qtbot: QtBot) 
     chosen = saved_settings.Settings(tree_place=saved_settings.TREE_ABOVE, show_hidden=False, transfers_at_once=3, last_connection="Shop", confirm_delete=False, double_click=saved_settings.TRANSFER, refresh_seconds=60, columns_per_tab=True, log_level=NORMAL, log_size_megabytes=7, logs_kept=1)
     dialog = SettingsDialog(chosen)
     qtbot.addWidget(dialog)
-    assert [dialog.page_list.item(row).text() for row in range(dialog.page_list.count())] == ["General", "Panels", "Colours", "Transfers", "Queue", "Confirmations", "Log"]
-    assert list(PAGES) == ["General", "Panels", "Colours", "Transfers", "Queue", "Confirmations", "Log"]
+    assert [dialog.page_list.item(row).text() for row in range(dialog.page_list.count())] == ["General", "Panels", "Colours", "Transfers", "Presets", "Queue", "Confirmations", "Log"]
+    assert list(PAGES) == ["General", "Panels", "Colours", "Transfers", "Presets", "Queue", "Confirmations", "Log"]
     dialog.show_page("Confirmations")
-    assert dialog.pages.currentIndex() == 5
+    assert dialog.pages.currentIndex() == 6
     assert dialog.chosen() == chosen  # unchanged, every value comes back as it was, also the last connection it does not show
 
 

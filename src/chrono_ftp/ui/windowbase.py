@@ -27,9 +27,10 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.40"
+__version__ = "windowbase.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Block FD: a mask that was used is remembered for every mask field (remember_mask)
 # v0.0.40: Block FG: the actions of each list (list_actions); the settings, the greyed state and the menu items of block FG; a transfer can be a move
 # v0.0.39: Block FQ: the thumbnails of each side and their thread on this computer, the toolbars; the looks applied, and entered per tab
 # v0.0.38: Block FP: the automatic refresh, the open Session Log and Server Information windows, the columns per tab, the program's
@@ -141,6 +142,9 @@ class WindowBase(QMainWindow):
         return text.strip() if given and text.strip() else None
 
     def current(self) -> Session | None:
+        raise NotImplementedError
+
+    def remember_mask(self, mask: str) -> None:
         raise NotImplementedError
 
     def _connect(self, session: Session) -> None:

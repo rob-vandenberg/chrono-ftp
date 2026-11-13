@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import BinaryIO, cast, override
 
 import asyncssh
+import pyftpdlib.handlers.ftp.data as data_handlers
 import pytest
 
 from chrono_ftp.connections import base as base_module
@@ -37,9 +38,11 @@ from tests.test_transfer_parts import small_requests
 from tests.test_transfers import run_all, wait_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_transfer_edges.py 0.0.12"
+__version__ = "test_transfer_edges.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: A broken-off FTP upload whose bytes the server has not taken in yet keeps no part and never says it did; the test of a
+#          source that can't be read here allows that outcome, as the server may not have taken in what was sent when the job ends
 # v0.0.12: Initial: a broken-off append is undone, a later step of a resumed file, a dropped data connection, a full disk here, many
 #          items left out, dates through a local link, a lost connection while resolving a link, the one form of a server path; a source
 #          that can't be read here; the ailing disk typed without ignore comments; whether a part was kept, told truly; an append whose
@@ -327,11 +330,44 @@ def test_a_source_that_can_not_be_read_here_is_this_computers_problem(server: Se
         failed = up(server, tmp_path / "big.bin", options)
     assert failed.state == State.FAILED
     part = root / ("big.bin" + PART_SUFFIX)
-    told = f" {PART_KEPT_TEXT}" if holds_bytes(part) else ""  # kept only when the part is there; nothing written, nothing to tell
-    assert failed.message == f"{LOCAL_READ_TEXT.format(reason='Input/output error')}{told}"  # this computer's disk, not the line
+    told = [f" {PART_KEPT_TEXT}"] if holds_bytes(part) else ["", f" {PART_GONE_TEXT}"]  # kept only where the server holds something of it
+    assert failed.message in [f"{LOCAL_READ_TEXT.format(reason='Input/output error')}{text}" for text in told]  # this computer's disk, not the line
     assert not (root / "big.bin").exists()
     again = up(server, tmp_path / "big.bin", options)
     assert again.state == State.DONE and (root / "big.bin").read_bytes() == content
+
+
+def test_a_part_the_server_holds_nothing_of_yet_is_neither_kept_nor_told(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server takes in the data connection only once the test lets it, as a busy server may: when the read here fails, nothing sent
+    is on the server's disk yet, so there is no part to keep, and the job never says that what arrived is kept."""
+    root = tmp_path / "server"
+    root.mkdir()
+    content = os.urandom(BIG)
+    (tmp_path / "big.bin").write_bytes(content)
+    release = threading.Event()
+    real_readable = data_handlers.DTPHandler.readable
+
+    def readable(handler: data_handlers.DTPHandler) -> bool:
+        return release.is_set() and bool(real_readable(handler))
+
+    with ftp_server(root) as port:
+        settings = Connection(name="T", host="127.0.0.1", port=port, user=USER, protocol=FTP)
+        ftp = FtpConnection(settings, PASSWORD)
+        ftp.connect()
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(data_handlers.DTPHandler, "readable", readable)
+                patch.setattr(base_module, "Path", ailing_disk(readable=BIG // 16))
+                failed = up((ftp, settings, root), tmp_path / "big.bin", TransferOptions(resume=RESUME_ON))
+                release.set()
+            assert failed.state == State.FAILED
+            assert failed.message == f"{LOCAL_READ_TEXT.format(reason='Input/output error')} {PART_GONE_TEXT}"  # nothing of it there: no part kept
+            assert not (root / ("big.bin" + PART_SUFFIX)).exists()
+            again = up((ftp, settings, root), tmp_path / "big.bin", TransferOptions(resume=RESUME_ON))
+            assert again.state == State.DONE and (root / "big.bin").read_bytes() == content
+        finally:
+            release.set()
+            ftp.close()
 
 
 # --- review round 5

@@ -1,5 +1,4 @@
 import datetime
-import fnmatch
 import os
 from collections.abc import Callable, Iterable
 from typing import cast, override
@@ -11,15 +10,20 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QMenu, QStyle, QT
 from chrono_ftp.config.settings import SHORT
 from chrono_ftp.connections.base import RemoteEntry, shown_name
 from chrono_ftp.core.filecolours import ColourRule, rule_for
+from chrono_ftp.core.masks import EVERYTHING, Mask, MaskError, fits, named, parse
 from chrono_ftp.engine.listing import extension_of, natural_key, plain_key, same_extension, type_ahead
 from chrono_ftp.engine.listing import size_text as size_text  # given on: the sides and the tests read them here
 from chrono_ftp.engine.listing import summary_text as summary_text
 from chrono_ftp.ui.menus import open_menu
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.40"
+__version__ = "filelist.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The filter and selecting by mask ask the one mask engine: include and exclude, paths, sizes and dates (FD-05, FD-06); folders
+#          always stay in view; a mask with only an excluded part selects every file but that; the + and − of the number pad never
+#          start finding a name, and say so where their action is greyed; with Folders too, what the mask leaves out after its | is
+#          left out of the folders as well
 # v0.0.40: Block FG: type-ahead with Tab to the next match (FG-01); select all, invert, clear, the same extension, the previous selection
 #          and Insert (FG-02); the two-pane selection mode, where an action works on the focused file when nothing is marked (FG-03);
 #          the file under the cursor only (FG-05); the size format (FG-06); the column header menu (FG-07); natural sort with folders
@@ -245,6 +249,7 @@ class FileList(QTreeView):
     view_moved = Signal()  # other rows came into view: scrolled, resized, or another folder (FQ-02)
     dropped = Signal(str, object, object)  # where it came from, the paths of an outside drag, the name of the folder it fell on ("" for this folder)
     right_dropped = Signal(str, object, object)  # the same for a drag made with the right mouse button: the window asks with a menu (FG-14)
+    keypad_refused = Signal(bool)  # the number pad's + (True) or − reached the list: its action is greyed (FD-05)
     typing_changed = Signal(str)  # what was typed to find a name; "" once it starts afresh (FG-01)
 
     def __init__(self, column_count: int, kind: str, accepts: frozenset[str], parent: QWidget | None = None) -> None:
@@ -271,6 +276,7 @@ class FileList(QTreeView):
         self.accepts: frozenset[str] = accepts
         self.show_hidden: bool = True
         self.name_mask: str = ""  # only names that fit, like *.txt
+        self.parsed_mask: Mask = EVERYTHING  # the filter as the mask engine reads it (FD-06)
         self.has_parent: bool = False
         self.all_entries: list[RemoteEntry] = []
         style = self.style()
@@ -607,6 +613,31 @@ class FileList(QTreeView):
         self.name_mask = mask
         self._fill({entry.name for entry in self.selected_entries()}, None)
 
+    def select_by_mask(self, mask: Mask, select: bool, folders_too: bool = False) -> None:
+        """Num+ and Num−: the files a pattern of the mask names are marked, or unmarked; the rest of the selection stays. A pattern ending
+        in / names folders; with folders_too, folders whose names fit the other patterns count as well, and then every pattern after the |
+        leaves a folder out too (FD-05). A mask with only a part after the | chooses every file but what it leaves out, as the filter shows
+        it; folders then only with folders_too."""
+        only_left_out = not mask.include_files and not mask.include_folders
+        folder = self.folder or None
+        file_part = Mask(include_files=mask.include_files, exclude_files=mask.exclude_files)
+
+        def left_out_as_file(name: str) -> bool:
+            return bool(mask.exclude_files) and not fits(Mask(exclude_files=mask.exclude_files), name, False, folder)
+
+        def chosen(entry: RemoteEntry) -> bool:
+            if not entry.is_folder:
+                size = entry.size if entry.size_known else None
+                return (fits if only_left_out else named)(mask, entry.name, False, folder, size, entry.modified)
+            if only_left_out:
+                return folders_too and fits(mask, entry.name, True, folder) and not left_out_as_file(entry.name)
+            if named(mask, entry.name, True, folder):
+                return not (folders_too and left_out_as_file(entry.name))
+            return folders_too and named(file_part, entry.name, False, folder) and fits(Mask(exclude_folders=mask.exclude_folders), entry.name, True, folder)
+
+        rows = self.rows_selection(row for row, entry in enumerate(self.files.rows) if entry is not None and chosen(entry))
+        self._apply(rows, QItemSelectionModel.SelectionFlag.Select if select else QItemSelectionModel.SelectionFlag.Deselect)
+
     def set_file_colours(self, rules: tuple[ColourRule, ...], shown: bool = True) -> None:
         """The person's file colours (FQ-01); shown False leaves every row as its side shows it."""
         self.files.set_colours(rules, shown)
@@ -655,10 +686,18 @@ class FileList(QTreeView):
     def _fits(self, entry: RemoteEntry) -> bool:
         if not self.show_hidden and entry.name.startswith("."):
             return False
-        return not self.name_mask or entry.is_folder or fnmatch.fnmatch(entry.name.casefold(), self.name_mask.casefold())
+        if not self.name_mask or entry.is_folder:
+            return True  # folders always stay in view (FD-06)
+        if self.parsed_mask.empty:
+            return True
+        return fits(self.parsed_mask, entry.name, False, self.folder or None, entry.size if entry.size_known else None, entry.modified)
 
     def _fill(self, keep: set[str], current: str | None) -> None:
         self.stop_typing()  # other rows: what was typed searched the rows before (FG-01)
+        try:
+            self.parsed_mask = parse(self.name_mask)
+        except MaskError:
+            self.parsed_mask = EVERYTHING  # a filter that can't be read hides nothing (OR-15); the filter window never takes one
         shown = [entry for entry in self.all_entries if self._fits(entry)]
         dotted = [entry for entry in self.all_entries if entry.name.startswith(".")]
         self.dot_count = len(dotted)
@@ -684,8 +723,13 @@ class FileList(QTreeView):
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """A typed letter finds a name (FG-01): Backspace takes the last letter back, Escape starts afresh; Space marks in the two-pane mode."""
+        """A typed letter finds a name (FG-01): Backspace takes the last letter back, Escape starts afresh; Space marks in the two-pane mode.
+        The + and − of the number pad belong to selecting by mask (FD-05): they never start finding a name, also while that is greyed."""
         key = event.key()
+        if event.modifiers() & Qt.KeyboardModifier.KeypadModifier and key in (Qt.Key.Key_Plus, Qt.Key.Key_Minus):
+            event.accept()
+            self.keypad_refused.emit(key == Qt.Key.Key_Plus)
+            return
         held = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
         if self.typed and not held:
             if key == Qt.Key.Key_Escape:

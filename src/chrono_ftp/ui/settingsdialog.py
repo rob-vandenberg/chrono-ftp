@@ -11,12 +11,15 @@ from chrono_ftp.core.masks import LONGEST_MASK
 from chrono_ftp.core.logrules import DEBUG, DETAILED, LEAST_SIZE_MEGABYTES, MOST_KEPT, MOST_SIZE_MEGABYTES, NORMAL, OFF
 from chrono_ftp.ui.colourrules import ColourRulesEditor
 from chrono_ftp.ui.queueview import AT_ONCE_TEXT, AT_ONCE_TIP
-from chrono_ftp.ui.transferoptionsform import RIGHTS_INCOMPLETE_TEXT, TransferOptionsForm
+from chrono_ftp.ui.presetseditor import PresetsEditor
+from chrono_ftp.ui.transferoptionsform import TransferOptionsForm
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.40"
+__version__ = "settingsdialog.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Masks (block FD): the Transfers page has the file mask, text and names tabs (FD-01 to FD-03); a Presets page with the named
+#          sets of transfer settings and their rules (FD-04); the history of masks stays as it is
 # v0.0.40: Selection and keys (block FG): the key set and the path in the title bar on the General page; the two-pane selection mode,
 #          the size format, natural sort and moving by a right-button drag on the Panels page
 # v0.0.39: Looks (block FQ): a Colours page with the rules of file colours (FQ-01); the largest file and the names that get a thumbnail
@@ -31,7 +34,7 @@ __version__ = "settingsdialog.py 0.0.40"
 # v0.0.5: Initial: where the folder tree is (the owner)
 
 WINDOW_TITLE: str = "Settings"
-PAGES: tuple[str, ...] = ("General", "Panels", "Colours", "Transfers", "Queue", "Confirmations", "Log")
+PAGES: tuple[str, ...] = ("General", "Panels", "Colours", "Transfers", "Presets", "Queue", "Confirmations", "Log")
 TREE_LABELS: dict[str, str] = {TREE_LEFT: "To the left of the file list", TREE_ABOVE: "Above the file list", TREE_HIDDEN: "Hidden"}
 GO_ON_TEXT: str = "Go on with the next item"
 PAUSE_TEXT: str = "Pause the queue"
@@ -75,6 +78,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(WINDOW_TITLE)
         self.last_connection: str = settings.last_connection  # not shown here, and kept as it is
         self.toolbars = settings.toolbars  # chosen on the toolbars themselves (FQ-03), and kept as they are
+        self.mask_history = settings.mask_history  # grows where a mask is used, and kept as it is
         self.clean_up_callback: Callable[[], bool] | None = clean_up
         self.pages = QStackedWidget()
         self.page_list = QListWidget()
@@ -162,7 +166,7 @@ class SettingsDialog(QDialog):
         colour_page.addWidget(self.file_colours)
 
         # Transfers
-        self.transfer_options = TransferOptionsForm()
+        self.transfer_options = TransferOptionsForm(history=settings.mask_history)
         self.transfer_options.set_options(settings.transfer_options)  # the defaults hold for every connection: nothing is greyed here
         self.show_transfer_window = QCheckBox("Show the transfer window before each upload and download")
         self.show_transfer_window.setToolTip("It shows the target folder and the settings of a transfer before it starts")
@@ -170,6 +174,11 @@ class SettingsDialog(QDialog):
         transfers = QVBoxLayout()
         transfers.addWidget(self.show_transfer_window)
         transfers.addWidget(self.transfer_options)
+
+        # Presets
+        self.presets = PresetsEditor(settings.presets, self.transfer_options.chosen, settings.mask_history)
+        presets = QVBoxLayout()
+        presets.addWidget(self.presets)
 
         # Queue
         self.keep_done = QSpinBox()
@@ -231,7 +240,7 @@ class SettingsDialog(QDialog):
         log.addRow("Older logs kept", self.logs_kept)
         log.addRow("Written to", self.log_place)
 
-        for layout in (general, panels, colour_page, transfers, queue, confirmations, log):
+        for layout in (general, panels, colour_page, transfers, presets, queue, confirmations, log):
             page = QWidget()
             holder = QVBoxLayout(page)
             box = QGroupBox(PAGES[self.pages.count()])
@@ -244,6 +253,7 @@ class SettingsDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.transfer_options.changed.connect(self._check)
+        self.presets.form.changed.connect(self._check)
         body = QHBoxLayout()
         body.addWidget(self.page_list)
         body.addWidget(self.pages, 1)
@@ -261,8 +271,9 @@ class SettingsDialog(QDialog):
     def _check(self) -> None:
         ok = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok is not None:
-            ok.setEnabled(self.transfer_options.acceptable())  # a rights value that is not complete is never kept
-            ok.setToolTip("" if self.transfer_options.acceptable() else RIGHTS_INCOMPLETE_TEXT)
+            acceptable = self.transfer_options.acceptable() and self.presets.acceptable()  # a rights value that is not complete is never kept
+            ok.setEnabled(acceptable)
+            ok.setToolTip(self.transfer_options.problem_text() or self.presets.form.problem_text())
 
     def chosen(self) -> Settings:
         refresh = self.refresh.value()
@@ -297,4 +308,6 @@ class SettingsDialog(QDialog):
             natural_sort=self.natural_sort.isChecked(),
             title_path=place if isinstance(place := self.title_path.currentData(), str) else TITLE_SHORT,
             drag_move=self.drag_move.isChecked(),
+            presets=self.presets.chosen(),
+            mask_history=self.mask_history,
         )

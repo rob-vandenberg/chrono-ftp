@@ -25,9 +25,10 @@ from tests.fakeservers import ssh_server
 from tests.ui.test_ui_sessions import connected, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_selection.py 0.0.40"
+__version__ = "test_ui_selection.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The Select submenu ends with Select by Mask and Unselect by Mask (FD-05)
 # v0.0.40: Review: Select All, Invert, a key and a refresh stay quick on 10,000 files; typing starts afresh when the list is filled again or something opens; a right-click never opens, also on a desktop
 #          that opens with one click
 # v0.0.40: Initial: block FG on the screen: type-ahead, the selection keys on the list with the focus (OR-21), the two-pane mode, the key
@@ -313,7 +314,7 @@ def test_the_selection_items_are_in_the_menu_of_each_list_and_greyed_with_a_reas
     select = submenus["Select"]
     assert isinstance(select, QMenu)
     texts = [action.text() for action in select.actions()]
-    assert texts == ["Select All", "Invert Selection", "Clear Selection", "Select the Same Extension", "Restore the Previous Selection", "Mark and Move Down"]
+    assert texts == ["Select All", "Invert Selection", "Clear Selection", "Select the Same Extension", "Restore the Previous Selection", "Mark and Move Down", "Select by Mask…", "Unselect by Mask…"]
     clear = next(action for action in select.actions() if action.text() == "Clear Selection")
     assert not clear.isEnabled() and clear.toolTip()  # nothing selected: greyed, and why (OR-20)
     assert set(submenus) == {"This File Only", "Select", "Copy to Clipboard"}

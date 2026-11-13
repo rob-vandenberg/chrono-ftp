@@ -15,15 +15,24 @@ from chrono_ftp.config.parts import AppendNote, PartRecord, download_key, downlo
 from chrono_ftp.connections.base import LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, OLD_SUFFIX, Limit, LocalFile, RemoteConnection, RemoteEntry, Swapped, joined, own_name, parent_of, safe_name, shown_name
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, ContinuationRefused, RefusedForNow, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed, TransferInterrupted
 from chrono_ftp.core.connection import FTP, Connection
-from chrono_ftp.core.transferoptions import RESUME_ON, file_rights, folder_rights
+from chrono_ftp.core.transferoptions import BINARY, RESUME_ON, file_rights, folder_rights
 from chrono_ftp.transfers.job import FOLDER_IN_THE_WAY_TEXT, PART_SUFFIX, SOURCE_GONE_TEXT, Ask, Job, Meter, Stopped
+from chrono_ftp.transfers.conversion import Passing, changes_names, convert_fetched, is_text, renamed as renamed_for, upload_copy
 from chrono_ftp.transfers.split import Logins, Move, Spans, move_in_parts, splits
-from chrono_ftp.transfers.options import NO_CUT, SIZE_UNKNOWN, Action, Choice, Conflict, action_of, decided, resumable
+from chrono_ftp.transfers.options import NO_CUT, SIZE_UNKNOWN, TEXT_NO_APPEND, Action, Choice, Conflict, action_of, decided, resumable
 
 # --- Version ------------------------------------------------------------
-__version__ = "filebyfile.py 0.0.13"
+__version__ = "filebyfile.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Masks (block FD): what the file mask, "skip hidden files" and "skip empty folders" leave out is neither counted nor sent, and
+#          told (FD-01); a text file goes whole, converted into a copy of our own on this computer, never continued, split or appended,
+#          and never by rsync (FD-02); names take their converted form in the target, and a renamed item goes file by file (FD-03); a
+#          look-over that converts makes a missing folder at once, so what it sends itself has its place; a text sent in an earlier run
+#          is compared with the size it really has at the target, so a retry or a resume never asks about it again; two items of one
+#          transfer whose names become one never write over each other: the later one is left out and its source stays (D-083); an
+#          upload's part is kept, and told as kept, only where the server holds something of it then (a fault since 0.0.12); what the
+#          person picked always goes, the mask deciding only what goes from inside a picked folder
 # v0.0.13: The speed limit is handed on as it is asked, so a new one takes effect at once (FC-02); a pause keeps what arrived of the file
 #          on its way, noted to be continued, whatever the resume setting; a pause that is ended otherwise than by a resume gives those
 #          notes their own resume setting back, and is never continued from; a file sent in an earlier run is sent again when its source
@@ -80,6 +89,8 @@ CHANGED_THERE_TEXT: str = "{name} changed on the server while it was being fetch
 SERVER_SIZE_TEXT: str = "The server holds {name} at another size than was sent, so the copy was not put in place. Please send it once more."
 NOT_A_NAME_TEXT: str = "A name can't hold a slash."
 NO_APPEND_TEXT: str = "This server can't undo an append that breaks off, so nothing was appended."
+SAME_NAME_TEXT: str = "Another item of this transfer already has the name {name} there, so this one was not written over it and its original stays where it is."
+NO_TEXT_APPEND_TEXT: str = "A text file whose line endings are converted always comes whole, so nothing was appended."
 MOST_NAMED: int = 5  # the job's message names this many items that were left out, and counts the rest
 MOST_FAILED: int = 100  # so many are kept with their reason; the rest only counted
 PART_KEPT_TEXT: str = "What arrived is kept, so the next try continues from there."
@@ -174,22 +185,27 @@ class PartDoesNotFit(RemoteActionFailed):
     """A continued part came out at another size than its source: it is thrown away, and the file starts again from the beginning."""
 
 
-def local_size(path: Path, stop: threading.Event | None = None) -> int:
+def local_size(path: Path, stop: threading.Event | None = None, passing: Passing | None = None) -> int:
     """What an upload of path sends: a link to a file counts as the file it leads to, a link to a folder is not followed, and what is gone
-    by the time it is counted counts nothing (its transfer then fails on its own). Stop (stop) ends the count at once."""
-    def size_of(item: str) -> int:
+    by the time it is counted counts nothing (its transfer then fails on its own). Stop (stop) ends the count at once. passing: what the
+    transfer leaves out inside a picked folder is not counted (FD-01); what was picked always goes, and counts."""
+    def size_of(item: str, picked: bool = False) -> int:
         try:
             details = os.stat(item)
         except OSError:
             return 0
+        if not picked and passing is not None and not passing.passes(os.path.basename(item), False, os.path.dirname(item), details.st_size, details.st_mtime):
+            return 0
         return details.st_size if os.path.isfile(item) else 0
 
     if not os.path.isdir(path) or os.path.islink(path):
-        return size_of(str(path))
+        return size_of(str(path), True)
     total = 0
-    for place, _folders, files in os.walk(path):
+    for place, folders, files in os.walk(path):
         if stop is not None and stop.is_set():
             raise Stopped
+        if passing is not None:
+            folders[:] = [name for name in folders if passing.passes(name, True, place, None, None)]
         total += sum(size_of(os.path.join(place, name)) for name in files)
     return total
 
@@ -251,8 +267,15 @@ class FileWay:
         self.dated: bool = False  # the date of the file just sent was set to its source's
         self.attempt_counted: int = 0  # what the meter counted of the file now on its way, taken back when it starts again
         self.logins: Logins | None = None  # the further logins the queue lends for a large file split in parts (FC-05); None: never split
+        self.passing: Passing = Passing(self.options)  # what the transfer leaves out (FD-01)
+        self.left_by_choice: int = 0  # items the file mask, "skip hidden files" or "skip empty folders" left out: told, never in silence
+        self.converts: bool = self.options.transfer_mode != BINARY or changes_names(self.options)  # some items go by this way, also beside rsync
+        self.converted_size: int = 0  # the size of the text fetched last, once converted
+        self.holds: dict[str, bool] = {}  # for "skip empty folders": whether a folder holds a file that goes, each looked at once
 
     def run(self) -> None:
+        if self.passing.problem:
+            raise LocalActionFailed(self.passing.problem)  # a mask that can't be read sends nothing (OR-15)
         try:
             if self.job.upload:
                 self._upload()
@@ -324,6 +347,7 @@ class FileWay:
             del self.known[relative]  # sent in an earlier run, but its source or what is there changed since: it is decided afresh
             self.shown.pop(relative, None)
             del self.job.sent_as[relative]
+            self.job.arrived_as.pop(relative, None)
         if relative in self.known:
             action = self.known[relative]
             if action != Action.SKIP and self.shown.get(relative, shown_of(conflict)) != shown_of(conflict):
@@ -352,7 +376,8 @@ class FileWay:
         and what is there is still what was sent (its size, and its date where that date was really set: a server that can't set dates
         keeps its own)."""
         size, date, dated = self.job.sent_as[relative]
-        if (conflict.source_size, conflict.source_modified) != (size, date) or not conflict.target_size_known or conflict.target_size != size:
+        there = self.job.arrived_as.get(relative, size)  # a converted text has its own size at the target
+        if (conflict.source_size, conflict.source_modified) != (size, date) or not conflict.target_size_known or conflict.target_size != there:
             return False
         if dated and date is not None and conflict.target_modified is not None:  # only a date that was really set tells anything
             return int(conflict.target_modified) == int(date)
@@ -496,6 +521,13 @@ class FileWay:
             return 0
         return found.size if found is not None and found.size_known else 0
 
+    def _part_holds_bytes(self, temporary: str) -> bool:
+        """Whether the server holds something of a part now. Bytes sent are not yet bytes there: after a broken-off FTP upload the server may
+        still be taking in what was on its way, so a part it holds nothing of is no part to keep, nor to tell as kept. A size the server
+        can't tell counts as something."""
+        found = self.connection.fresh_details(temporary)
+        return found is not None and (not found.size_known or found.size > 0)
+
     def _counted(self, amount: int) -> None:
         """A part confirmed these bytes: counted once, from whichever part (each call under the parts' lock)."""
         self.attempt_counted += amount
@@ -525,11 +557,29 @@ class FileWay:
             self.connection.make_empty(temporary)
         self._in_parts(spans, offset, size, lambda connection, start, end, progress, limit: connection.upload_range(str(source), temporary, start, end, progress, limit))
 
+    def _owner(self, relative: str) -> str:
+        """Which item of the person's action writes a place: this job and the item's path in it."""
+        return f"{id(self.job)}\0{relative}"
+
+    def _not_written_by_another(self, place: str, relative: str, claim: bool = False, renamed: bool = False) -> None:
+        """Two items of one transfer whose names become one (D-083): the later one is never written over what this transfer wrote; it is
+        left out, and its source stays. claim: this item writes the place from now on. renamed: a name the person gave in the question,
+        who was asked about what is there (also what this transfer wrote): it is never left out, and takes the place."""
+        owner = self._owner(relative)
+        if renamed:
+            if claim:
+                self.job.answers.take(place, owner)
+            return
+        free = self.job.answers.claim(place, owner) if claim else not self.job.answers.taken(place, owner)
+        if not free:
+            name = readable(place.rsplit("/", 1)[-1])
+            raise (RemoteActionFailed if self.job.upload else LocalActionFailed)(SAME_NAME_TEXT.format(name=name))
+
     def _upload(self) -> None:
         job = self.job
         source = Path(job.local)
         if self.options.count_first and self.recording is None:
-            self.meter.set_total(local_size(source, job.stop_asked))
+            self.meter.set_total(local_size(source, job.stop_asked, self.passing))  # what was picked always goes; the mask decides inside it
         try:
             present = self.connection.list_folder(job.remote_path)
         except ConnectionLost:
@@ -540,19 +590,62 @@ class FileWay:
                 raise RemoteActionFailed(NOT_THERE_TEXT.format(folder=job.remote_path)) from error
             present = list[RemoteEntry]()  # a folder that takes files but can't be read (an FTP incoming folder): nothing in it can be seen
             self.unreadable.add(job.remote_path)
-        self._upload_into(source, joined(job.remote_path, source.name), {entry.name: entry for entry in present}, source.name)
+        self._upload_into(source, joined(job.remote_path, renamed_for(self.options, source.name)), {entry.name: entry for entry in present}, source.name)
 
-    def _upload_into(self, source: Path, target: str, present: dict[str, RemoteEntry], relative: str) -> None:
-        """present: what the folder this goes into already holds, read once per folder."""
+    def _goes_here(self, item: Path) -> bool:
+        """Whether an item of this computer goes (FD-01). What can't be looked at goes, and then fails on its own with its own text."""
+        if self.passing.everything:
+            return True
+        try:
+            details = item.stat()
+        except OSError:
+            return True
+        folder = item.is_dir() and not item.is_symlink()
+        if not self.passing.passes(item.name, folder, str(item.parent), details.st_size, details.st_mtime):
+            return False
+        return not (folder and self.passing.skip_empty_folders and not self._holds_here(item))
+
+    def _holds_here(self, folder: Path) -> bool:
+        """Whether a folder of this computer holds a file that goes, at any depth; each folder is looked at once."""
+        key = str(folder)
+        if key in self.holds:
+            return self.holds[key]
+        try:
+            items = sorted(folder.iterdir())
+        except OSError:
+            self.holds[key] = True  # it can't be read: it goes, and fails on its own
+            return True
+        found = False
+        for item in items:
+            if self.job.stop_asked.is_set():
+                raise Stopped
+            try:
+                details = item.stat()
+            except OSError:
+                continue
+            if item.is_dir():
+                found = not item.is_symlink() and self.passing.passes(item.name, True, key, None, None) and self._holds_here(item)
+            else:
+                found = item.is_file() and self.passing.passes(item.name, False, key, details.st_size, details.st_mtime)
+            if found:
+                break
+        self.holds[key] = found
+        return found
+
+    def _upload_into(self, source: Path, target: str, present: dict[str, RemoteEntry], relative: str, by_hand: bool = False) -> None:
+        """present: what the folder this goes into already holds, read once per folder. by_hand: this way sends it, also beside rsync (a
+        folder whose name changes in the target, and all inside it)."""
         if self.job.stop_asked.is_set():
             raise Stopped
-        if not safe_name(source.name):
+        name_there = target.rsplit("/", 1)[-1]
+        if not safe_name(name_there):
             raise RemoteActionFailed(UNCHECKABLE_NAME_TEXT)  # a listing never shows it: whether the server has it can't be seen
-        old = present.get(source.name)
+        old = present.get(name_there)
         if not os.path.lexists(source):
             raise RemoteActionFailed(SOURCE_GONE_TEXT)
+        by_hand = by_hand or name_there != source.name
         if source.is_file():
-            self._upload_file(source, target, present, relative)
+            self._upload_file(source, target, present, relative, by_hand=by_hand)
             return
         if source.is_symlink() or not source.is_dir():
             self._not_sent(source, relative)  # links are not followed into other trees
@@ -561,16 +654,21 @@ class FileWay:
             old = self._looked_up(target)  # nothing in this folder can be seen: whether the name is taken is asked of this one name
         if old is not None and old.kind_known and not old.is_folder:
             raise RemoteActionFailed(FILE_IN_THE_WAY_TEXT)
+        self._not_written_by_another(target, relative, True)
         inside: dict[str, RemoteEntry] = {}
-        if old is None and self.recording is None:
-            self.connection.make_folder(target)
+        own = self.recording is None or by_hand  # this way makes and finishes the folder
+        if old is None and (own or self.converts):
+            self.connection.make_folder(target)  # beside rsync only where this way sends something into it during the look-over
         elif old is not None:
             inside = self._contents(target)  # where its kind can't be seen, a file in its place fails each item on its own
-        if self.recording is not None:
+        if self.recording is not None and not by_hand:
             self.recording.append(relative)
         for item in sorted(source.iterdir()):
-            self._each(f"{relative}/{item.name}", lambda item=item: self._upload_into(item, joined(target, item.name), inside, f"{relative}/{item.name}"))
-        if self.recording is not None or (old is not None and old.is_link):
+            if not self._goes_here(item):
+                self.left_by_choice += 1
+                continue
+            self._each(f"{relative}/{item.name}", lambda item=item: self._upload_into(item, joined(target, renamed_for(self.options, item.name)), inside, f"{relative}/{item.name}", by_hand))
+        if not own or (old is not None and old.is_link):
             return  # rsync sets the folder itself; a link to a folder is not ours to change
         if self.options.set_rights and old is None:
             self._rights(target, folder_rights(self.options))  # only a folder this upload made: one that was there keeps its rights
@@ -610,8 +708,9 @@ class FileWay:
             self.unreadable.add(folder)
             return {}
 
-    def _upload_file(self, source: Path, target: str, present: dict[str, RemoteEntry], relative: str, renamed: bool = False) -> None:
-        """renamed: under the name the person gave, which only this way can do. Its relative path holds a NUL, which no name holds."""
+    def _upload_file(self, source: Path, target: str, present: dict[str, RemoteEntry], relative: str, renamed: bool = False, by_hand: bool = False) -> None:
+        """renamed: under the name the person gave, which only this way can do. Its relative path holds a NUL, which no name holds.
+        by_hand: its name changes in the target, so this way sends it, also beside rsync."""
         folder, name = parent_of(target), target.rsplit("/", 1)[-1]
         old = present.get(name)
         if old is not None and old.special:
@@ -626,25 +725,27 @@ class FileWay:
             listing = {entry.name: entry for entry in self.connection.list_folder(parent or "/")}
             if real_name in listing and listing[real_name].is_folder:
                 raise RemoteActionFailed(FOLDER_IN_THE_WAY_TEXT)
-            self._upload_file(source, real, listing, relative, renamed)  # the file it points at is replaced safely; the link stays a link
+            self._upload_file(source, real, listing, relative, renamed, by_hand)  # the file it points at is replaced safely; the link stays a link
             return
         if old is None and folder in self.unreadable:
             old = self._looked_up(target)  # nothing in this folder can be seen: whether the name is taken is asked of this one name
         if old is not None and not old.kind_known:
             raise RemoteActionFailed(KIND_UNKNOWN_TEXT.format(name=readable(name)))  # only what is known to be a file is replaced
+        self._not_written_by_another(target, relative, renamed=renamed)  # never asked about: what this transfer wrote is not replaced by it
         try:
             details = source.stat()
         except OSError as error:
             raise LocalReadFailed(LOCAL_READ_TEXT.format(reason=error.strerror or str(error))) from error  # gone, or not to be read here
         size = details.st_size
+        text = is_text(self.options, source.name)  # a text goes whole: never continued, split or appended (FD-02)
         temporary, part = self._temporary_up(target, present)
         part_there = part is not None
         actual = part.size if part is not None and part.size_known else None
         key = upload_key(self.job.connection, temporary)
-        part_offset = self._continuable(actual, key, upload_source(str(source)), size, details.st_mtime)
+        part_offset = None if text else self._continuable(actual, key, upload_source(str(source)), size, details.st_mtime)
         action = Action.REPLACE
         if old is not None:
-            blocked = NO_CUT if not self.connection.capabilities.cut else SIZE_UNKNOWN if not old.size_known else ""
+            blocked = TEXT_NO_APPEND if text else NO_CUT if not self.connection.capabilities.cut else SIZE_UNKNOWN if not old.size_known else ""
             conflict = Conflict(name, folder, True, size, details.st_mtime, old.size, old.modified, part_offset, blocked, True, old.size_known, self.job.connection.name)
             action = self._decide(relative, conflict)
         if action == Action.SKIP:
@@ -653,12 +754,13 @@ class FileWay:
         if action == Action.RENAME:
             if not safe_name(self.new_name):
                 raise RemoteActionFailed(NOT_A_NAME_TEXT)  # never a rename without a name: that would be the folder itself
-            self._upload_file(source, joined(folder, self.new_name), present, f"{relative}\0{self.new_name}", True)
+            self._upload_file(source, joined(folder, self.new_name), present, f"{relative}\0{self.new_name}", True, by_hand)
             self.known[relative] = Action.SKIP  # done: a second look (after rsync could not log in) leaves it
             return
+        self._not_written_by_another(target, relative, True, renamed)
         if action == Action.APPEND:
             assert old is not None
-            if not self.connection.capabilities.cut or not old.size_known:
+            if text or not self.connection.capabilities.cut or not old.size_known:
                 raise RemoteActionFailed(NO_APPEND_TEXT)  # the question never offers it here; nothing is written
             if self._still_the_one(target, old) is None:  # appended only to the file as the person saw it
                 raise RemoteActionFailed(CHANGED_TO_REPLACE_TEXT.format(name=readable(name)))  # gone meanwhile: nothing to add to
@@ -669,7 +771,7 @@ class FileWay:
             self._remove_source(source, size, details.st_mtime, grew, target)
             return
         offset = self._offset(action, part_offset, size, key)
-        if self.recording is not None and not offset and not renamed:
+        if self.recording is not None and not offset and not renamed and not by_hand and not text:
             self.recording.append(relative)  # rsync sends it
             self.recorded_sources[relative] = (size, details.st_mtime)
             if old is None:
@@ -677,24 +779,41 @@ class FileWay:
             else:
                 self.agreed_there[relative] = (target, old)  # looked at again right before rsync runs
             return
-        tried: set[str] = set()
-        while True:
-            try:
+        sending, sent_size = (upload_copy(source, self.options.remove_bom, self.job.stop_asked) if text else (str(source), size))
+
+        def send(offset: int, resumed_by_choice: bool, part_there: bool) -> None:
+            if text:
+                self._send(source, target, temporary, old, size, details.st_mtime, offset, resumed_by_choice, part_there, present, True, sending, sent_size)
+            else:
+                self._send(source, target, temporary, old, size, details.st_mtime, offset, resumed_by_choice, part_there, present)
+
+        try:
+            tried: set[str] = set()
+            while True:
                 try:
-                    self._send(source, target, temporary, old, size, details.st_mtime, offset, action == Action.RESUME, part_there, present)
-                except (ContinuationRefused, PartDoesNotFit):
-                    self.restarted += 1  # the server would not continue it, or the continued file did not fit: from the beginning, at once
-                    self.meter.take_back(self.attempt_counted)
-                    # A part that could not be removed is still there, with its note: it is cleared again, or the next free name is taken.
-                    still = _there(lambda: self.connection.fresh_details(temporary) is not None)
-                    self._send(source, target, temporary, old, size, details.st_mtime, 0, False, still, present)
-                break
-            except TemporaryTaken:
-                tried.add(temporary)  # something took it meanwhile, or another Chrono FTP writes it: the next free name
-                temporary, _part = self._temporary_up(target, present, tried)
-                offset, part_there = 0, False
+                    try:
+                        send(offset, action == Action.RESUME, part_there)
+                    except (ContinuationRefused, PartDoesNotFit):
+                        self.restarted += 1  # the server would not continue it, or the continued file did not fit: from the beginning, at once
+                        self.meter.take_back(self.attempt_counted)
+                        # A part that could not be removed is still there, with its note: it is cleared again, or the next free name is taken.
+                        still = _there(lambda: self.connection.fresh_details(temporary) is not None)
+                        send(0, False, still)
+                    break
+                except TemporaryTaken:
+                    tried.add(temporary)  # something took it meanwhile, or another Chrono FTP writes it: the next free name
+                    temporary, _part = self._temporary_up(target, present, tried)
+                    offset, part_there = 0, False
+        finally:
+            if text:
+                Path(sending).unlink(missing_ok=True)  # the converted copy of our own
+        if sent_size > size:
+            self.meter.take_back(sent_size - size)  # the total counted the source: the converted copy is another size
+        elif sent_size < size:
+            self.meter.add(size - sent_size)
         self.known[relative] = Action.SKIP
         self.job.sent_as[relative] = (size, details.st_mtime, self.dated)  # looked at again by a later run: sent once more if it changed
+        self._note_arrived(relative, size, sent_size)
 
     def _forget_old_unless_aside(self, aside: str) -> None:
         """The swap failed: where nothing waits under the aside name (the old file was never moved, or was moved back), its note goes, so
@@ -761,11 +880,15 @@ class FileWay:
             raise RemoteActionFailed(CHANGED_TO_REPLACE_TEXT.format(name=name))
         return replace(old, size=now.size, size_known=now.size_known) if not old.size_known else old
 
-    def _send(self, source: Path, target: str, temporary: str, old: RemoteEntry | None, size: int, modified: float, offset: int, resumed_by_choice: bool, part_there: bool, present: dict[str, RemoteEntry]) -> None:
+    def _send(self, source: Path, target: str, temporary: str, old: RemoteEntry | None, size: int, modified: float, offset: int, resumed_by_choice: bool, part_there: bool, present: dict[str, RemoteEntry], text: bool = False, sending: str = "", sent_size: int = -1) -> None:
+        """sending: what is sent, sent_size bytes: the source itself (the default), or a text's converted copy of our own (FD-02). size
+        and modified are the source's, which a move removes only while it is unchanged."""
+        sending = sending or str(source)
+        sent_size = size if sent_size < 0 else sent_size
         key = upload_key(self.job.connection, temporary)
         self.dated = False
-        keeps = resumed_by_choice or resumable(self.options, size)
-        split = splits(self.options, self.connection, self.logins, True, size)
+        keeps = not text and (resumed_by_choice or resumable(self.options, size))
+        split = not text and splits(self.options, self.connection, self.logins, True, size)
         earlier = self._earlier_ranges(key, offset, size, self._part_size_there(temporary) if split and offset else 0)
         if not offset:
             if not self._clear_part(key, lambda: self.connection.delete(temporary, False), part_there):
@@ -793,7 +916,7 @@ class FileWay:
                     spans = Spans(offset, earlier)
                     self._send_in_parts(source, temporary, offset, size, spans)
                 else:
-                    self.connection.upload(str(source), temporary, step, self.limit, offset, False, not offset)  # a new part only where nothing is
+                    self.connection.upload(sending, temporary, step, self.limit, offset, False, not offset)  # a new part only where nothing is
             except NameTaken as taken:
                 parts.forget(key)  # the note of a name that is not ours
                 raise TemporaryTaken(temporary) from taken
@@ -803,7 +926,7 @@ class FileWay:
             arrived = self.connection.file_size(temporary)
             if arrived is None:
                 self.sizes_unknown += 1  # the server can't tell: it took every byte without an error, but nobody can check it
-            elif arrived != size:
+            elif arrived != sent_size:
                 raise (PartDoesNotFit if offset else RemoteActionFailed)(SERVER_SIZE_TEXT.format(name=readable(source.name)))
             verified = arrived is not None
             if offset and self.job.connection.protocol == FTP:
@@ -842,7 +965,7 @@ class FileWay:
         except BaseException as error:
             if spans is not None:
                 written = spans.first()  # the bytes in order from the start, and the ranges after them, from every part
-            kept = (keeps or self.job.continue_later) and not placing and self._kept_after(error) and written > 0 and _there(lambda: self.connection.fresh_details(temporary) is not None) and parts.remember(key, self._kept_record(key, whose, min(written, size), spans.rest() if spans is not None else ()))
+            kept = (keeps or self.job.continue_later) and not text and not placing and self._kept_after(error) and written > 0 and _there(lambda: self._part_holds_bytes(temporary)) and parts.remember(key, self._kept_record(key, whose, min(written, size), spans.rest() if spans is not None else ()))
             if not kept:
                 self._let_go(key, whose, lambda: self.connection.delete(temporary, False), lambda: self.connection.fresh_details(temporary) is not None)
             told = self._told(error, kept, written)
@@ -851,7 +974,7 @@ class FileWay:
             raise told from error
         parts.forget(key)
         name = target.rsplit("/", 1)[-1]
-        present[name] = RemoteEntry(name, False, size)  # taken now: a later file of this folder never picks it as a free name
+        present[name] = RemoteEntry(name, False, sent_size)  # taken now: a later file of this folder never picks it as a free name
         self._remove_source(source, size, modified, verified, target)
 
     def _append_up(self, source: Path, target: str) -> int:
@@ -926,13 +1049,15 @@ class FileWay:
         if not self.connection.capabilities.durable:
             self.removed_unflushed += 1  # checked by its size and date; this server can't say it is on its disk
 
-    def _remote_size(self, path: str, entry: RemoteEntry | None) -> int:
+    def _remote_size(self, path: str, entry: RemoteEntry | None, picked: bool = False) -> int:
         """The size of what there is to fetch, each folder read once and nothing kept. Links to folders are not followed: a loop would
         never end."""
         if self.job.stop_asked.is_set():
             raise Stopped
         if entry is not None and ((entry.is_folder and entry.is_link) or entry.special):
             return 0
+        if entry is not None and not picked and not self._goes_there(parent_of(path), entry):
+            return 0  # left out by the transfer settings: neither counted nor fetched (FD-01); what was picked always goes
         if entry is not None and not entry.is_folder:
             return entry.size
         try:
@@ -942,6 +1067,44 @@ class FileWay:
         except RemoteActionFailed:
             return 0  # a folder that can't be read counts as nothing: fetching it fails that item alone, with its own text
         return sum(self._remote_size(joined(path, item.name), item) for item in inside)
+
+    def _goes_there(self, folder: str, entry: RemoteEntry) -> bool:
+        """Whether an item of the server goes (FD-01); folder: the server folder it is in. What can't be looked at goes, and then fails on
+        its own with its own text."""
+        if self.passing.everything:
+            return True
+        folder_kind = entry.is_folder and not entry.is_link
+        size = entry.size if entry.size_known else None
+        if not self.passing.passes(entry.name, folder_kind, folder, size, entry.modified):
+            return False
+        return not (folder_kind and self.passing.skip_empty_folders and not self._holds_there(joined(folder, entry.name)))
+
+    def _holds_there(self, path: str) -> bool:
+        """Whether a server folder holds a file that goes, at any depth; each folder is read once for it."""
+        if path in self.holds:
+            return self.holds[path]
+        try:
+            inside = self.connection.list_folder(path)
+        except ConnectionLost:
+            raise
+        except RemoteActionFailed:
+            self.holds[path] = True  # it can't be read: it goes, and fails on its own
+            return True
+        found = False
+        for item in inside:
+            if self.job.stop_asked.is_set():
+                raise Stopped
+            if item.special or (item.is_folder and item.is_link):
+                continue
+            size = item.size if item.size_known else None
+            if item.is_folder:
+                found = self.passing.passes(item.name, True, path, None, None) and self._holds_there(joined(path, item.name))
+            else:
+                found = self.passing.passes(item.name, False, path, size, item.modified)
+            if found:
+                break
+        self.holds[path] = found
+        return found
 
     def _download(self) -> None:
         job = self.job
@@ -958,10 +1121,11 @@ class FileWay:
                 raise RemoteActionFailed(GONE_THERE_TEXT.format(name=readable(name)))  # gone meanwhile: nothing is made here
             entry = replace(found, name=name)
         if self.options.count_first and self.recording is None:
-            self.meter.set_total(self._remote_size(job.remote_path, entry))
-        self._download_item(job.remote_path, entry, os.path.join(job.local, job.name), job.name)
+            self.meter.set_total(self._remote_size(job.remote_path, entry, True))  # what was picked always goes; the mask decides inside it
+        self._download_item(job.remote_path, entry, os.path.join(job.local, renamed_for(self.options, job.name)), job.name)
 
-    def _download_item(self, remote: str, entry: RemoteEntry | None, local: str, relative: str) -> None:
+    def _download_item(self, remote: str, entry: RemoteEntry | None, local: str, relative: str, by_hand: bool = False) -> None:
+        """by_hand: this way fetches it, also beside rsync (an item whose name changes here, and all inside it)."""
         if self.job.stop_asked.is_set():
             raise Stopped
         if entry is not None and entry.is_folder and entry.is_link:
@@ -974,21 +1138,27 @@ class FileWay:
                 raise RemoteActionFailed(NOT_A_FILE_DOWN_TEXT.format(name=readable(entry.name)))
             self.others_left += 1
             return
+        by_hand = by_hand or os.path.basename(local) != remote.rsplit("/", 1)[-1]
         if entry is not None and not entry.is_folder:
-            self._download_file(remote, entry, local, relative)
+            self._download_file(remote, entry, local, relative, by_hand=by_hand)
             return
         if os.path.lexists(local) and not os.path.isdir(local):
             raise LocalActionFailed(FILE_HERE_TEXT)
-        if self.recording is not None:
+        self._not_written_by_another(local, relative, True)
+        own = self.recording is None or by_hand  # this way makes and finishes the folder
+        if self.recording is not None and not by_hand:
             self.recording.append(relative)
-        else:
-            Path(local).mkdir(parents=True, exist_ok=True)
+        if own or self.converts:
+            Path(local).mkdir(parents=True, exist_ok=True)  # beside rsync only where this way fetches something into it during the look-over
         inside, left_out = self.connection.list_folder_all(remote)
         for name in left_out:
             self._left_out(f"{relative}/{name}", UNSAFE_NAME_TEXT)  # never in silence: this one item is told, the rest goes
         for item in inside:
-            self._each(f"{relative}/{item.name}", lambda item=item: self._download_item(joined(remote, item.name), item, os.path.join(local, item.name), f"{relative}/{item.name}"))
-        if self.recording is not None:
+            if not (item.special or (item.is_folder and item.is_link)) and not self._goes_there(remote, item):
+                self.left_by_choice += 1
+                continue
+            self._each(f"{relative}/{item.name}", lambda item=item: self._download_item(joined(remote, item.name), item, os.path.join(local, renamed_for(self.options, item.name)), f"{relative}/{item.name}", by_hand))
+        if not own:
             return
         if self.options.keep_timestamps and entry is not None and entry.modified is not None and not os.path.islink(local):
             self._local_time(local, entry.modified)  # never through a link on this computer: what it leads to is not this folder
@@ -1009,7 +1179,7 @@ class FileWay:
             return False
         return True
 
-    def _download_file(self, remote: str, entry: RemoteEntry, local: str, relative: str, renamed: bool = False) -> None:
+    def _download_file(self, remote: str, entry: RemoteEntry, local: str, relative: str, renamed: bool = False, by_hand: bool = False) -> None:
         if entry.is_link and not renamed:
             if self.connection.details(remote) is None:
                 raise RemoteActionFailed(LINK_NOWHERE_TEXT)  # also before rsync, which would fail on it, and with it everything else
@@ -1022,18 +1192,20 @@ class FileWay:
             raise LocalActionFailed(FOLDER_HERE_TEXT)
         if os.path.lexists(target) and not os.path.isfile(target):  # never replaced as a file, never written into, never asked about
             raise LocalActionFailed(NOT_A_FILE_HERE_TEXT.format(name=readable(os.path.basename(local))))
+        self._not_written_by_another(target, relative, renamed=renamed)  # never asked about: what this transfer wrote is not replaced by it
         temporary = self._temporary_down(target)
         part_there = os.path.isfile(temporary)
         key = download_key(temporary)
         size = entry.size if entry.size_known else None
-        part_offset = self._continuable(os.path.getsize(temporary) if part_there else None, key, download_source(self.job.connection, remote), size, entry.modified)
+        text = is_text(self.options, entry.name)  # a text comes whole: never continued, split or appended (FD-02)
+        part_offset = None if text else self._continuable(os.path.getsize(temporary) if part_there else None, key, download_source(self.job.connection, remote), size, entry.modified)
         exists = os.path.lexists(target)
         seen: tuple[int, float] | None = None  # the file here as the question showed it
         action = Action.REPLACE
         if exists:
             here = os.stat(target)
             seen = (here.st_size, here.st_mtime)
-            conflict = Conflict(entry.name, os.path.dirname(local), False, entry.size, entry.modified, here.st_size, here.st_mtime, part_offset, source_size_known=entry.size_known, connection=self.job.connection.name)
+            conflict = Conflict(entry.name, os.path.dirname(local), False, entry.size, entry.modified, here.st_size, here.st_mtime, part_offset, TEXT_NO_APPEND if text else "", source_size_known=entry.size_known, connection=self.job.connection.name)
             action = self._decide(relative, conflict)
         if action == Action.SKIP:
             self.meter.add(entry.size)
@@ -1041,10 +1213,13 @@ class FileWay:
         if action == Action.RENAME:
             if not safe_name(self.new_name):
                 raise RemoteActionFailed(NOT_A_NAME_TEXT)  # never a rename without a name: that would be the folder itself
-            self._download_file(remote, entry, os.path.join(os.path.dirname(local), self.new_name), f"{relative}\0{self.new_name}", True)
+            self._download_file(remote, entry, os.path.join(os.path.dirname(local), self.new_name), f"{relative}\0{self.new_name}", True, by_hand)
             self.known[relative] = Action.SKIP
             return
+        self._not_written_by_another(target, relative, True, renamed)
         if action == Action.APPEND:
+            if text:
+                raise LocalActionFailed(NO_TEXT_APPEND_TEXT)  # the question never offers it for a text; nothing is written
             try:
                 now = os.stat(target)
             except FileNotFoundError:
@@ -1060,7 +1235,7 @@ class FileWay:
             self._remove_remote(remote, entry, grew)
             return
         offset = self._offset(action, part_offset, entry.size, key)
-        if self.recording is not None and not offset and not renamed:
+        if self.recording is not None and not offset and not renamed and not by_hand and not text:
             self.recording.append(relative)
             self.recorded_sources[relative] = (entry.size, entry.modified)
             if not exists:
@@ -1072,11 +1247,11 @@ class FileWay:
         while True:
             try:
                 try:
-                    self._fetch(remote, entry, target, temporary, seen, offset, action == Action.RESUME, part_there)
+                    self._fetch(remote, entry, target, temporary, seen, offset, action == Action.RESUME, part_there, text)
                 except (ContinuationRefused, PartDoesNotFit):
                     self.restarted += 1  # the server would not continue it, or the continued file did not fit: from the beginning, at once
                     self.meter.take_back(self.attempt_counted)
-                    self._fetch(remote, entry, target, temporary, seen, 0, False, os.path.lexists(temporary))  # a part not removed stays noted
+                    self._fetch(remote, entry, target, temporary, seen, 0, False, os.path.lexists(temporary), text)  # a part not removed stays noted
                 break
             except TemporaryTaken:
                 tried.add(temporary)  # something took it meanwhile, or another Chrono FTP writes it: the next free name
@@ -1084,6 +1259,14 @@ class FileWay:
                 offset, part_there = 0, False
         self.known[relative] = Action.SKIP
         self.job.sent_as[relative] = (entry.size, entry.modified, self.dated)  # looked at again by a later run: fetched once more if it changed
+        self._note_arrived(relative, entry.size, self.converted_size if text else entry.size)
+
+    def _note_arrived(self, relative: str, size: int, there: int) -> None:
+        """What the target really got, where a conversion made it another size than its source."""
+        if there != size:
+            self.job.arrived_as[relative] = there
+        else:
+            self.job.arrived_as.pop(relative, None)
 
     def _temporary_down(self, target: str, skip: set[str] | None = None) -> str:
         """Where a download lands first: a name nothing holds, or our own part (it has its note). A file this program did not make (a real
@@ -1098,13 +1281,14 @@ class FileWay:
                 return path
         raise LocalActionFailed(NO_FREE_NAME_TEXT.format(name=readable(os.path.basename(target))))
 
-    def _fetch(self, remote: str, entry: RemoteEntry, target: str, temporary: str, seen: tuple[int, float] | None, offset: int, resumed_by_choice: bool, part_there: bool) -> None:
-        """seen: the size and date of the file here that the person agreed to replace; None where there was none."""
+    def _fetch(self, remote: str, entry: RemoteEntry, target: str, temporary: str, seen: tuple[int, float] | None, offset: int, resumed_by_choice: bool, part_there: bool, text: bool = False) -> None:
+        """seen: the size and date of the file here that the person agreed to replace; None where there was none. text: it arrives
+        whole as it is on the server, and only then are its line endings converted, before it takes its real name (FD-02)."""
         exists = seen is not None
         key = download_key(temporary)
         self.dated = False
-        keeps = (resumed_by_choice or resumable(self.options, entry.size)) and entry.size_known and entry.modified is not None and math.isfinite(entry.modified)
-        split = entry.size_known and splits(self.options, self.connection, self.logins, False, entry.size)
+        keeps = not text and (resumed_by_choice or resumable(self.options, entry.size)) and entry.size_known and entry.modified is not None and math.isfinite(entry.modified)
+        split = not text and entry.size_known and splits(self.options, self.connection, self.logins, False, entry.size)
         earlier = self._earlier_ranges(key, offset, entry.size, os.path.getsize(temporary) if split and offset and os.path.isfile(temporary) else 0)
         if not offset:
             if not self._clear_part(key, lambda: os.remove(temporary), part_there):
@@ -1141,6 +1325,8 @@ class FileWay:
                 raise SourceChanged(CHANGED_THERE_TEXT.format(name=readable(entry.name)))  # read while it was rewritten: never put in place
             if not entry.size_known:
                 self.sizes_unknown += 1  # the server gave no size: everything it sent is here, but nobody can check it
+            if text:
+                self.converted_size = convert_fetched(temporary, readable(entry.name), self.options.remove_bom, self.job.stop_asked)  # checked as it came, then converted
             if exists:
                 shutil.copymode(target, temporary)  # the new file keeps the old one's permissions
             if self.options.keep_timestamps and entry.modified is not None:
@@ -1157,7 +1343,7 @@ class FileWay:
         except BaseException as error:
             if spans is not None:
                 written = spans.first()  # the bytes in order from the start, and the ranges after them, from every part
-            kept = (keeps or self.job.continue_later) and not placing and self._kept_after(error) and written > 0 and entry.modified is not None and os.path.isfile(temporary) and parts.remember(key, self._kept_record(key, whose, min(written, entry.size), spans.rest() if spans is not None else ()))
+            kept = (keeps or self.job.continue_later) and not text and not placing and self._kept_after(error) and written > 0 and entry.modified is not None and os.path.isfile(temporary) and parts.remember(key, self._kept_record(key, whose, min(written, entry.size), spans.rest() if spans is not None else ()))
             if not kept:
                 self._let_go(key, whose, lambda: Path(temporary).unlink(missing_ok=True), lambda: os.path.lexists(temporary))
             told = self._told(error, kept, written)

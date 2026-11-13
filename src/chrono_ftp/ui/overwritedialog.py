@@ -5,14 +5,15 @@ from typing import override
 from PySide6.QtWidgets import QDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_ftp.connections.base import safe_name, shown_name
-from chrono_ftp.transfers.options import KIND_UNKNOWN, NO_CUT, SIZE_UNKNOWN, Answer, Choice, Conflict
+from chrono_ftp.transfers.options import KIND_UNKNOWN, NO_CUT, SIZE_UNKNOWN, TEXT_NO_APPEND, Answer, Choice, Conflict
 from chrono_ftp.ui.filelist import date_text, size_text
 from chrono_ftp.ui.plaintext import box_text, fitting, plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "overwritedialog.py 0.0.12"
+__version__ = "overwritedialog.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Append is greyed for a text file whose line endings are converted, and says why (FD-02)
 # v0.0.12: Initial: Yes, No, Yes to all, No to all, Only if newer, Rename, Append, Resume and Stop, with size and date of both files;
 #          closing it or Esc is Stop, and Stop says that it stops all this upload or download still has to do; the answers for all
 #          say they hold for this upload or this download
@@ -38,7 +39,8 @@ APPEND_TEXT: str = (
 NO_APPEND_TEXT: str = "This server can't cut a file back, so an append that breaks off could not be undone: Append is not offered here."
 NO_SIZE_APPEND_TEXT: str = "The size of the file on the server is unknown, so an append that breaks off could not be undone: Append is not offered here."
 NO_KIND_APPEND_TEXT: str = "Whether this is a file or a folder on the server can't be seen, so nothing is appended to it: Append is not offered here."
-NO_APPEND_TEXTS: dict[str, str] = {NO_CUT: NO_APPEND_TEXT, SIZE_UNKNOWN: NO_SIZE_APPEND_TEXT, KIND_UNKNOWN: NO_KIND_APPEND_TEXT}
+NO_TEXT_APPEND_TEXT: str = "This file goes as text, with its line endings converted, so it always goes whole: Append is not offered here."
+NO_APPEND_TEXTS: dict[str, str] = {NO_CUT: NO_APPEND_TEXT, SIZE_UNKNOWN: NO_SIZE_APPEND_TEXT, KIND_UNKNOWN: NO_KIND_APPEND_TEXT, TEXT_NO_APPEND: NO_TEXT_APPEND_TEXT}
 SIZE_UNKNOWN_TEXT: str = "size unknown"
 NO_PART_TEXT: str = "There is no unfinished copy of this file that can be continued."
 CHOICES: tuple[tuple[Choice, str, str], ...] = (

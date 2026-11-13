@@ -9,9 +9,10 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.40"
+__version__ = "session.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Each tab keeps the filter of the left side too (FD-06)
 # v0.0.40: Each tab can pause its automatic refresh (FG-15)
 # v0.0.39: Each tab keeps whether each side shows thumbnails (FQ-02)
 # v0.0.38: Each tab can keep its own sort order and column widths, and knows whether an automatic refresh is on its way (FP-01)
@@ -63,6 +64,7 @@ class Session:
     remote_history: FolderHistory = field(default_factory=FolderHistory)
     local_history: FolderHistory = field(default_factory=FolderHistory)
     name_mask: str = ""  # the filter of the right side
+    local_name_mask: str = ""  # the filter of the left side while this tab is shown (FD-06)
     sync_browsing: bool = False  # synchronized browsing, per tab (FH-05)
     local_fallback: str = ""  # the home folder the left side opened as its starting folder was gone; empty once the person moved it
     remote_fallback: str = ""  # the same on the server

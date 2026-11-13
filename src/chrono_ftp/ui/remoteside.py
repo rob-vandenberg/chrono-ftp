@@ -4,7 +4,7 @@ from typing import cast
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QColor, QPalette, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QSplitter, QStyle, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QSplitter, QStyle, QTreeView, QVBoxLayout, QWidget
 
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, joined, parent_of, shown_name
@@ -12,12 +12,13 @@ from chrono_ftp.core import colours
 from chrono_ftp.engine.browsing import typed_remote_path
 from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, SideStatus, action_bar, button_row
 from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, status_text
-from chrono_ftp.ui.pathbar import PathBar
+from chrono_ftp.ui.pathbar import FilterMark, PathBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.40"
+__version__ = "remoteside.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: The active filter shows next to the path; a click changes it, its button clears it (FD-06)
 # v0.0.40: The status line shows the selection totals, or what was typed to find a name, with the hidden and filtered counts (FG-01,
 #          FG-09, FG-13); Back and Forward go several steps from their drop-down (FG-10); the folders the tree read can be forgotten (FG-15)
 # v0.0.39: The file colours show only while the connection is live, so a colour on this side always means a live one (FQ-01, OR-3)
@@ -68,6 +69,7 @@ class RemoteSide(QWidget):
     selection_changed = Signal()
     refresh_wanted = Signal()
     filter_wanted = Signal()
+    filter_cleared = Signal()
     path_typed = Signal(object)  # a path typed in the path field, read as Ctrl+O reads it
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -91,6 +93,7 @@ class RemoteSide(QWidget):
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.file_list = FileList(len(COLUMNS), FROM_REMOTE, frozenset({FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE}))
         self.path_bar.next_focus = self.file_list
+        self.filter_mark = FilterMark()
         self.set_colour(None)
         self.parts = QSplitter(Qt.Orientation.Horizontal)
         self.parts.setChildrenCollapsible(False)
@@ -102,7 +105,12 @@ class RemoteSide(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(1)
         layout.addLayout(button_row(self.navigation, self.actions_bar))
-        layout.addWidget(self.path_bar)
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(2)
+        path_row.addWidget(self.path_bar, 1)
+        path_row.addWidget(self.filter_mark)
+        layout.addLayout(path_row)
         layout.addWidget(self.parts, 1)
         layout.addWidget(self.status)
         tree_selection = self.tree.selectionModel()
@@ -116,6 +124,8 @@ class RemoteSide(QWidget):
         self.navigation.history_of = self._history_of
         self.navigation.history_chosen.connect(self._history_chosen)
         self.status.filtered_clicked.connect(self.filter_wanted)
+        self.filter_mark.change_wanted.connect(self.filter_wanted)
+        self.filter_mark.clear_wanted.connect(self.filter_cleared)
         self.navigation.wanted.connect(self._button_pressed)
         self.path_line.returnPressed.connect(self._path_typed)
         self.path_bar.folder_chosen.connect(self._part_chosen)
@@ -197,6 +207,7 @@ class RemoteSide(QWidget):
         view = self.file_list
         self.count_label.setText(status_text(view) if self.folder else "")
         self.status.show_counts(view.hidden_count, view.dot_count if self.folder else 0, view.show_hidden, view.filtered_count if self.folder else 0, view.name_mask)
+        self.filter_mark.show_mask(view.name_mask if self.folder else "")
 
     def _history_of(self, name: str) -> list[str]:
         return list(self.history.behind if name == "back" else self.history.ahead)

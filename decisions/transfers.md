@@ -10,3 +10,8 @@
 8. [[D-047]] When the queue is done
 9. [[D-048]] Several transfers at once
 10. [[D-049]] One large file in parts
+11. [[D-081]] One mask engine
+12. [[D-082]] Text mode
+13. [[D-083]] File name conversion
+14. [[D-084]] Transfer presets
+15. [[D-087]] Masks in transfers

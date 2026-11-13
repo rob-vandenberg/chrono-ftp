@@ -3,13 +3,14 @@ Only", the size format and natural sort, the hidden files, the clipboard, the pa
 automatic refresh and clearing the cached listings."""
 
 from collections.abc import Callable
+from functools import partial
 from dataclasses import replace
 from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QKeySequence
-from PySide6.QtWidgets import QMenu, QMessageBox, QWidget
+from PySide6.QtWidgets import QDialog, QMenu, QMessageBox, QWidget
 
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.config.bookmarks import LOCAL, REMOTE
@@ -18,10 +19,12 @@ from chrono_ftp.connections.base import RemoteConnection, RemoteEntry, joined, p
 from chrono_ftp.core.appinfo import program_version
 from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.errors import ConnectionLost, RemoteActionFailed
+from chrono_ftp.core.masks import MaskError, parse
 from chrono_ftp.engine import commands
 from chrono_ftp.engine.listing import clipboard_names
 from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, PARENT_ENTRY, FileList
 from chrono_ftp.ui.localside import LocalSide
+from chrono_ftp.ui.maskdialog import SELECT, UNSELECT, MaskDialog
 from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.plaintext import box_text, fitting
 from chrono_ftp.ui.remoteside import RemoteSide
@@ -29,9 +32,11 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowselection.py 0.0.40"
+__version__ = "windowselection.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Select by Mask (Num+) and Unselect by Mask (Num−) on the list with the focus, also in the Select submenu, with the masks
+#          typed before (FD-05); a greyed Num+ or Num− does nothing and the status bar says why
 # v0.0.40: Initial: block FG: the selection keys and their menu (FG-02), the two-pane selection mode (FG-03), the key set with F6,
 #          Shift+F6, Alt+F7 and the sort keys (FG-04), This File Only (FG-05), the size format (FG-06), natural sort (FG-08), the hidden
 #          files on Ctrl+Alt+H and from the status line (FG-09), Back and Forward on Alt+Left and Alt+Right (FG-10), the clipboard
@@ -45,6 +50,8 @@ SELECT_ACTIONS: tuple[tuple[str, str, str], ...] = (  # name, text, key
     ("same_extension", "Select the Same Extension", ""),
     ("restore", "Restore the Previous Selection", ""),
     ("mark", "Mark and Move Down", "Insert"),
+    ("select_mask", "Select by Mask…", "Num++"),
+    ("unselect_mask", "Unselect by Mask…", "Num+-"),
 )
 COPY_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("copy_path", "Copy the Folder Path", ""),
@@ -124,6 +131,7 @@ class SelectionPart(WindowBase):
             hidden = self._list_action(f"{side_name}_hidden", "Show or Hide Hidden Files", "Ctrl+Alt+H", side, self.toggle_hidden)
             hidden.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             side.status.hidden_clicked.connect(self.toggle_hidden)
+            view.keypad_refused.connect(partial(self._keypad_refused, side_name))
         self._list_action(f"{LOCAL}_move_across", MOVE_ACROSS_TEXTS[LOCAL], "F6", self.local_side.file_list, lambda: self.move_across(True))
         self._list_action(f"{REMOTE}_move_across", MOVE_ACROSS_TEXTS[REMOTE], "F6", self.remote_side.file_list, lambda: self.move_across(False))
         self.local_side.file_list.right_dropped.connect(self._right_dropped_on_local)
@@ -154,11 +162,37 @@ class SelectionPart(WindowBase):
             "same_extension": view.select_same_extension,
             "restore": view.restore_selection,
             "mark": view.mark_and_move_down,
+            "select_mask": lambda: self.select_by_mask(side_name, True),
+            "unselect_mask": lambda: self.select_by_mask(side_name, False),
             "copy_path": lambda: self.copy_to_clipboard(side_name, "path"),
             "copy_names": lambda: self.copy_to_clipboard(side_name, "names"),
             "copy_full": lambda: self.copy_to_clipboard(side_name, "full"),
         }
         return handlers[name]
+
+    def select_by_mask(self, side_name: str, select: bool) -> None:
+        """Num+ or Num− on the list with the focus (OR-21): the small window with the mask field and the masks typed before (FD-05)."""
+        view = self._side(side_name).file_list
+        history = self.settings.mask_history
+        dialog = MaskDialog(SELECT if select else UNSELECT, history[0] if history else "", history, self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted.value
+        mask, folders_too = dialog.chosen_mask(), dialog.folders.isChecked()
+        dialog.deleteLater()
+        if not accepted or not mask:
+            return
+        try:
+            parsed = parse(mask)
+        except MaskError:
+            return  # the window takes no mask it can't read
+        view.select_by_mask(parsed, select, folders_too)
+        self.remember_mask(mask)
+        view.setFocus()
+
+    def _keypad_refused(self, side_name: str, plus: bool) -> None:
+        """Num+ or Num− while its action is greyed: nothing happens, and the status bar says why (OR-20)."""
+        action = self.list_actions[f"{side_name}_{'select_mask' if plus else 'unselect_mask'}"]
+        if not action.isEnabled() and action.toolTip():
+            self.status.showMessage(action.toolTip())
 
     def _refresh_handler(self, side_name: str) -> Callable[[], None]:
         return self.local_side.refresh if side_name == LOCAL else self.refresh_remote
@@ -217,6 +251,8 @@ class SelectionPart(WindowBase):
                 "same_extension": (view.same_extension_wanted() is not None, NO_FOCUSED_FILE_TEXT),
                 "restore": (view.can_restore(), NOTHING_TO_RESTORE_TEXT),
                 "mark": (entries, EMPTY_LIST_TEXT),
+                "select_mask": (entries, EMPTY_LIST_TEXT),
+                "unselect_mask": (marked, NOTHING_SELECTED_TEXT),
                 "copy_path": (shown, NO_FOLDER_TEXT),
                 "copy_names": (acting, NOTHING_SELECTED_TEXT),
                 "copy_full": (acting, NOTHING_SELECTED_TEXT),

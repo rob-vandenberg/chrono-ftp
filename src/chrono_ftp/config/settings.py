@@ -6,13 +6,17 @@ from typing import cast
 from chrono_ftp.config.connections import config_folder, write_whole
 from chrono_ftp.core.filecolours import MOST_RULES, ColourRule, colour_valid
 from chrono_ftp.core.logrules import KEPT, OFF, SIZE_MEGABYTES, kept_valid, level_valid, size_valid
-from chrono_ftp.core.masks import LONGEST_MASK
-from chrono_ftp.core.transferoptions import RESUME_MODES, TransferOptions, rights_valid
+from chrono_ftp.core.masks import LONGEST_MASK, problem
+from chrono_ftp.core.presets import LONGEST_NAME, MOST_PRESETS, STANDARD_NAME, Preset, PresetRules
+from chrono_ftp.core.transferoptions import NAME_CASES, RESUME_MODES, TRANSFER_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.40"
+__version__ = "settings.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Masks (block FD): the file mask, hidden files, empty folders, the transfer mode with its text mask and BOM, and the names of
+#          the transfer options (FD-01 to FD-03); the transfer presets with their rules (FD-04); the history of masks typed (FD-05,
+#          FD-06); each checked on load, a bad one gives its standard, and an older file loads as before
 # v0.0.40: Selection and keys (block FG): the two-pane selection mode, the key set, the size format, natural sort, the path in the
 #          title bar and moving by a right-button drag; each checked on load, a bad one gives its standard
 # v0.0.39: Looks (block FQ): the rules of file colours (FQ-01); the largest file and the mask of thumbnails (FQ-02); which toolbars
@@ -65,6 +69,7 @@ BYTES: str = "bytes"  # sizes as 1,234,567 (FG-06)
 KILOBYTES: str = "kilobytes"  # 1,206 KB
 SHORT: str = "short"  # 1.2 MB, as the lists showed sizes before block FG
 SIZE_FORMATS: tuple[str, ...] = (BYTES, KILOBYTES, SHORT)
+MOST_MASKS_KEPT: int = 20  # the masks typed last, offered again in every mask field (FD-05, FD-06)
 
 
 @dataclass(frozen=True)
@@ -106,6 +111,16 @@ class Settings:
     natural_sort: bool = True  # "file2" before "file10" (FG-08)
     title_path: str = TITLE_SHORT  # the folder of the right side in the title bar (FG-12)
     drag_move: bool = True  # a right-button drag offers Move Here (FG-14)
+    presets: tuple[Preset, ...] = ()  # named sets of transfer options with their rules (FD-04); the standard set is transfer_options
+    mask_history: tuple[str, ...] = ()  # the masks typed last, the newest first
+
+
+def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
+    """The history with this mask first, once, and no longer than it keeps."""
+    cleaned = mask.strip()
+    if not cleaned or len(cleaned) > LONGEST_MASK:
+        return history
+    return (cleaned, *(item for item in history if item != cleaned))[:MOST_MASKS_KEPT]
 
 
 def keep_done_valid(value: object) -> bool:
@@ -162,6 +177,15 @@ def _transfer_options(data: object) -> TransferOptions:
 
     resume = found.get("resume")
     rights = found.get("rights")
+
+    def text(name: str, default: str) -> str:
+        value = found.get(name)
+        return value if isinstance(value, str) and len(value) <= LONGEST_MASK and not problem(value) else default  # a mask with a fault: its standard
+
+    def choice(name: str, choices: tuple[str, ...], default: str) -> str:
+        value = found.get(name)
+        return value if isinstance(value, str) and value in choices else default
+
     return TransferOptions(
         resume=resume if isinstance(resume, str) and resume in RESUME_MODES else standard.resume,
         ask_before_replacing=flag("ask_before_replacing", standard.ask_before_replacing),
@@ -173,7 +197,45 @@ def _transfer_options(data: object) -> TransferOptions:
         ignore_rights_errors=flag("ignore_rights_errors", standard.ignore_rights_errors),
         count_first=flag("count_first", standard.count_first),
         split_large=flag("split_large", standard.split_large),
+        file_mask=text("file_mask", standard.file_mask),
+        skip_hidden=flag("skip_hidden", standard.skip_hidden),
+        skip_empty_folders=flag("skip_empty_folders", standard.skip_empty_folders),
+        transfer_mode=choice("transfer_mode", TRANSFER_MODES, standard.transfer_mode),
+        text_mask=text("text_mask", standard.text_mask),
+        remove_bom=flag("remove_bom", standard.remove_bom),
+        name_case=choice("name_case", NAME_CASES, standard.name_case),
+        replace_characters=flag("replace_characters", standard.replace_characters),
     )
+
+
+def _presets(data: object) -> tuple[Preset, ...]:
+    """Each preset on its own: one that is damaged is left out, as is a second of the same name; the others stay in their order (OR-15)."""
+    found: list[Preset] = []
+    names: set[str] = {STANDARD_NAME.casefold()}
+    for item in cast(list[object], data)[:MOST_PRESETS] if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        values = cast(dict[str, object], item)
+        name = values.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > LONGEST_NAME or name.strip().casefold() in names:
+            continue
+        rules = cast(dict[str, object], values.get("rules")) if isinstance(values.get("rules"), dict) else {}
+
+        def rule(key: str, rules: dict[str, object] = rules) -> str:
+            value = rules.get(key)
+            return value if isinstance(value, str) and len(value) <= LONGEST_MASK else ""
+
+        names.add(name.strip().casefold())
+        found.append(Preset(name.strip(), _transfer_options(values.get("options")), PresetRules(rule("host"), rule("user"), rule("remote_folder"), rule("local_folder"))))
+    return tuple(found)
+
+
+def _mask_history(data: object) -> tuple[str, ...]:
+    history: tuple[str, ...] = ()
+    for item in reversed(cast(list[object], data)[:MOST_MASKS_KEPT]) if isinstance(data, list) else []:
+        if isinstance(item, str):
+            history = remember_mask(history, item)
+    return history
 
 
 def _read(name: str) -> dict[str, object]:
@@ -242,6 +304,8 @@ def load() -> Settings:
         natural_sort=flag("natural_sort", True),
         title_path=choice("title_path", TITLE_PATHS, TITLE_SHORT),
         drag_move=flag("drag_move", True),
+        presets=_presets(data.get("presets")),
+        mask_history=_mask_history(data.get("mask_history")),
     )
 
 
@@ -250,6 +314,10 @@ def save(settings: Settings) -> None:
     options = data["transfer_options"]
     if isinstance(options, dict):
         options.pop("delete_source", None)  # a move is chosen for one transfer, never kept
+    for preset in cast(list[dict[str, object]], data["presets"]):
+        kept = preset.get("options")
+        if isinstance(kept, dict):
+            cast(dict[str, object], kept).pop("delete_source", None)
     _write(FILE_NAME, data)
 
 

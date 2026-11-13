@@ -17,13 +17,16 @@ from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionL
 from chrono_ftp.transfers.filebyfile import FileWay, Shown, end_pause_notes, readable, undo_broken_appends
 from chrono_ftp.transfers.job import PART_SUFFIX, Job, Meter, State, Stopped
 from chrono_ftp.transfers.options import BATCH_CHOICES, Action, Answer, Choice, Conflict, resumable
+from chrono_ftp.transfers.conversion import chooses_items
 from chrono_ftp.transfers.rsyncway import PARTIAL_FOLDER, drop_own_partials, is_partial_folder, partial_folder_of, remove_arrived_sources, rsync_possible, with_rsync
 from chrono_ftp.transfers.schedule import AT_ONCE, FEWEST_AT_ONCE, HELD_NEXT, HELD_PLACE, HELD_ROOM, MOST_AT_ONCE, Server, in_the_way, server_of, share
 
 # --- Version ------------------------------------------------------------
-__version__ = "queue.py 0.0.13"
+__version__ = "queue.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Masks (block FD): a job with a file mask, hidden files or empty folders left out, text files or changed names is looked
+#          over first, so rsync gets the exact list of what passes, and what it can't send goes file by file; what was left out is told
 # v0.0.13: Queue control (FC-02 to FC-04): close() waits for the thread, and no call reaches the window once it returned; pause and
 #          resume, keeping what arrived; move up and down, run now, retry, delete, also of a running job; a speed limit per job that
 #          takes effect at once; pause all, resume all, clear finished; items that start by themselves or wait to be started; a job
@@ -96,6 +99,7 @@ NOTES: dict[str, tuple[str, str]] = {  # what a transfer that went well has to t
     "links_left": ("1 link to a folder, or that leads nowhere, was left out: links are not followed into other folders.", "{count} links to folders, or that lead nowhere, were left out: links are not followed into other folders."),
     "others_left": ("1 item that is neither a file nor a folder (a pipe, a socket or a device, for instance) was left out.", "{count} items that are neither a file nor a folder (pipes, sockets or devices, for instance) were left out."),
     "continued_by_size": ("1 file was continued where it broke off; this server can confirm only its size, and that is right.", "{count} files were continued where they broke off; this server can confirm only their sizes, and those are right."),
+    "left_by_choice": ("1 item was left out, as the transfer settings ask.", "{count} items were left out, as the transfer settings ask."),
 }
 APPEND_NOTES: dict[str, tuple[str, str]] = {  # what setting back the appends that broke off earlier has to tell (OR-23)
     "whole": ("1 file that an append broke off in has the append's full length, so it was left as it is.", "{count} files that an append broke off in have the append's full length, so they were left as they are."),
@@ -1077,7 +1081,7 @@ class TransferQueue:
             look: FileWay | None = None
             options = job.options
             links_here = self._links_in_the_source(job)  # sent as their content, as the file by file way does
-            if links_here or options.ask_before_replacing or options.only_newer or options.delete_source or job.answers.batch is not None or self._kinds_clash(job) or self._specials_in_the_target(job):
+            if links_here or options.ask_before_replacing or options.only_newer or options.delete_source or job.answers.batch is not None or chooses_items(options) or self._kinds_clash(job) or self._specials_in_the_target(job):
                 job.way = "rsync"
                 look = FileWay(job, job.remote, limit, meter, ask, [], known, shown)  # over SSH the browsing connection also transfers
                 self._talking[id(job)] = job.remote
@@ -1093,7 +1097,7 @@ class TransferQueue:
                 return
             meter.start_again()  # rsync could not log in: the other way counts every file again, the ones done by the look-over too
             for look_over in ways:
-                look_over.links_left = look_over.others_left = 0  # the other way meets them again and counts them itself
+                look_over.links_left = look_over.others_left = look_over.left_by_choice = 0  # the other way meets them again and counts them itself
         job.way = job.connection.protocol.upper()
         try:
             connection = job.remote.for_a_transfer()  # FTP: a login of its own; SSH: the tab's login, whose channels run side by side

@@ -1,7 +1,8 @@
 """What the transfer options do (FB-01 to FB-08): which of them a connection can do, when a part file is continued, and how an existing
 file is handled: the overwrite question and its answers (FB-03)."""
 
-from dataclasses import dataclass, replace
+import threading
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from chrono_ftp.connections.base import Capabilities
@@ -9,9 +10,11 @@ from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.transferoptions import RESUME_OFF, RESUME_ON, RESUME_SMART, SMART_RESUME_BYTES, TransferOptions
 
 # --- Version ------------------------------------------------------------
-__version__ = "options.py 0.0.13"
+__version__ = "options.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Append is not offered for a text file whose line endings are converted (FD-02); why resume and splitting are greyed for text;
+#          the places an action writes, so two of its items whose names become one never write over each other (D-083)
 # v0.0.13: The answers of one action are shared by its jobs that run at once (FC-01); splitting a large file over several connections
 #          is greyed where it can't be done: an FTP upload, an FTP download without REST (FC-05)
 # v0.0.12: Initial: options greyed out by what the connection can do; resume on, smart and off; the answers to the overwrite question;
@@ -20,6 +23,8 @@ __version__ = "options.py 0.0.13"
 NO_CUT: str = "no cut"  # the server can't cut a file back
 SIZE_UNKNOWN: str = "size unknown"  # the size of the file there is unknown
 KIND_UNKNOWN: str = "kind unknown"  # whether it is a file or a folder is unknown
+TEXT_NO_APPEND: str = "text"  # a text file whose line endings are converted always goes whole (FD-02)
+TEXT_WHOLE_TEXT: str = "A text file whose line endings are converted always goes whole, so it is never continued or split. Binary files still are."
 RESUME: str = "resume"
 KEEP_TIMESTAMPS: str = "keep_timestamps"
 SET_RIGHTS: str = "set_rights"
@@ -73,6 +78,26 @@ class Answers:
     at a time, TransferQueue)."""
 
     batch: Choice | None = None
+    written: dict[str, str] = field(default_factory=dict[str, str], compare=False)  # each place this action writes, and which item
+    # writes it: another item of the same action never writes over it (D-083)
+    lock: threading.Lock = field(default_factory=threading.Lock, compare=False, repr=False)  # jobs of one action run at the same time
+
+    def taken(self, place: str, owner: str) -> bool:
+        """Whether another item of this action writes this place already."""
+        with self.lock:
+            return self.written.get(place, owner) != owner
+
+    def claim(self, place: str, owner: str) -> bool:
+        """This item writes this place from now on; False where another item of this action does already."""
+        with self.lock:
+            if self.written.setdefault(place, owner) != owner:
+                return False
+            return True
+
+    def take(self, place: str, owner: str) -> None:
+        """This item writes this place, as the person chose by a Rename onto it."""
+        with self.lock:
+            self.written[place] = owner
 
 
 @dataclass(frozen=True)
@@ -87,7 +112,7 @@ class Conflict:
     target_size: int
     target_modified: float | None
     part_size: int | None  # an unfinished copy that can be continued; None when there is none
-    no_append: str = ""  # why Append is not offered: NO_CUT, SIZE_UNKNOWN or KIND_UNKNOWN; empty where it is
+    no_append: str = ""  # why Append is not offered: NO_CUT, SIZE_UNKNOWN, KIND_UNKNOWN or TEXT_NO_APPEND; empty where it is
     source_size_known: bool = True  # False where the server gave no size: the size is then 0 and means nothing
     target_size_known: bool = True
     connection: str = ""  # the connection (its tab) the question is about

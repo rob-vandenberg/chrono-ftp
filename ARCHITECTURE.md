@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.40; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.41; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -158,7 +158,7 @@ The modules of block FP, one line each:
 
 The modules of block FQ, one line each:
 
-1. `core/masks.py`: whether a name fits a mask such as `*.log; *.tmp`, the one function block FD's mask engine will replace (D-069).
+1. `core/masks.py`: whether a name fits a mask such as `*.log; *.tmp` (D-069); since block FD the one mask engine (section 14).
 2. `core/filecolours.py`: a rule of file colours and the first rule that fits a name; `config/settings.py` keeps the rules, the thumbnail limit and mask, and the toolbar choices, each checked when read (D-069 to D-071).
 3. `engine/thumbnails.py`: which files in view get a thumbnail, the key a picture is kept under, and a file of this computer read into memory, stopped when told (D-070).
 4. `connections/base.py`, `ssh.py`, `ftp.py`: `read_file`, a small file read into memory block by block, stopped when told; on FTP the data connection is ended and its answer read (D-070).
@@ -179,3 +179,16 @@ The modules of block FG, one line each:
 4. `ui/sidebar.py`: the history drop-down of Back and Forward, several steps at once, and the status line of a side with its counts (D-076, D-077).
 5. `ui/pathbar.py`: the drop-down of the folders above the path (D-077).
 6. `ui/windowselection.py`: the part of the main window that ties them together (D-073 to D-080).
+
+## 14. Masks (block FD, version 0.0.41)
+
+The modules of block FD, one line each:
+
+1. `core/masks.py`: the one mask engine: include and exclude, folder patterns, patterns with a path, size and date conditions; `fits` for transfers and the filter, `named` for selecting, colours and thumbnails, `MaskError` with the place of a fault (D-081).
+2. `core/transferoptions.py`: the file mask, skip hidden files, skip empty folders, the transfer mode with its text mask and BOM, and the names; `plain` for Edit's saves and Compare's rows (D-082, D-083, D-087).
+3. `core/presets.py`: a preset, its rules and the first preset that fits a transfer (D-084); `config/settings.py` keeps the presets and the history of masks.
+4. `transfers/conversion.py`: what passes a transfer, which files are text, the line endings block by block into a copy of our own, and the names in the target (D-082, D-083, D-087).
+5. `transfers/filebyfile.py`: leaves out what does not pass, sends a text through its converted copy and checks its size against that, writes the converted names; beside rsync it sends what rsync can't and makes their folders first; `transfers/queue.py` looks a job over for rsync wherever it leaves out or changes anything.
+6. `ui/maskfield.py`: the mask field with its history and its fault; `ui/maskdialog.py`: Select by Mask, Unselect by Mask and the Filter window (D-085, D-086).
+7. `ui/transferoptionsform.py`: the Files and Text and names tabs of the transfer settings; `ui/presetseditor.py`: the Presets page of Settings; `ui/transferdialog.py`: the preset of a transfer (D-084).
+8. `ui/pathbar.py`: the mark of the active filter next to the path; `ui/filelist.py`: the filter and selecting by mask through the engine; `ui/windowselection.py` and `ui/windowlayout.py`: Num+, Num−, the filter window and the history of masks.
