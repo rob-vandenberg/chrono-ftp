@@ -32,9 +32,10 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowselection.py 0.0.43"
+__version__ = "windowselection.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The menu of each list also holds Copy These Files and Paste the Files Here, of block FI (FI-03)
 # v0.0.43: The menu of each list also holds Mark Differences, and the left one Synchronize with another folder on this computer (FF-12, FF-14)
 # v0.0.42: Calculate Folder Sizes (Shift+Space) in the right-click menu of a list (FE-03)
 # v0.0.41: Select by Mask (Num+) and Unselect by Mask (Num−) on the list with the focus, also in the Select submenu, with the masks
@@ -142,6 +143,7 @@ class SelectionPart(WindowBase):
         search.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         self.addAction(search)  # its key works with the top bar hidden too (D-071)
 
+    @override
     def _list_action(self, name: str, text: str, key: str, owner: QWidget, handler: Callable[[], None]) -> QAction:
         action = QAction(text, self)
         if key:
@@ -152,6 +154,7 @@ class SelectionPart(WindowBase):
         self.list_actions[name] = action
         return action
 
+    @override
     def _side(self, side_name: str) -> LocalSide | RemoteSide:
         return self.local_side if side_name == LOCAL else self.remote_side
 
@@ -281,6 +284,9 @@ class SelectionPart(WindowBase):
         menu.addAction(self.list_actions[f"{side_name}_mark_differences"])  # block FF: what differs from the other side (FF-12)
         if side_name == LOCAL:
             menu.addAction(self.list_actions[f"{LOCAL}_sync_folder"])  # block FF: the same window for two folders here (FF-14)
+        menu.addSeparator()
+        menu.addAction(self.list_actions[f"{side_name}_copy_files"])  # block FI: between the tabs (FI-03)
+        menu.addAction(self.list_actions[f"{side_name}_paste_files"])
         menu.addSeparator()
         only = menu.addMenu(ONLY_MENU_TEXT)
         only.setToolTipsVisible(True)
@@ -429,6 +435,7 @@ class SelectionPart(WindowBase):
         if wanted and source in (FROM_LOCAL, FROM_OUTSIDE):
             self._offer(session, paths or self.local_side.selected_paths(), target, True, move=wanted == "move")
 
+    @override
     def copy_into(self, session: Session, folder: str, chosen: list[RemoteEntry], target: str) -> None:
         """Copy Here of a right-button drag within the server: each item copied on the server into target, as Copy To does; the others
         go on after a refusal, and the refusals are told."""

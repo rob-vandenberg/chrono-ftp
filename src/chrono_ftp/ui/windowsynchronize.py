@@ -44,16 +44,18 @@ from chrono_ftp.engine.synchronize import (
 )
 from chrono_ftp.transfers.queue import Job
 from chrono_ftp.transfers.sidework import SideJob, SideWork, Step, on_this_computer
+from chrono_ftp.ui.startabort import aborted_text, finished_text
 from chrono_ftp.ui.comparedialog import CompareDialog
 from chrono_ftp.ui.filelist import FileList
-from chrono_ftp.ui.plaintext import box_text, fitting
+from chrono_ftp.ui.plaintext import counted, box_text, fitting
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowsynchronize.py 0.0.44"
+__version__ = "windowsynchronize.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: What a run on this computer says at its end comes from ui/startabort.py, shared with the paste of files (D-099)
 # v0.0.44: The window says "looking inside the files" where it said checksums
 # v0.0.44: An Abort pressed after the last step says it finished, because nothing was aborted
 # v0.0.44: Review by the owner: Start in place of Apply, and the same button aborts while the work runs; two folders on this
@@ -70,12 +72,9 @@ MARK_TEXT: str = "Mark Differences"
 ANOTHER_FOLDER_TEXT: str = "Synchronize with another folder on this computer…"
 MARK_TIP: str = "Marks the files of this folder that differ from, or are missing on, the other side. Nothing is copied."
 MARK_WHY_NO_TAB: str = "There is no live connection to compare with."
-MARKED_TEXT: str = "{count} of {folder} differ from the other side."
+MARKED_TEXT: str = "{count} of {folder} {differ} from the other side."
 NONE_MARKED_TEXT: str = "Nothing in {folder} differs from the other side."
 LOCAL_SIDE_WORDS: str = "the other folder"
-LOCAL_DONE_TEXT: str = "Finished: all {count} were done."
-LOCAL_SOME_TEXT: str = "Finished: {done} of {count} were done; {failed} could not be."
-LOCAL_ABORTED_TEXT: str = "Aborted: {done} of {count} were done, and {left} were not. What was done stays done."
 TO_THE_QUEUE_TEXT: str = "{count} went to the queue under the two panels; you can watch, pause and stop them there."
 ONE_TO_THE_QUEUE_TEXT: str = "1 thing went to the queue under the two panels; you can watch, pause and stop it there."
 
@@ -490,11 +489,9 @@ class SynchronizePart(WindowBase):
         def ended(_result: object) -> None:
             left = count - done[0] - failed[0]
             if stop.is_set() and left > 0:  # an Abort after the last step stopped nothing: it finished (G-2)
-                text = LOCAL_ABORTED_TEXT.format(done=done[0], count=count, left=left + failed[0])
-            elif failed[0]:
-                text = LOCAL_SOME_TEXT.format(done=done[0], count=count, failed=failed[0])
+                text = aborted_text(done[0], count, left + failed[0])
             else:
-                text = LOCAL_DONE_TEXT.format(done=done[0], count=count)
+                text = finished_text(done[0], count, failed[0])
             dialog.work_ended(text)
             self.status.showMessage(text)
             self.local_side.refresh()
@@ -527,7 +524,7 @@ class SynchronizePart(WindowBase):
             names = {row.name for row in rows if row.action != Action.NOTHING or row.reason}
             view.select_names(names)
             folder = fitting(shown_name(here_folder if side_name == LOCAL else there_folder), self)
-            self.status.showMessage(MARKED_TEXT.format(count=len(names), folder=folder) if names else NONE_MARKED_TEXT.format(folder=folder))
+            self.status.showMessage(MARKED_TEXT.format(count=counted(len(names), "thing", "things"), folder=folder, differ="differs" if len(names) == 1 else "differ") if names else NONE_MARKED_TEXT.format(folder=folder))
 
         session.worker.submit(work, ready, lambda error: self.status.showMessage(shown_name(str(error))))
 

@@ -37,9 +37,11 @@ from chrono_ftp.ui.passwordeye import PasswordEye
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.38"
+__version__ = "connectionlist.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The name its tab was given is no field of this window: it stays as it is when a connection is saved here, and a tab renamed
+#          meanwhile reaches the list (FI-01)
 # v0.0.38: The list can be read again, after Clean Up Stored Data (FP-04)
 # v0.0.34: A local starting folder next to the remote one, and "Remember the last folders" (FH-06); a renamed connection keeps its
 #          bookmarks and location profiles; a saved connection is told to the window, so its open tabs follow; a deleted one too,
@@ -334,7 +336,9 @@ class ConnectionList(QDialog):
             self._set_colour(colour.name())
 
     def from_fields(self) -> Connection:
+        edited = self.selected()
         return Connection(
+            tab_name=edited.tab_name if edited is not None else "",  # not a field of this window: the name its tab was given stays (FI-01)
             name=self.name.text().strip(),
             host=self.host.text().strip(),
             user=self.user.text().strip(),
@@ -369,6 +373,10 @@ class ConnectionList(QDialog):
             self.saved.emit(edited.name, connection)  # its open tabs, bookmarks and location profiles follow
         self._fill_list()
         self._select(connection.name)
+
+    def tab_renamed(self, name: str, tab_name: str) -> None:
+        """The person gave the tab of this connection a name: the list follows, so Save here does not put the old one back (FI-01)."""
+        self.connections = [replace(other, tab_name=tab_name) if other.name == name else other for other in self.connections]
 
     def folders_remembered(self, connection: Connection) -> None:
         """The last folders of a closed tab became its starting folders; the list and the fields follow, so Save can't put back the old ones."""

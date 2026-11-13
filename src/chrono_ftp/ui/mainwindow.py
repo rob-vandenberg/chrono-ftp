@@ -38,14 +38,19 @@ from chrono_ftp.ui.windowselection import SelectionPart
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowsizes import SizesPart
 from chrono_ftp.ui.windowsynchronize import SynchronizePart
+from chrono_ftp.ui.windowpaste import PastePart
 from chrono_ftp.ui.windowtabs import TabsPart
+from chrono_ftp.ui.windowworkspaces import WorkspacesPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.43"
+__version__ = "mainwindow.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Block FI, tabs and workspaces: the workspaces part (windowworkspaces.py) and the paste part (windowpaste.py); the All Tabs
+#          button next to New Tab; Ctrl+Tab, Ctrl+Shift+Tab and Alt+1 to Alt+9; a tab dragged to another place, the middle mouse
+#          button closing a tab, and files dropped on a tab; closing lets go of the copies on their way between two servers
 # v0.0.43: Block FF, synchronize (windowsynchronize.py): the Synchronize window with its choices and its checklist, Mark Differences
 #          in both lists and Synchronize with another folder on this computer on the left (FF-12, FF-14)
 # v0.0.42: Block FE, hashes and sizes (windowsizes.py): Shift+Space counts the folder sizes, greyed with its reason; closing stops the
@@ -81,11 +86,17 @@ __version__ = "mainwindow.py 0.0.43"
 # v0.0.5: Tabs, actions and transfers: a tab is a connection with its own local and remote folder (D-008, D-027)
 # v0.0.3: Initial: the tab bar above both sides, local on the left, remote on the right (OR-1, D-008)
 
+ALL_TABS_TEXT: str = "All Tabs"
+ALL_TABS_TIP: str = "Every open tab; click one to go to it"
+NO_TAB_OPEN_TEXT: str = "No tab is open."
+NEXT_TAB_KEY: str = "Ctrl+Tab"
+PREVIOUS_TAB_KEY: str = "Ctrl+Shift+Tab"
+TAB_KEYS: int = 9  # Alt+1 to Alt+9 go to the tab at that place in the row (FI-01)
 LIMIT_TIP: str = "The highest speed of all transfers together: the running items share it. An item with a speed limit of its own keeps that one."
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, SynchronizePart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart, SizesPart):
+class MainWindow(LayoutPart, TabsPart, WorkspacesPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, SynchronizePart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart, SizesPart, PastePart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -112,6 +123,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.bookmark_keys = []
         self.local_worker = None
         self.properties_waiting = False
+        self.opening_workspace = False
         self.local_properties_waiting = False
         self.tab_bar = ConnectionTabBar()
         self.new_tab_button = QToolButton()
@@ -119,12 +131,18 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.new_tab_button.setText("New Tab")
         self.new_tab_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.new_tab_button.setToolTip("Open a connection in a new tab")
+        self.all_tabs_button = QToolButton()
+        self.all_tabs_button.setIcon(icons.icon("view-list-details"))
+        self.all_tabs_button.setText(ALL_TABS_TEXT)
+        self.all_tabs_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.all_tabs_button.setToolTip(ALL_TABS_TIP)
         self.top_row = QWidget()
         self.top_row.setMinimumHeight(self.fontMetrics().height() * EMPTY_TAB_BAR_LINES)  # the same height with or without tabs: nothing below jumps
         top = QHBoxLayout(self.top_row)
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self.tab_bar)
         top.addWidget(self.new_tab_button)
+        top.addWidget(self.all_tabs_button)
         top.addStretch(1)
         self.tab_bar.setUsesScrollButtons(True)
         self.tab_bar.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)  # many tabs scroll: the buttons on the right stay
@@ -170,8 +188,14 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self._build_toolbar()
         self._build_navigation()
         self.new_tab_button.clicked.connect(self.show_connection_list)
+        self.all_tabs_button.clicked.connect(self.show_tabs_menu)
         self.tab_bar.currentChanged.connect(self._tab_changed)
         self.tab_bar.tabCloseRequested.connect(self.close_tab)
+        self.tab_bar.tabMoved.connect(self._tab_moved)  # dragged to another place in the row (FI-01)
+        self.tab_bar.takes_files = self.tab_takes_files
+        self.tab_bar.files_dropped.connect(self.files_dropped_on_tab)
+        self.tab_bar.hovered_with_files.connect(self._hovered_with_files)
+        self._build_tab_keys()
         self.tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tab_bar.customContextMenuRequested.connect(self._show_tab_menu)
         self.local_side.folder_changed.connect(self._local_folder_changed)
@@ -209,10 +233,26 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self._build_selection()  # the selection, the keys and the menus of block FG
         self._build_sizes()  # the folder sizes and the calculations of Properties (block FE)
         self._build_synchronize()  # Mark Differences in both lists and the second folder on this computer (block FF)
+        self._build_paste()  # Ctrl+C and Ctrl+V between tabs (block FI)
         self.settings = saved_settings.load()
         self._apply_settings()
         self._restore_sizes()
         self.update_actions()
+
+    def _build_tab_keys(self) -> None:
+        """Ctrl+Tab, Ctrl+Shift+Tab and Alt+1 to Alt+9: they act on the window, so they work wherever the keyboard is (FI-01)."""
+        for key, handler in ((NEXT_TAB_KEY, lambda: self.go_to_next_tab(1)), (PREVIOUS_TAB_KEY, lambda: self.go_to_next_tab(-1))):
+            action = QAction(self)
+            action.setShortcut(QKeySequence(key))
+            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            action.triggered.connect(handler)
+            self.addAction(action)
+        for number in range(1, TAB_KEYS + 1):
+            action = QAction(self)
+            action.setShortcut(QKeySequence(f"Alt+{number}"))
+            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            action.triggered.connect(lambda _checked=False, number=number: self.go_to_tab_number(number))
+            self.addAction(action)
 
     def show_about(self) -> None:
         AboutWindow(self).open()
@@ -330,6 +370,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             self.countdown.reject()
         self.queue.close()
         self._forget_edits(list(self.edited))
+        self._forget_relays()  # the copies on their way from one server to another (FI-03)
         for session in self.sessions:
             self._remember_folders(session)
             self._let_go_of(session)
@@ -394,7 +435,10 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             action.setVisible(not (on_ftp and name in SHELL_ACTIONS))  # D-027
             if name in reasons:
                 action.setToolTip(reasons[name] if reasons[name] and not enabled[name] else action.text().removesuffix("…"))  # greyed with its reason (OR-20)
+        self.all_tabs_button.setEnabled(bool(self.sessions))  # greyed with its reason, never hidden (OR-20)
+        self.all_tabs_button.setToolTip(ALL_TABS_TIP if self.sessions else NO_TAB_OPEN_TEXT)
         self.update_queue_actions()
         self._update_selection_actions()
+        self._update_paste_actions()
         self._update_size_actions()
         self._update_synchronize_actions()

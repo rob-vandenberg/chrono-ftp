@@ -10,9 +10,10 @@ from chrono_ftp.ui.filelist import date_text, size_text
 from chrono_ftp.ui.plaintext import box_text, fitting, plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "overwritedialog.py 0.0.41"
+__version__ = "overwritedialog.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The same question for a copy, here or on one server: Append and Resume are greyed, as nothing is sent anywhere (FI-03)
 # v0.0.41: Append is greyed for a text file whose line endings are converted, and says why (FD-02)
 # v0.0.12: Initial: Yes, No, Yes to all, No to all, Only if newer, Rename, Append, Resume and Stop, with size and date of both files;
 #          closing it or Esc is Stop, and Stop says that it stops all this upload or download still has to do; the answers for all
@@ -43,6 +44,8 @@ NO_TEXT_APPEND_TEXT: str = "This file goes as text, with its line endings conver
 NO_APPEND_TEXTS: dict[str, str] = {NO_CUT: NO_APPEND_TEXT, SIZE_UNKNOWN: NO_SIZE_APPEND_TEXT, KIND_UNKNOWN: NO_KIND_APPEND_TEXT, TEXT_NO_APPEND: NO_TEXT_APPEND_TEXT}
 SIZE_UNKNOWN_TEXT: str = "size unknown"
 NO_PART_TEXT: str = "There is no unfinished copy of this file that can be continued."
+LOCAL_NO_SENDING_TEXT: str = "Nothing is sent anywhere here: this is a copy, so there is nothing to append to or to continue."
+LOCAL_STOP_TEXT: str = "Stop everything this copy still has to do. What was copied stays. Closing this window or pressing Esc does the same."
 CHOICES: tuple[tuple[Choice, str, str], ...] = (
     (Choice.YES, "Yes", "Replace it with the new one"),
     (Choice.NO, "No", "Leave it as it is and go on with the next file"),
@@ -106,12 +109,17 @@ class OverwriteDialog(QDialog):
         if conflict.part_size is None:
             resume.setEnabled(False)
             resume.setToolTip(NO_PART_TEXT)
-        else:
+        elif not conflict.copying:
             whole = size_text(conflict.source_size) if conflict.source_size_known else "a file of unknown size"
             resume.setToolTip(f"Continue the unfinished copy: {size_text(conflict.part_size)} of {whole} is there already")
-        if not conflict.append_possible:
+        if not conflict.append_possible and not conflict.copying:
             self.buttons[Choice.APPEND].setEnabled(False)
             self.buttons[Choice.APPEND].setToolTip(NO_APPEND_TEXTS.get(conflict.no_append, NO_APPEND_TEXT))
+        if conflict.copying:  # nothing is sent anywhere: these two have no meaning for a copy (OR-20)
+            for choice in (Choice.APPEND, Choice.RESUME):
+                self.buttons[choice].setEnabled(False)
+                self.buttons[choice].setToolTip(LOCAL_NO_SENDING_TEXT)
+            self.buttons[Choice.STOP].setToolTip(LOCAL_STOP_TEXT)
         safe = self.buttons[Choice.NO]
         safe.setDefault(True)  # Enter leaves the file as it is
         safe.setFocus()  # and so does Space: no key ever replaces a file without a choice

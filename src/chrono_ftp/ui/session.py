@@ -9,9 +9,10 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.41"
+__version__ = "session.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: What Ctrl+C copied, and a copy from one server to another that goes through this computer (FI-03)
 # v0.0.41: Each tab keeps the filter of the left side too (FD-06)
 # v0.0.40: Each tab can pause its automatic refresh (FG-15)
 # v0.0.39: Each tab keeps whether each side shows thumbnails (FQ-02)
@@ -77,10 +78,38 @@ class Session:
     remote_thumbnails: bool = False
     refresh_problem: str = ""  # what the last automatic refresh could not do: said once, not at every refresh
     refresh_paused: bool = False  # Pause Automatic Refresh, from the menu of the tab (FG-15)
+    wanted_start: str = ""  # the folder on the server this tab is to open in, from the workspace it came from (FI-02)
 
     @property
     def capabilities(self) -> Capabilities:
         return self.remote.capabilities if self.remote is not None and self.alive else Capabilities()
+
+
+@dataclass(eq=False)
+class CopiedFiles:
+    """What Ctrl+C copied: where the files are, so Ctrl+V in another tab knows what to fetch (FI-03). text is exactly what was put on
+    the clipboard: once the clipboard holds something else, this copy is no longer what the person would paste."""
+
+    session: "Session | None"  # None: the left side, this computer
+    folder: str
+    entries: tuple[RemoteEntry, ...]  # exactly what the person saw and chose
+    text: str
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(entry.name for entry in self.entries)
+
+
+@dataclass(eq=False)
+class Relay:
+    """A copy from one server to another that goes through this computer: first the download, then the upload of what arrived (FI-03)."""
+
+    target: "Session"
+    folder: str  # where it goes on the target server
+    name: str
+    copy: str  # the copy on this computer
+    temporary: str  # the folder that holds it; it goes when the relay ends
+    uploading: bool = False  # the download is done and the upload runs
 
 
 def no_progress(_amount: int) -> None:

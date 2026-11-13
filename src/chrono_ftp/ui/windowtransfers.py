@@ -25,9 +25,10 @@ from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, Windo
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtransfers.py 0.0.41"
+__version__ = "windowtransfers.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A job that ended may be a copy on its way from one server to another, which then goes on (FI-03)
 # v0.0.41: A transfer starts with the first preset whose rules fit its host, user and folders, also without the transfer window; the
 #          window names it and offers the others (FD-04), ~ in its folder rules being the home folder of each side; the masks used are
 #          remembered
@@ -371,6 +372,7 @@ class TransfersPart(WindowBase):
         self.update_actions()
         self._follow_queue(job)
         self._edit_job_ended(job)
+        self._relay_job_ended(job)  # a copy on its way from one server to another (FI-03)
         if job.state == State.RUNNING:
             self.ends_shown.discard(id(job))  # a retry or a resume: its next end is news again
         ended = job.state in ENDED

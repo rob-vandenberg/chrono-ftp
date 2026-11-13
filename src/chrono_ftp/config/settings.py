@@ -13,9 +13,10 @@ from chrono_ftp.core.presets import LONGEST_NAME, MOST_PRESETS, STANDARD_NAME, P
 from chrono_ftp.core.transferoptions import NAME_CASES, RESUME_MODES, TRANSFER_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.43"
+__version__ = "settings.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The order the tabs were dragged into, by connection name, checked on load (FI-01)
 # v0.0.43: The choices of the Synchronize window and the file count of the last scan of each folder pair, each checked on load (FF-11, FF-13)
 # v0.0.42: The checksum algorithm last chosen in Properties (FE-02), checked on load
 # v0.0.41: Masks (block FD): the file mask, hidden files, empty folders, the transfer mode with its text mask and BOM, and the names of
@@ -73,6 +74,8 @@ BYTES: str = "bytes"  # sizes as 1,234,567 (FG-06)
 KILOBYTES: str = "kilobytes"  # 1,206 KB
 SHORT: str = "short"  # 1.2 MB, as the lists showed sizes before block FG
 SIZE_FORMATS: tuple[str, ...] = (BYTES, KILOBYTES, SHORT)
+MOST_TAB_NAMES: int = 200  # the remembered order of the tabs; a list from a file is input (OR-15)
+LONGEST_CONNECTION_NAME: int = 200
 MOST_MASKS_KEPT: int = 20  # the masks typed last, offered again in every mask field (FD-05, FD-06)
 
 
@@ -120,6 +123,7 @@ class Settings:
     checksum_algorithm: str = STANDARD_ALGORITHM  # the last one chosen in Properties (FE-02)
     synchronize: SyncOptions = field(default_factory=SyncOptions)  # every choice of the Synchronize window, kept for next time (FF-11)
     scan_counts: tuple[tuple[str, int], ...] = ()  # per folder pair, how many names its last scan looked at (FF-13)
+    tab_order: tuple[str, ...] = ()  # the connection names in the order the tabs were dragged into, so a tab opens again in its place (FI-01)
 
 
 def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
@@ -276,6 +280,15 @@ def _presets(data: object) -> tuple[Preset, ...]:
     return tuple(found)
 
 
+def _tab_order(data: object) -> tuple[str, ...]:
+    """The remembered order of the tabs, by connection name; a damaged name is left out, and a name twice is kept once (OR-15, FI-01)."""
+    found: list[str] = []
+    for item in cast(list[object], data)[:MOST_TAB_NAMES] if isinstance(data, list) else []:
+        if isinstance(item, str) and 0 < len(item) <= LONGEST_CONNECTION_NAME and item not in found:
+            found.append(item)
+    return tuple(found)
+
+
 def _mask_history(data: object) -> tuple[str, ...]:
     history: tuple[str, ...] = ()
     for item in reversed(cast(list[object], data)[:MOST_MASKS_KEPT]) if isinstance(data, list) else []:
@@ -355,6 +368,7 @@ def load() -> Settings:
         checksum_algorithm=choice("checksum_algorithm", CHECKSUM_ALGORITHMS, STANDARD_ALGORITHM),
         synchronize=_synchronize(data.get("synchronize")),
         scan_counts=_scan_counts(data.get("scan_counts")),
+        tab_order=_tab_order(data.get("tab_order")),
     )
 
 

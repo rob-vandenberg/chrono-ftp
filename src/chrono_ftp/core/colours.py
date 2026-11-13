@@ -2,9 +2,10 @@
 written as "#rrggbb". The colours a person chooses for a connection are theirs: they are kept with the connection, not in this file."""
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.0.39"
+__version__ = "colours.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The border round the tab that will take the files being dragged over it (FI-01)
 # v0.0.39: The colours a new rule of file colours offers first (FQ-01); the colours of a rule are the person's own, kept in the settings
 # v0.0.34: The path of the side with the keyboard focus is highlighted (FH-01)
 # v0.0.33: Not connected, the right side is the darker row colour of the left side; the dropped tab keeps its light grey
@@ -46,6 +47,7 @@ FIRST_CONNECTION: str = "#2e7d4f"  # what the colour button offers first
 FIRST_FILE_TEXT: str = "#e8b04a"  # what a new rule of file colours offers first for the text (FQ-01)
 FIRST_FILE_BACKGROUND: str = "#3b3320"  # and for the background of the row
 NO_COLOUR_TAB: str = "#3a4146"  # the tab of a live connection without a colour of its own
+TAB_TAKES_FILES: str = "#ffd24a"  # the border round the tab that will take the files being dragged over it; it stands out on every connection colour (FI-01)
 DARK_TEXT: str = "#101214"  # the text on a light connection colour
 LIGHT_TEXT: str = "#ffffff"  # the text on a dark connection colour
 DIM_FACTOR: float = 0.72  # an inactive tab is slightly dimmed

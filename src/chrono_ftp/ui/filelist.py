@@ -17,9 +17,10 @@ from chrono_ftp.engine.listing import summary_text as summary_text
 from chrono_ftp.ui.menus import open_menu
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.43"
+__version__ = "filelist.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Ctrl+V that reaches the list means pasting is greyed: it says so instead of doing nothing (FI-03)
 # v0.0.43: select_names marks exactly the names Mark Differences found (FF-12)
 # v0.0.42: The Size column shows the size of a folder once it was counted, "at least …" where it could not be read in full, kept while
 #          the same folder shows; Shift+Space never types a space nor marks, it belongs to counting the folder sizes (FE-03); review
@@ -274,6 +275,7 @@ class FileList(QTreeView):
     right_dropped = Signal(str, object, object)  # the same for a drag made with the right mouse button: the window asks with a menu (FG-14)
     keypad_refused = Signal(bool)  # the number pad's + (True) or − reached the list: its action is greyed (FD-05)
     sizes_refused = Signal()  # Shift+Space reached the list: counting the folder sizes is greyed (FE-03)
+    paste_refused = Signal()  # Ctrl+V reached the list: pasting is greyed, and the person is told why (FI-03)
     typing_changed = Signal(str)  # what was typed to find a name; "" once it starts afresh (FG-01)
 
     def __init__(self, column_count: int, kind: str, accepts: frozenset[str], parent: QWidget | None = None) -> None:
@@ -759,6 +761,10 @@ class FileList(QTreeView):
         if event.modifiers() & Qt.KeyboardModifier.KeypadModifier and key in (Qt.Key.Key_Plus, Qt.Key.Key_Minus):
             event.accept()
             self.keypad_refused.emit(key == Qt.Key.Key_Plus)
+            return
+        if key == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            event.accept()
+            self.paste_refused.emit()  # a greyed Ctrl+V reaches the list: the person hears why, in the status bar (OR-20)
             return
         held = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
         if key == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ShiftModifier and not held and not self.typed:

@@ -2,13 +2,17 @@ import re
 import secrets
 import shlex
 
-from chrono_ftp.connections.base import NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_LINKS_TEXT, Capabilities, RemoteConnection, RemoteEntry, joined, own_name, parent_of, safe_name
+from chrono_ftp.connections.base import OLD_SUFFIX, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_LINKS_TEXT, Capabilities, RemoteConnection, RemoteEntry, joined, own_name, parent_of, safe_name
 from chrono_ftp.core.errors import ConnectionLost, NameTaken, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands.py 0.0.37"
+__version__ = "commands.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Review round 3: every step of a replacing copy says in plain words what failed and that what the person had is untouched,
+#          and a copy cut short earlier says where their own file is and what to do with it
+# v0.0.45: Review round 2: a copy on the server that replaces the one name the person agreed to is made under a name of our own and
+#          put in place only once it is whole; a failure removes only our own copy, never what was already there (FI-03, G-2)
 # v0.0.37: The group can be changed without being root; a copy on the server without a shell, of files, through the protocol where the
 #          server offers it; the names of copies from a simple pattern; a link's target changed without the link ever missing; why
 #          an action can't be done, for its hover text (FM-04, FM-05, FM-06); a link led elsewhere is replaced in one step where the
@@ -27,6 +31,13 @@ FOLDERS_NEED_SHELL_TEXT: str = "Without a shell this server copies single files 
 NO_COPY_ON_FTP_TEXT: str = "This FTP server can't copy on itself (it offers no SITE CPFR and CPTO). You can download and upload instead."
 NO_LINKS_ON_FTP_TEXT: str = "FTP can't make links. An SFTP connection to this server can."
 HALF_COPY_REMAINS_TEXT: str = "An unfinished copy remains at {path}; you can delete it."
+NEW_SUFFIX: str = ".chrono-ftp-new"  # a copy that is to replace something carries this name until it is whole (FI-03, G-2)
+BUSY_NEW_TEXT: str = "The name {path}, which Chrono FTP needs while it makes this copy, is taken. Remove it and try again."
+BUSY_OLD_TEXT: str = "An earlier copy of {name} did not finish. Your own {name} is still here, under the name {path}: rename it back to {name}, or remove it, and try again. Nothing of it was lost."
+NOT_MOVED_ASIDE_TEXT: str = "{path} could not be moved out of the way, so nothing was copied over it: what you had is untouched."
+NOT_IN_PLACE_TEXT: str = "The copy could not be put in the place of {path}, so nothing was copied over it: what you had is back where it was, untouched."
+BOTH_FAILED_TEXT: str = "The copy could not be put in the place of {path}, and what you had could not be put back either. Nothing of it is lost: it is here under the name {aside}."
+OLD_STAYS_TEXT: str = "The copy is in place. What was there could not be removed and stays next to it as {path}."
 LINK_NEW_SUFFIX: str = ".chrono-ftp-link"
 LINK_OLD_SUFFIX: str = ".chrono-ftp-old-link"
 OLD_LINK_LEFT_TEXT: str = "The link leads to its new target now. Its old version, {name}, could not be removed: {reason}"
@@ -160,14 +171,38 @@ def copy_names(pattern: str, names: list[str]) -> list[str]:
     return made
 
 
-def copy_on_server(connection: RemoteConnection, source: str, target: str) -> None:
-    """One copy made by the server itself, never onto a name that is taken: cp where a shell has it, else the protocol (a file only)."""
+def replace_command(source: str, target: str) -> str:
+    """A copy that takes the place of what is there, without ever removing that before the new copy is whole (G-2): the copy is made
+    under a name of Chrono FTP's own, the old one is moved aside, the copy takes the name, and only then is the old one removed. A
+    failure anywhere removes our own copy only, so the person is never worse off than before they pressed Start. Every path goes
+    through shlex.quote (OR-19)."""
+    fresh, aside = target + NEW_SUFFIX, target + OLD_SUFFIX
+    quoted, new, old = shlex.quote(target), shlex.quote(fresh), shlex.quote(aside)
+    name = target.rsplit("/", 1)[-1] or target
+    busy_new = f"if [ -e {new} ] || [ -L {new} ]; then echo {shlex.quote(BUSY_NEW_TEXT.format(path=fresh))} >&2; exit 1; fi"
+    busy_old = f"if [ -e {old} ] || [ -L {old} ]; then echo {shlex.quote(BUSY_OLD_TEXT.format(name=name, path=aside))} >&2; exit 1; fi"  # an earlier copy was cut short: the person is told where their own is
+    made = f"{copy_command(source, fresh)} || {{ {half_copy_removal(fresh)}; exit 1; }}"  # only our own copy is ever removed
+    set_aside = f"mv -- {quoted} {old} || {{ {half_copy_removal(fresh)}; echo {shlex.quote(NOT_MOVED_ASIDE_TEXT.format(path=target))} >&2; exit 1; }}"
+    put_back = f"if mv -- {old} {quoted} 2>/dev/null; then echo {shlex.quote(NOT_IN_PLACE_TEXT.format(path=target))}; else echo {shlex.quote(BOTH_FAILED_TEXT.format(path=target, aside=aside))}; fi >&2"
+    in_place = f"mv -- {new} {quoted} || {{ {put_back}; {half_copy_removal(fresh)}; exit 1; }}"
+    tidy = f"rm -rf -- {old} 2>/dev/null || {{ chmod -R u+rwx -- {old} 2>/dev/null; rm -rf -- {old} 2>/dev/null || echo {shlex.quote(OLD_STAYS_TEXT.format(path=aside))}; }}"
+    return f"{busy_new}; {busy_old}; {made}; {set_aside}; {in_place}; {tidy}"
+
+
+def copy_on_server(connection: RemoteConnection, source: str, target: str, replace: bool = False) -> str:
+    """One copy made by the server itself: cp where a shell has it, else the protocol (a file only). Never onto a name that is taken,
+    unless replace: the person was asked about that one name and said yes, and the copy then takes its place through replace_command,
+    which never removes what was there before the new copy is whole (FI-03, G-2). Returns what the person should know about what was
+    left behind; empty when nothing was."""
     if source == target:
         raise RemoteActionFailed(SAME_PLACE_TEXT)
     if can_copy(connection.capabilities):
+        if replace:
+            return run_checked(connection, replace_command(source, target)).strip()
         run_checked(connection, without_overwriting(target, f"{{ {copy_command(source, target)} || {{ {half_copy_removal(target)}; exit 1; }}; }}"))
     else:
         connection.copy_file(source, target)
+    return ""
 
 
 def half_copy_removal(target: str) -> str:

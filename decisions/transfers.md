@@ -16,3 +16,4 @@
 14. [[D-084]] Transfer presets
 15. [[D-087]] Masks in transfers
 16. [[D-095]] Apply goes through the queue
+17. [[D-099]] Copy and paste files between tabs

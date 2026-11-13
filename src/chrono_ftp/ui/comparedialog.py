@@ -12,13 +12,18 @@ from chrono_ftp.engine.listing import size_text
 from chrono_ftp.engine.sizes import Count
 from chrono_ftp.engine.synchronize import COPIES, DELETES, HERE, THERE_FOLDER, THERE_SERVER, Action, Criterion, Options, Row, Total, can_turn, text_of, totals, turned, why_no_turn
 from chrono_ftp.ui.filelist import date_text
-from chrono_ftp.ui.plaintext import plain_label
+from chrono_ftp.ui.startabort import ABORT_TEXT as ABORT_TEXT  # given on: the window tests and the synchronize part read them here
+from chrono_ftp.ui.startabort import ABORT_TIP, START_TEXT as START_TEXT, WORKING_TEXT, StartAbortButton
+from chrono_ftp.ui.plaintext import counted, was, plain_label
 from chrono_ftp.ui.synchronizeoptions import SynchronizeOptions
 
 # --- Version ------------------------------------------------------------
-__version__ = "comparedialog.py 0.0.44"
+__version__ = "comparedialog.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Review round 4: the line after looking inside the files reads as a person writes it, for one file and for none (OR-23)
+# v0.0.45: The Start/Abort button and the words of work on this computer come from ui/startabort.py: there is one of them, shared
+#          with the paste of files on this computer (D-097, D-099)
 # v0.0.43: Block FF: the window gets its choices (direction, mode, criterion, deletes, scope, masks) and becomes a checklist of every
 #          planned action, sortable by any column, with Select by action, the count and size per action, Reverse for one row, the size
 #          of a one-sided folder counted in the background, and a progress bar that uses the last scan of the same folder pair; Apply
@@ -48,9 +53,6 @@ ACTION_HEADING: str = "What will happen"
 SIZE_HEADING: str = "Size on {side}"
 DATE_HEADING: str = "Date on {side}"
 WHY_HEADING: str = "Why"
-START_TEXT: str = "Start"  # the one word a person expects for starting the work (D-097)
-ABORT_TEXT: str = "Abort"  # the same button while it runs: one button, naming the one action that applies (OR-20, D-097)
-ABORT_TIP: str = "Stops after the file it is busy with; what was done stays done."
 WAIT_FOR_IT_WHY: str = "Wait until the list is finished."
 START_TIP: str = "Does everything that is ticked. Nothing happens before you press this."
 START_QUEUE_TIP: str = "Puts everything that is ticked in the queue under the two panels, where you can watch, pause and stop it."
@@ -72,8 +74,8 @@ STOP_CONTENTS_TEXT: str = "Stop Looking Inside the Files"
 CONTENTS_TIP: str = "Opens every file of the same size on both sides and reads it from beginning to end, then takes out the rows whose two files turn out to hold exactly the same thing. This looks inside the files themselves; it does not go through the folders again."
 NO_SAME_SIZE_TEXT: str = "There are no files of the same size on both sides, so there is nothing to look inside."
 CONTENTS_RUNNING_TEXT: str = "Looking inside the files on both sides…"
-CONTENTS_DONE_TEXT: str = "{left} turned out to be the same on both sides and are gone from the list; {count} things left to do."
-CONTENTS_UNKNOWN_TEXT: str = " {unknown} could not be opened on one of the two sides and stay as they were."
+CONTENTS_DONE_TEXT: str = "{left} turned out to be the same on both sides and {is_gone} from the list; {count} left to do."
+CONTENTS_UNKNOWN_TEXT: str = " {unknown} could not be opened on one of the two sides and {stays} as {it} {was}."
 CONTENTS_STOPPED_TEXT: str = "Looking inside the files was stopped; the list stays as it was."
 SCANNING_TEXT: str = "Going through {here} and {there}…"
 COUNTING_RUNNING_TEXT: str = "Working out how much is in {count}…"
@@ -83,10 +85,10 @@ COUNTING_STOPPED_TEXT: str = "Counting the folders was stopped; the sizes it had
 TO_DO_TEXT: str = "{count} to do. Nothing happens until you press Start."
 ONE_TO_DO_TEXT: str = "1 thing"
 THINGS_TO_DO_TEXT: str = "{count} things"
+NOTHING_LEFT_TEXT: str = "nothing"
 SAME_TEXT: str = "These two folders are already the same: there is nothing to do."
 CHOICES_CHANGED_TEXT: str = "The choices changed: press Compare the Folders Again to see what that means."
 SCAN_STOPPED_TEXT: str = "Comparing the folders was stopped; the list stays as it was."
-WORKING_TEXT: str = "Doing {done} of {count}: {name}"
 NOTHING_ACTION_TEXT: str = "Nothing"
 COUNTING_TEXT: str = "counting…"
 ROW_DATA: int = int(Qt.ItemDataRole.UserRole)
@@ -165,9 +167,8 @@ class CompareDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(NAME_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSortIndicatorShown(True)
-        self.start_button = QPushButton(START_TEXT)
+        self.start_button = StartAbortButton(START_QUEUE_TIP if on_a_server else START_TIP)  # the one button of D-097, shared (ui/startabort.py)
         self.start_button.setEnabled(False)
-        self.start_button.setToolTip(START_QUEUE_TIP if on_a_server else START_TIP)
         self.again_button = QPushButton(COMPARE_AGAIN_TEXT)
         self.again_button.setAutoDefault(False)
         self.again_button.setToolTip(COMPARE_AGAIN_TIP)
@@ -187,7 +188,8 @@ class CompareDialog(QDialog):
         self.contents_button.setEnabled(False)
         self._build()
         self.choices.changed.connect(self._choices_changed)
-        self.start_button.clicked.connect(self._start_pressed)
+        self.start_button.start_requested.connect(self._start_pressed)
+        self.start_button.abort_requested.connect(self.work_stopped)
         self.close_button.clicked.connect(self.close)
         self.again_button.clicked.connect(self._again)
         self.reverse_button.clicked.connect(self._reverse)
@@ -379,25 +381,17 @@ class CompareDialog(QDialog):
         return len([row for row in self.ticked() if row.action in DELETES])
 
     def _start_pressed(self) -> None:
-        """One button: it starts the work, and while that work runs it aborts it (D-097)."""
-        if self.running:
-            self.work_stopped.emit()
-            return
         self.start_requested.emit(self.ticked())
 
     def _start_state(self) -> None:
-        """Start, or Abort while the work runs; greyed with its reason where there is nothing to start (OR-20)."""
+        """Start, or Abort while the work runs; greyed with its reason where there is nothing to start (OR-20, D-097)."""
         if self.running:
-            self.start_button.setText(ABORT_TEXT)
-            self.start_button.setToolTip(ABORT_TIP)
-            self.start_button.setEnabled(True)
+            self.start_button.show_running(True)
             return
-        self.start_button.setText(START_TEXT)
         why = "" if self.ticked() else AFTER_A_RUN_WHY if self.ran else NOTHING_TICKED_WHY
         if self.scanning or self.comparing:
             why = WAIT_FOR_IT_WHY
-        self.start_button.setEnabled(not why)
-        self.start_button.setToolTip(why or (START_QUEUE_TIP if self.on_a_server else START_TIP))
+        self.start_button.show_ready(why, START_QUEUE_TIP if self.on_a_server else START_TIP)
 
     # --- the work itself, while it runs here on this computer (FF-14) ----------------
 
@@ -483,8 +477,9 @@ class CompareDialog(QDialog):
             self._contents_state()
             return
         self.show_rows(rows)
-        text = CONTENTS_DONE_TEXT.format(left="1 file" if same == 1 else f"{same} files", count=len(rows))
-        self.status.setText(text + (CONTENTS_UNKNOWN_TEXT.format(unknown=unknown) if unknown else ""))
+        text = CONTENTS_DONE_TEXT.format(left=counted(same, "file", "files"), is_gone="is gone" if same == 1 else "are gone", count=_things(len(rows)) if rows else NOTHING_LEFT_TEXT)
+        unknown_text = CONTENTS_UNKNOWN_TEXT.format(unknown=counted(unknown, "file", "files"), stays="stays" if unknown == 1 else "stay", it="it" if unknown == 1 else "they", was=was(unknown))
+        self.status.setText(text + (unknown_text if unknown else ""))
 
     def scan_was_stopped(self) -> None:
         """The person pressed Stop: the rows stay exactly as they were, and the window says so calmly (OR-23)."""

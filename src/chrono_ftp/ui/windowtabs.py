@@ -8,7 +8,7 @@ from typing import override
 
 from PySide6.QtCore import QByteArray, QDir, QPoint
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QMessageBox
+from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu, QMessageBox
 
 from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.config import settings as saved_settings
@@ -16,7 +16,7 @@ from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import RemoteConnection, UnknownServer, shown_name
 from chrono_ftp.connections.factory import remote_connection
 from chrono_ftp.core import credentials
-from chrono_ftp.core.connection import FTP, Connection
+from chrono_ftp.core.connection import FTP, LONGEST_TAB_NAME, Connection
 from chrono_ftp.core.errors import ConnectionLost, CredentialError, LoginRefused, RemoteActionFailed
 from chrono_ftp.engine.browsing import local_start_folder
 from chrono_ftp.engine.jobs import Worker
@@ -30,9 +30,16 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.42"
+__version__ = "windowtabs.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Review round 2: open_another_tab makes the further tabs of one connection (Duplicate Tab, and a workspace that holds
+#          more than one on it); a tab that can't take dropped files says why while they hang over it (OR-7)
+# v0.0.45: Review round 1: a tab name longer than LONGEST_TAB_NAME is refused when it is typed
+# v0.0.45: Block FI: a tab dragged to another place in the row, and that order kept for next time; the middle mouse button closes a
+#          tab; files dropped on a tab go to that connection without switching to it, and the tab is marked while it would take them;
+#          Ctrl+Tab, Ctrl+Shift+Tab and Alt+1 to Alt+9; Rename Tab, Duplicate Tab, Reconnect, Disconnect and Close Tab in the menu of
+#          a tab; a list of every open tab; a tab shows the folder it is in next to its name (FI-01)
 # v0.0.42: Closing a tab, or showing another one, stops the folder sizes counted for it, silently (FE-03)
 # v0.0.41: A tab shows the left side with its own filter, as it left it (FD-06)
 # v0.0.40: The menu of a tab pauses the automatic refresh of that tab and clears its cached listings (FG-15)
@@ -74,6 +81,29 @@ EDIT_GONE_TEXT: str = "This connection is no longer in your connection list."
 LOCAL_START_GONE_TEXT: str = "The starting folder {path} of {name} is no longer on this computer, so your home folder opens instead."
 REMOTE_START_GONE_TEXT: str = "The starting folder {path} of {name} can't be opened on the server, so your home folder there opens instead."
 TAB_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and close the tab?", "{count} transfers on {name} are not finished. Stop them and close the tab?")
+DISCONNECT_UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer on {name} is not finished. Stop it and disconnect?", "{count} transfers on {name} are not finished. Stop them and disconnect?")
+RENAME_TEXT: str = "Rename Tab…"
+RENAME_TITLE: str = "Rename Tab"
+RENAME_LABEL: str = "Name for this tab (empty brings back the name of the connection):"
+TAB_NAME_TOO_LONG_TEXT: str = "A tab name can be at most {count} characters, so the tab was not renamed. Give a shorter name."
+DUPLICATE_TEXT: str = "Duplicate Tab"
+RECONNECT_TEXT: str = "Reconnect"
+DISCONNECT_TEXT: str = "Disconnect"
+CLOSE_TEXT: str = "Close Tab"
+ALREADY_LIVE_TEXT: str = "This tab is connected."
+CONNECTING_TEXT: str = "This tab is connecting."
+NOT_LIVE_TO_STOP_TEXT: str = "This tab is not connected."
+DISCONNECTED_TEXT: str = "{name} is disconnected. Reconnect to use it again."
+RENAMED_NOT_KEPT_TEXT: str = "The tab is called {name} now, but that could not be kept with the connection for next time."
+FOLDER_SEPARATOR: str = " — "  # between the name of a tab and the folder it is in
+ROOT_FOLDER: str = "/"
+TAB_TIP_TEXT: str = "{name}\nOn the server: {remote}\nOn this computer: {local}"
+NO_FOLDER_YET_TIP: str = "no folder open yet"
+NO_TAB_TEXT: str = "No tab is open."
+TAB_NOT_LIVE_TEXT: str = "{name} is not connected, so it can't take files."
+TAB_NO_FOLDER_TEXT: str = "{name} has no folder open on the server yet."
+DROP_HERE_TEXT: str = "Drop them on {name} to send them to {folder}."
+ORDER_NOT_KEPT_TEXT: str = "The tabs are in this order now, but that could not be kept for next time."
 
 
 class TabsPart(WindowBase):
@@ -131,6 +161,13 @@ class TabsPart(WindowBase):
             menu.setToolTipsVisible(True)
         menu.addAction(edit)
         session = self.sessions[index]
+        rename = QAction(icons.icon("edit-rename"), RENAME_TEXT, menu)
+        rename.triggered.connect(lambda: self.rename_tab(session))
+        menu.addAction(rename)
+        duplicate = QAction(icons.icon("edit-copy"), DUPLICATE_TEXT, menu)
+        duplicate.triggered.connect(lambda: self.duplicate_tab(session))
+        menu.addAction(duplicate)
+        menu.addSeparator()
         key = QAction(icons.icon("database-change-key"), KEY_TEXT, menu)
         key.triggered.connect(lambda: self.install_my_key(session))
         password = QAction(icons.icon("object-locked"), PASSWORD_TEXT, menu)
@@ -156,13 +193,233 @@ class TabsPart(WindowBase):
         menu.addAction(log)
         menu.addSeparator()
         self.tab_refresh_items(menu, session)  # Pause Automatic Refresh and Clear Cached Listings (FG-15)
+        menu.addSeparator()
+        for icon_name, text, why, handler in (
+            ("network-connect", RECONNECT_TEXT, CONNECTING_TEXT if session.connecting else ALREADY_LIVE_TEXT if session.alive else "", lambda: self.reconnect_tab(session)),
+            ("network-disconnect", DISCONNECT_TEXT, "" if session.alive else NOT_LIVE_TO_STOP_TEXT, lambda: self.disconnect_tab(session)),
+            ("tab-close", CLOSE_TEXT, "", lambda: self.close_tab_of(session)),
+        ):
+            action = QAction(icons.icon(icon_name), text, menu)
+            action.triggered.connect(handler)
+            if why:
+                action.setEnabled(False)  # greyed with its reason, never hidden (OR-20)
+                action.setToolTip(why)
+                menu.setToolTipsVisible(True)
+            menu.addAction(action)
         return menu
 
+    # --- what a tab says (FI-01) -----------------------------------------------------------
+
+    def tab_label(self, session: Session) -> str:
+        """The name of the tab and, after it, the last part of the folder it is in on the server, so two tabs on one server can be
+        told apart (FI-01)."""
+        name = session.connection.tab_name or session.connection.name
+        folder = session.remote_folder
+        if not folder:
+            return name
+        return name + FOLDER_SEPARATOR + (folder.rstrip("/").rsplit("/", 1)[-1] or ROOT_FOLDER)
+
+    @override
+    def refresh_tab_label(self, session: Session) -> None:
+        if session in self.sessions:
+            index = self.sessions.index(session)
+            self.tab_bar.setTabText(index, shown_name(self.tab_label(session)))
+            self.tab_bar.setTabToolTip(index, TAB_TIP_TEXT.format(
+                name=shown_name(session.connection.tab_name or session.connection.name),
+                remote=shown_name(session.remote_folder) or NO_FOLDER_YET_TIP,
+                local=shown_name(session.local_folder),
+            ))
+
+    def rename_tab(self, session: Session) -> None:
+        """The name the person gives this tab, kept with its connection; an empty name brings the connection's own name back (FI-01)."""
+        if session not in self.sessions:
+            return
+        typed = QInputDialog.getText(self, RENAME_TITLE, RENAME_LABEL, QLineEdit.EchoMode.Normal, session.connection.tab_name)
+        if not typed[1]:
+            return
+        chosen = typed[0].strip()
+        if len(chosen) > LONGEST_TAB_NAME:  # never accept what would not fit a tab (OR-20)
+            self.status.showMessage(TAB_NAME_TOO_LONG_TEXT.format(count=LONGEST_TAB_NAME))
+            return
+        session.connection = replace(session.connection, tab_name=chosen)
+        self.refresh_tab_label(session)
+        for other in self.sessions:  # every other tab of the same connection carries the same name
+            if other is not session and other.connection.name == session.connection.name:
+                other.connection = replace(other.connection, tab_name=chosen)
+                self.refresh_tab_label(other)
+        try:
+            kept = saved_connections.remember_tab_name(session.connection.name, chosen)
+        except OSError:
+            kept = False
+        if self.connection_list is not None:
+            self.connection_list.tab_renamed(session.connection.name, chosen)  # an open connections window must not put the old name back
+        if not kept:
+            self.status.showMessage(RENAMED_NOT_KEPT_TEXT.format(name=shown_name(self.tab_label(session))))
+
+    @override
+    def open_another_tab(self, connection: Connection, local_folder: str = "", remote_folder: str = "", index: int | None = None) -> Session:
+        """A further tab on a connection that already has one. Only the person's own Duplicate Tab and a workspace that holds more than
+        one tab on one connection come here; Connect never does, so it still switches to the tab there is (D-051, D-098)."""
+        place = len(self.sessions) if index is None else index
+        copy = Session(connection, Worker(self.bridge.deliver), local_folder or self.local_side.folder)
+        copy.wanted_start = remote_folder
+        self.sessions.insert(place, copy)
+        self.tab_bar.insertTab(place, shown_name(connection.tab_name or connection.name))
+        self.tab_bar.set_colour(place, None)  # grey until this login is live
+        self.refresh_tab_label(copy)
+        self.tab_bar.setCurrentIndex(place)
+        self._connect(copy)
+        return copy
+
+    def duplicate_tab(self, session: Session) -> None:
+        """A second tab to the same server, with the folders this one is in; it keeps its own two folders from then on (OR-4, D-098)."""
+        if session not in self.sessions:
+            return
+        index = self.sessions.index(session) + 1
+        copy = Session(session.connection, Worker(self.bridge.deliver), session.local_folder)
+        copy.remote_folder = session.remote_folder
+        copy.entries = session.entries  # the same folder on the same server: the duplicate shows it at once
+        copy.home_folder = session.home_folder
+        self.sessions.insert(index, copy)
+        self.tab_bar.insertTab(index, shown_name(self.tab_label(copy)))
+        self.tab_bar.set_colour(index, None)
+        self.refresh_tab_label(copy)
+        self.tab_bar.setCurrentIndex(index)
+        self._connect(copy)
+
+    def close_tab_of(self, session: Session) -> None:
+        if session in self.sessions:
+            self.close_tab(self.sessions.index(session))
+
+    def reconnect_tab(self, session: Session) -> None:
+        if session in self.sessions and not session.alive and not session.connecting:
+            self.tab_bar.setCurrentIndex(self.sessions.index(session))
+            self.reconnect()
+
+    def disconnect_tab(self, session: Session) -> None:
+        """The connection is closed and the tab stays, grey (OR-3); unfinished transfers are asked about first, as closing asks."""
+        if session not in self.sessions or not session.alive:
+            return
+        running = [job for job in self.queue.jobs if self._tab_of(job) is session and job.state in (*LINE, State.RUNNING)]
+        if running and self.settings.confirm_close_running:
+            text = (DISCONNECT_UNFINISHED_TEXTS[0] if len(running) == 1 else DISCONNECT_UNFINISHED_TEXTS[1]).format(count=len(running), name=session.connection.name)
+            if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
+                return
+        for job in running:
+            self.queue.stop(job)
+        remote = session.remote
+        session.remote = None
+        session.alive = False
+        session.connecting = False
+        if remote is not None:
+            threading.Thread(target=remote.close, daemon=True).start()
+        self._mark_lost(session)
+        self.status.showMessage(DISCONNECTED_TEXT.format(name=session.connection.name))
+
+    # --- the order of the tabs (FI-01) -----------------------------------------------------
+
+    def _tab_moved(self, first: int, second: int) -> None:
+        """The person dragged a tab to another place: its connection goes with it, and the order is kept for next time."""
+        if not (0 <= first < len(self.sessions) and 0 <= second < len(self.sessions)):
+            return
+        self.sessions.insert(second, self.sessions.pop(first))  # Qt moves the tab the same way, and tells this before it tells the new place
+        self._keep_tab_order()
+        self.tab_bar.update()
+
+    def _keep_tab_order(self) -> None:
+        open_names: list[str] = []
+        for session in self.sessions:
+            if session.connection.name not in open_names:
+                open_names.append(session.connection.name)
+        rest = [name for name in self.settings.tab_order if name not in open_names]
+        self.settings = replace(self.settings, tab_order=(*open_names, *rest))
+        try:
+            saved_settings.save(self.settings)
+        except OSError:
+            self.status.showMessage(ORDER_NOT_KEPT_TEXT)
+
+    def _place_for(self, name: str) -> int:
+        """Where a new tab for this connection goes: the place the person dragged it to last time, else the end (FI-01)."""
+        order = self.settings.tab_order
+        if self.opening_workspace or name not in order:  # a workspace opens its tabs in the order it saved (FI-02)
+            return len(self.sessions)
+        after = order.index(name)
+        for index, session in enumerate(self.sessions):
+            other = session.connection.name
+            if other in order and order.index(other) > after:
+                return index
+        return len(self.sessions)
+
+    # --- a list of every open tab (FI-01) --------------------------------------------------
+
+    def tabs_menu(self) -> QMenu:
+        """Every open tab, for when more fit in the row than can be seen; the one shown now is ticked."""
+        menu = QMenu(self)
+        menu.setMinimumWidth(menu.fontMetrics().averageCharWidth() * MENU_WIDTH_CHARACTERS)
+        for index, session in enumerate(self.sessions):
+            action = QAction(shown_name(self.tab_label(session)), menu)
+            action.setCheckable(True)
+            action.setChecked(index == self.tab_bar.currentIndex())
+            action.triggered.connect(lambda _checked=False, index=index: self.tab_bar.setCurrentIndex(index))
+            menu.addAction(action)
+        return menu
+
+    def show_tabs_menu(self) -> None:
+        if not self.sessions:
+            return
+        menu = self.tabs_menu()
+        open_menu(menu, self.all_tabs_button.mapToGlobal(QPoint(0, self.all_tabs_button.height())))
+        menu.deleteLater()
+
+    def go_to_next_tab(self, step: int) -> None:
+        """Ctrl+Tab and Ctrl+Shift+Tab: the next or the previous tab, round and round (FI-01)."""
+        if len(self.sessions) > 1:
+            self.tab_bar.setCurrentIndex((self.tab_bar.currentIndex() + step) % len(self.sessions))
+
+    def go_to_tab_number(self, number: int) -> None:
+        """Alt+1 to Alt+9: the tab at that place in the row; a place without a tab does nothing (FI-01)."""
+        if 0 <= number - 1 < len(self.sessions):
+            self.tab_bar.setCurrentIndex(number - 1)
+
+    # --- files dropped on a tab (FI-01) ----------------------------------------------------
+
+    def tab_takes_files(self, index: int) -> str:
+        """Why the tab at this place can't take dropped files; empty when it can."""
+        if not 0 <= index < len(self.sessions):
+            return NO_TAB_TEXT
+        session = self.sessions[index]
+        name = shown_name(session.connection.tab_name or session.connection.name)
+        if not session.alive:
+            return TAB_NOT_LIVE_TEXT.format(name=name)
+        if not session.remote_folder:
+            return TAB_NO_FOLDER_TEXT.format(name=name)
+        return ""
+
+    def _hovered_with_files(self, index: int) -> None:
+        """While files are dragged over the row: what would happen if they were let go here, or why nothing would (G-2, OR-7)."""
+        if not 0 <= index < len(self.sessions):
+            self.status.clearMessage()
+            return
+        why = self.tab_takes_files(index)
+        if why:
+            self.status.showMessage(why)  # it can't take them, and says so, never silently (OR-7)
+            return
+        session = self.sessions[index]
+        self.status.showMessage(DROP_HERE_TEXT.format(name=shown_name(session.connection.tab_name or session.connection.name), folder=shown_name(session.remote_folder)))
+
+    def files_dropped_on_tab(self, index: int, paths: list[str]) -> None:
+        """Files from the left side, or from a file manager, let go on a tab: they go to that connection, and the tab shown does not
+        change (FI-01). The transfer is offered exactly as a drop on the right side is."""
+        if not 0 <= index < len(self.sessions) or self.tab_takes_files(index):
+            return
+        session = self.sessions[index]
+        self._offer(session, paths or self.local_side.selected_paths(), session.remote_folder, True, after_a_drop=True)
+
     def _show_tab_menu(self, place: QPoint) -> None:
-        menu = self.tab_menu_for(place)
-        if menu is not None:
-            open_menu(menu, self.tab_bar.mapToGlobal(place))
-            menu.deleteLater()
+        """The menu of the tab at this place, or, beside the tabs, the menu of the workspaces (FI-02)."""
+        menu = self.tab_menu_for(place) or self.workspaces_menu()
+        open_menu(menu, self.tab_bar.mapToGlobal(place))
+        menu.deleteLater()
 
     def edit_connection(self, name: str) -> None:
         """The connections window, open on this connection and ready to change it."""
@@ -177,14 +434,20 @@ class TabsPart(WindowBase):
         self.raise_()
         self.activateWindow()
 
-    def open_connection(self, connection: Connection) -> None:
+    @override
+    def open_connection(self, connection: Connection, local_folder: str = "", remote_folder: str = "") -> None:
+        """local_folder and remote_folder: the folders a workspace saved for this tab; they win over the starting folders of the
+        connection, which is what the person saved (FI-02)."""
         for index, open_session in enumerate(self.sessions):
             if open_session.connection.name == connection.name:
                 self.tab_bar.setCurrentIndex(index)  # already open: its tab, never a second one
                 self._open_again(index, open_session, connection)
                 return
-        local_folder, local_gone = self.local_side.folder, False
-        if connection.local_start_folder:
+        wanted_local, local_gone = local_folder, False
+        local_folder = self.local_side.folder
+        if wanted_local and os.path.isdir(wanted_local):
+            local_folder = wanted_local
+        elif connection.local_start_folder:
             wanted = local_start_folder(connection.local_start_folder)  # a relative one starts at the home folder
             local_gone = not os.path.isdir(wanted)
             if not local_gone:
@@ -192,11 +455,14 @@ class TabsPart(WindowBase):
             elif os.path.isdir(QDir.homePath()):
                 local_folder = QDir.homePath()
         session = Session(connection, Worker(self.bridge.deliver), local_folder)
+        session.wanted_start = remote_folder  # empty: the starting folder of the connection, as ever
         if local_gone:
             session.local_fallback = local_folder  # not written back as the starting folder unless the person moves it (D-058)
-        self.sessions.append(session)
-        index = self.tab_bar.addTab(connection.name)
+        index = self._place_for(connection.name)  # the place the person dragged this tab to last time (FI-01)
+        self.sessions.insert(index, session)
+        self.tab_bar.insertTab(index, shown_name(connection.tab_name or connection.name))
         self.tab_bar.set_colour(index, None)  # grey until the connection is live
+        self.refresh_tab_label(session)
         self.tab_bar.setCurrentIndex(index)
         self._connect(session)
         if local_gone:
@@ -253,7 +519,7 @@ class TabsPart(WindowBase):
             made.append(remote)
             remote.connect()
             session.home_folder = remote.home()
-            start = session.remote_folder or session.connection.start_folder
+            start = session.remote_folder or session.wanted_start or session.connection.start_folder
             if start:
                 try:
                     remote.list_folder(start)
@@ -350,6 +616,7 @@ class TabsPart(WindowBase):
     def _set_tab(self, session: Session) -> None:
         index = self.sessions.index(session)
         self.tab_bar.set_colour(index, session.connection.colour if session.alive else None)
+        self.refresh_tab_label(session)
         if session is self.current():
             self.remote_side.set_colour(session.connection.colour if session.alive else None)
             self._tab_shown()
@@ -391,6 +658,7 @@ class TabsPart(WindowBase):
             session.local_folder = folder
             if previous != folder:
                 self._local_moved(session, previous, folder)
+            self.refresh_tab_label(session)  # the hover text of the tab names both its folders
         self.update_actions()
 
     def close_tab(self, index: int) -> None:

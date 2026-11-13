@@ -28,9 +28,10 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windownavigation.py 0.0.42"
+__version__ = "windownavigation.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: _go_remote is declared in the base, so the paste part can send a pasted path to the server side (FI-03)
 # v0.0.42: Shift+Space, Calculate Folder Sizes, is a key of the program: a bookmark can't take it (block FE)
 # v0.0.40: The keys of block FG are keys of the program: a bookmark can't take them
 # v0.0.37: F9, Shift+F4, Shift+F5, Alt+F6 and Ctrl+Alt+E are keys of the program: a bookmark can't take them (block FM)
@@ -338,6 +339,7 @@ class NavigationPart(WindowBase):
             QMessageBox.information(self, WINDOW_TITLE, box_text(LOCAL_GONE_TEXT.format(path=shown_name(path))))
         return went
 
+    @override
     def _go_remote(self, session: Session, path: str, quietly: bool = False, opened: Callable[[], None] | None = None) -> None:
         """The right side opens this folder; one that can't be opened gives a calm message and nothing moves. opened: called once the
         folder is on the screen."""

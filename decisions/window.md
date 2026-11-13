@@ -50,3 +50,6 @@
 48. [[D-090]] Folder sizes in the file list
 49. [[D-096]] Moved files, and two folders on this computer
 50. [[D-097]] One button that starts, and the same button that aborts
+51. [[D-098]] Tab extras
+52. [[D-099]] Copy and paste files between tabs
+53. [[D-100]] Workspaces

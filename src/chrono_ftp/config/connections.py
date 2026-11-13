@@ -8,9 +8,10 @@ from typing import cast
 from chrono_ftp.core.connection import DEFAULT_PORTS, HIGHEST_PORT, LOWEST_PORT, PROTOCOLS, SFTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "connections.py 0.0.34"
+__version__ = "connections.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The name a tab of this connection was given, kept with the connection; an older file without it still loads (FI-01)
 # v0.0.34: A local starting folder and "Remember the last folders"; an older file without them still loads (FH-06); set_aside_copy is
 #          shared with the bookmarks file; written escaped, so a folder whose name is not valid UTF-8 comes back exactly, and no
 #          .tmp file is left behind on any failure (write_whole, shared by every settings file); a set-aside copy is private, and the
@@ -51,7 +52,7 @@ def _connection_from(entry: object) -> Connection | None:
     if not isinstance(port, int) or isinstance(port, bool) or not LOWEST_PORT <= port <= HIGHEST_PORT:
         return None
     texts: dict[str, str] = {}
-    for field in ("user", "key_file", "colour", "start_folder", "local_start_folder"):
+    for field in ("user", "key_file", "colour", "start_folder", "local_start_folder", "tab_name"):
         value = values.get(field, "")
         if not isinstance(value, str):
             return None
@@ -70,6 +71,7 @@ def _connection_from(entry: object) -> Connection | None:
         start_folder=texts["start_folder"],
         local_start_folder=texts["local_start_folder"],
         remember_folders=remember,
+        tab_name=texts["tab_name"],
     )
 
 
@@ -139,6 +141,17 @@ def remember_user(name: str, user: str) -> None:
     usable = _whole_list()
     if usable is not None and any(connection.name == name for connection in usable):
         save([replace(connection, user=user) if connection.name == name else connection for connection in usable])
+
+
+def remember_tab_name(name: str, tab_name: str) -> bool:
+    """The name the person gave the tab of this connection, kept with the connection (FI-01). False when nothing was written: the
+    connection is gone, or the file can't be read in full, and is then left exactly as it is."""
+    usable = _whole_list()
+    kept = next((connection for connection in usable or [] if connection.name == name), None)
+    if usable is None or kept is None:
+        return False
+    save([replace(connection, tab_name=tab_name) if connection is kept else connection for connection in usable])
+    return True
 
 
 def remember_folders(name: str, local: str, remote: str) -> Connection | None:

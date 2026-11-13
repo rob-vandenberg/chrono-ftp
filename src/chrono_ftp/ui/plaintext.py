@@ -7,9 +7,10 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "plaintext.py 0.0.12"
+__version__ = "plaintext.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A number and the word that goes with it, and was or were, so no sentence reads "1 were done" (OR-23)
 # v0.0.12: Initial: labels in plain text; message box texts that Qt shows exactly as written; long names fitted to the screen; long
 #          words in a sentence shortened; a path shown whole over several lines; a question or message with details to copy, gone after
 #          use
@@ -18,6 +19,16 @@ WHOLE_TEXT_START: str = "<p style='white-space: pre-wrap'>"
 WHOLE_TEXT_END: str = "</p>"
 NAME_SHARE: float = 0.4  # a name takes at most this part of the screen's width: a window with it stays on the screen
 FALLBACK_WIDTH: int = 1024  # without a screen
+
+
+def counted(count: int, one: str, many: str) -> str:
+    """A number with the word that goes with it: "1 file", "3 files". Every sentence with a number reads as a person writes it."""
+    return f"{count} {one if count == 1 else many}"
+
+
+def was(count: int) -> str:
+    """was or were, so a sentence with a number is never "1 were done"."""
+    return "was" if count == 1 else "were"
 
 
 def plain_label(text: str = "", parent: QWidget | None = None) -> QLabel:

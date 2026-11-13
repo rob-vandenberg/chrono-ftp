@@ -32,9 +32,10 @@ from tests.ui.test_ui_sessions import connected, settled_tab, window
 from tests.ui.test_ui_transfers import settled
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_queue.py 0.0.44"
+__version__ = "test_ui_queue.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: The menu of a tab also holds Rename Tab, Duplicate Tab, Reconnect, Disconnect and Close Tab (FI-01)
 # v0.0.44: A reconnect waits for the tab to have settled, not for alive alone (AGENTS.md 4.4.4)
 # v0.0.40: The menu of a tab also holds Pause Automatic Refresh and Clear Cached Listings (FG-15)
 # v0.0.38: The menu of a tab also holds Server Information and Session Log, after a separator (FP-02, FP-03)
@@ -956,8 +957,11 @@ def test_the_menu_of_a_tab_has_edit_which_opens_its_connection(qtbot: QtBot, win
         menu = window.tab_menu_for(window.tab_bar.tabRect(0).center())
         assert menu is not None
         actions = menu.actions()
-        assert [action.text() for action in actions] == ["Edit settings…", "Install My Public Key…", "", "Server Information…", "Session Log…", "", "Pause Automatic Refresh", "Clear Cached Listings"]  # Change Password needs a shell: not on FTP; FG-15
-        assert not actions[1].isEnabled() and actions[1].toolTip()  # a key logs in over SSH: greyed with its reason
+        assert [action.text() for action in actions] == [
+            "Edit settings…", "Rename Tab…", "Duplicate Tab", "", "Install My Public Key…", "", "Server Information…", "Session Log…",
+            "", "Pause Automatic Refresh", "Clear Cached Listings", "", "Reconnect", "Disconnect", "Close Tab",
+        ]  # Change Password needs a shell: not on FTP; FG-15, FI-01
+        assert not actions[4].isEnabled() and actions[4].toolTip()  # a key logs in over SSH: greyed with its reason
         assert not actions[0].icon().isNull()
         assert menu.minimumWidth() >= 10 * menu.fontMetrics().averageCharWidth()
         assert actions[0].isEnabled()

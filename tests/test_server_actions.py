@@ -19,15 +19,17 @@ from chrono_ftp.connections.passwordchange import AskedTooOften, PasswordTalk, s
 from chrono_ftp.connections.ssh import SshConnection
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import ConnectionLost, LocalActionFailed, NameTaken, RemoteActionFailed
+from chrono_ftp.connections.base import OLD_SUFFIX
 from chrono_ftp.engine import commands, keyinstall, localfiles, properties, rights
 from chrono_ftp.engine.terminal import CANT_ENTER_TEXT, shell_start
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, Passwd, ftp_server, ssh_server
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_server_actions.py 0.0.37"
+__version__ = "test_server_actions.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A copy the person agreed to replace drops only the guard, and still quotes every path (FI-03, OR-19)
 # v0.0.37: Initial: block FM, Properties and server actions (D-060 to D-063); review round 1: rights for everything inside through
 #          find, never X; a key comment beyond ASCII; a link never lost; a half copy removed; names of directories; a tree listed first;
 #          review round 2: a link that leads nowhere is a taken name; free temporary names; a refusal about authorized_keys; passwd
@@ -383,6 +385,82 @@ def test_with_a_shell_a_copy_is_one_cp_that_never_replaces_and_quotes_every_path
     assert len(server.calls) == 1
     assert server.calls[0].startswith("if [ -e '/srv/$(reboot)' ]")
     assert "{ cp -a -- '/srv/a b' '/srv/$(reboot)' || { { [ -L '/srv/$(reboot)' ] || chmod -R u+rwx -- '/srv/$(reboot)' 2>/dev/null; rm -rf -- '/srv/$(reboot)' || echo" in server.calls[0]
+
+
+def test_a_copy_the_person_agreed_to_replace_is_made_under_our_own_name_and_quotes_every_path() -> None:
+    """A paste the person said yes to for that one name takes its place through a copy of ours (FI-03, G-2); every path goes through
+    shlex.quote (OR-19)."""
+    server = Recording(Capabilities(shell=True, tools=frozenset({"cp"})))
+    commands.copy_on_server(server, "/srv/a b", "/srv/$(reboot)", replace=True)
+    assert len(server.calls) == 1
+    command = server.calls[0]
+    assert "cp -a -- '/srv/a b' '/srv/$(reboot).chrono-ftp-new'" in command  # never onto the name the person sees
+    assert "rm -rf -- '/srv/$(reboot)'" not in command  # what was there is never removed by a failure (G-2)
+    assert "mv -- '/srv/$(reboot)' '/srv/$(reboot).chrono-ftp-old'" in command
+    assert "mv -- '/srv/$(reboot).chrono-ftp-new' '/srv/$(reboot)'" in command
+
+
+@NOT_AS_ROOT
+def test_a_replacing_copy_that_fails_leaves_what_was_there_whole(tmp_path: Path) -> None:
+    """The command of the server, run by a real sh on a throwaway folder (OR-26): a folder with a file cp can't read, copied onto a
+    folder the person already had."""
+    source, there = tmp_path / "from" / "d", tmp_path / "onto" / "d"
+    source.mkdir(parents=True)
+    there.mkdir(parents=True)
+    (source / "readable").write_text("r", encoding="utf-8")
+    (source / "secret").write_text("s", encoding="utf-8")
+    (source / "secret").chmod(0)
+    (there / "precious").write_text("p", encoding="utf-8")
+    result = subprocess.run(["sh", "-c", commands.replace_command(str(source), str(there))], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert (there / "precious").read_text(encoding="utf-8") == "p"  # the person is never worse off than before Start (G-2)
+    assert sorted(path.name for path in there.parent.iterdir()) == ["d"]  # and our own copy went
+
+
+@NOT_AS_ROOT
+def test_a_replacing_copy_of_a_folder_really_takes_its_place(tmp_path: Path) -> None:
+    """cp -a onto an existing folder would put the copy inside it: the copy takes the name itself instead."""
+    source, there = tmp_path / "from" / "d", tmp_path / "onto" / "d"
+    (source / "sub").mkdir(parents=True)
+    there.mkdir(parents=True)
+    (source / "readable").write_text("r", encoding="utf-8")
+    (there / "was_here").write_text("w", encoding="utf-8")
+    result = subprocess.run(["sh", "-c", commands.replace_command(str(source), str(there))], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in there.iterdir()) == ["readable", "sub"]  # replaced, never nested as d/d
+    assert sorted(path.name for path in there.parent.iterdir()) == ["d"]
+
+
+@NOT_AS_ROOT
+def test_a_replacing_copy_refuses_when_the_name_it_needs_is_taken(tmp_path: Path) -> None:
+    (tmp_path / "new.txt").write_text("new", encoding="utf-8")
+    (tmp_path / "old.txt").write_text("old", encoding="utf-8")
+    (tmp_path / ("old.txt" + commands.NEW_SUFFIX)).write_text("someone else", encoding="utf-8")
+    result = subprocess.run(["sh", "-c", commands.replace_command(str(tmp_path / "new.txt"), str(tmp_path / "old.txt"))], capture_output=True, text=True)
+    assert result.returncode != 0 and "is taken" in result.stderr
+    assert (tmp_path / "old.txt").read_text(encoding="utf-8") == "old"
+
+
+@NOT_AS_ROOT
+def test_a_copy_cut_short_earlier_says_where_the_persons_own_file_is_and_what_to_do(tmp_path: Path) -> None:
+    """Chrono FTP killed between the two steps leaves the person's own file under the aside name; the next paste says so (OR-23)."""
+    (tmp_path / "new.txt").write_text("new", encoding="utf-8")
+    (tmp_path / ("old.txt" + OLD_SUFFIX)).write_text("the person's own, moved aside", encoding="utf-8")
+    result = subprocess.run(["sh", "-c", commands.replace_command(str(tmp_path / "new.txt"), str(tmp_path / "old.txt"))], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "old.txt.chrono-ftp-old" in result.stderr and "rename it back to old.txt" in result.stderr and "Nothing of it was lost" in result.stderr
+    assert (tmp_path / ("old.txt" + OLD_SUFFIX)).read_text(encoding="utf-8") == "the person's own, moved aside"
+
+
+@NOT_AS_ROOT
+def test_every_step_of_a_replacing_copy_says_what_really_failed(tmp_path: Path) -> None:
+    """One sentence per step, never one sentence for several different failures: each says what happened and that what the person had
+    is untouched (OR-23)."""
+    command = commands.replace_command(str(tmp_path / "a"), str(tmp_path / "b"))
+    assert "could not be moved out of the way" in command
+    assert "could not be put in the place of" in command
+    assert "could not be put back either" in command  # the rename back failed too: it says where the data is
+    assert command.count("is here under the name") == 1
 
 
 @NOT_AS_ROOT

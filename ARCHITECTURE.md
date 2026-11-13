@@ -16,7 +16,7 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 | Module | Responsibility |
 |---|---|
 | `core` | Pure data model: Connection, remote file entry, capabilities, error types, colours (`core/colours.py`), the thin door to the credential store, the transfer options (`core/transferoptions.py`). No other I/O. |
-| `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list, the settings, the notes of part files, aside copies and appends (`config/parts.py`), and the bookmarks, location profiles and typed paths (`config/bookmarks.py`, `~/.config/chrono-ftp/bookmarks.json`). |
+| `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list, the settings, the notes of part files, aside copies and appends (`config/parts.py`), the bookmarks, location profiles and typed paths (`config/bookmarks.py`, `~/.config/chrono-ftp/bookmarks.json`), and the workspaces (`config/workspaces.py`, `~/.config/chrono-ftp/workspaces.json`). |
 | `connections` | The common connection layer (`base.py`), its two implementations (`ssh.py`, `ftp.py`), capability detection, and the servers the person trusted (`trust.py`). |
 | `transfers` | The transfer queue (`queue.py`), which job may start (`schedule.py`), and its two ways: `rsync` (`rsyncway.py`) and file by file over SFTP or FTP (`filebyfile.py`), with a large file in parts (`split.py`); a job and its progress (`job.py`); the overwrite question's answers and what a connection can do (`options.py`). |
 | `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`), actions on this computer (`localfiles.py`), comparing two folders (`compare.py`), the matching step of synchronized browsing (`browsing.py`), checksums and folder sizes on both sides (`checksums.py`, `sizes.py`). |
@@ -78,6 +78,8 @@ Each connection reports what it can do after connecting (D-016): the system, the
    15. `ui/windowlooks.py`: the looks (block FQ): file colours, the thumbnail view of each side and the toolbar menu.
    16. `ui/windowselection.py`: selection and keys (block FG): the selection keys and menus, the two-pane mode, the key set, This File Only, the clipboard, the title bar, the right-button drag, pausing the refresh and clearing the listings.
    17. `ui/windowsizes.py`: hashes and sizes (block FE): the folder sizes of Shift+Space and what the Size and Checksum tabs of Properties ask.
+   18. `ui/windowworkspaces.py`: workspaces (block FI): the menu beside the tabs, and saving, opening, renaming and deleting a workspace.
+   19. `ui/windowpaste.py`: copy and paste files between tabs (block FI): Ctrl+C and Ctrl+V, and the copies that go from one server to another through this computer.
 8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).
 
 ## 7. Transfers (block FB, version 0.0.12)
@@ -223,3 +225,19 @@ The modules of block FF, one line each:
 8. `ui/filelist.py`: `select_names`, which marks exactly what Mark Differences found (FF-12).
 9. `ui/windowsynchronize.py`: the part of the main window that ties them together: the scan on the tab's own thread, the counting of a one-sided folder and the checksum step on threads of their own, Apply through the queue, the question before a delete, Mark Differences, and the same window for two folders on this computer (D-019, D-094 to D-096).
 
+
+## 17. Tabs and workspaces (block FI, version 0.0.45)
+
+The modules of block FI, one line each:
+
+1. `core/connection.py`, `config/connections.py`: a connection carries the name its tab was given, kept with it (D-098).
+2. `config/settings.py`: the order the tabs were dragged into, by connection name, so a tab opens again in its place (D-098).
+3. `config/workspaces.py`: the workspaces in `workspaces.json`: a name, its tabs with the folders of both sides, and the one that opens at start; every value is input and checked when read (D-100, OR-15).
+4. `core/colours.py`, `ui/tabbar.py`: a tab dragged to another place, and files dropped on a tab, with the border that marks the tab that would take them (D-098, OR-9).
+5. `ui/session.py`: what Ctrl+C copied, and a copy on its way from one server to another through this computer (D-099).
+6. `ui/windowtabs.py`: the tab part: the order kept, Rename Tab, Duplicate Tab, Reconnect, Disconnect and Close Tab, the tab keys, the list of all tabs, the folder a tab names, and what a drop on a tab does (D-098).
+7. `ui/windowworkspaces.py`: the workspaces part, and the menu an empty part of the tab row opens (D-100).
+8. `ui/windowpaste.py`: Ctrl+C and Ctrl+V on the list with the focus, the server's own copy within one server, the way through this computer between two servers, the copy of this computer's files into a folder here, and a pasted path (D-099, OR-21).
+9. `engine/copyplan.py`: what a paste will do, on this computer and on a server alike, made before anything is copied: the free name of a copy next to its own file, what is already there, a file onto a folder or a folder onto a file, and what else can't be done with its reason (D-099, G-2); the copying itself is `transfers/sidework.py`'s here and `engine/commands.py`'s there.
+10. `ui/startabort.py`: the one Start/Abort button of [[D-097]] and the words a run on this computer says, shared by the Synchronize window and the paste; `ui/copydialog.py`: the window of a paste, used for both sides.
+11. `transfers/options.py`, `ui/overwritedialog.py`: the same overwrite question for a copy that stays on this computer, which says so and greys Append and Resume with that reason (FI-03).

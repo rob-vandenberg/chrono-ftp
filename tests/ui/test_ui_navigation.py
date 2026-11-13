@@ -26,9 +26,10 @@ from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ssh_server
 from tests.ui.test_ui_sessions import connected, settled_tab, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_navigation.py 0.0.44"
+__version__ = "test_ui_navigation.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A tab shows the folder it is in next to its name (FI-01)
 # v0.0.44: A reconnect waits for the tab to have settled, not for alive alone (AGENTS.md 4.4.4)
 # v0.0.40: F6 moves since block FG, so F10 is the free function key a bookmark may take
 # v0.0.34: Initial: the clickable path, Ctrl+L, Ctrl+O, Ctrl+B, the bookmarks window and keys, location profiles, Ctrl+., synchronized
@@ -633,7 +634,7 @@ def test_a_connection_renamed_with_its_tab_open_keeps_its_tab_bookmarks_and_last
         dialog.remember_folders.setChecked(True)
         dialog.save()
         assert session.connection.name == "Store" and session.connection.remember_folders
-        assert window.tab_bar.tabText(0) == "Store"
+        assert window.tab_bar.tabText(0) == "Store — css"  # the name of the connection and the folder the tab is in (FI-01)
         assert session.remote is login and session.alive  # no new login
         assert [action.text() for action in window.bookmark_menu_for(REMOTE).actions()][-1] == "css"
         window.open_remote_folder("/js")

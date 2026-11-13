@@ -744,7 +744,7 @@ def test_an_abort_after_the_last_step_says_it_finished(qtbot: QtBot, window: Mai
     may_go_on.set()
     qtbot.waitUntil(lambda: not dialog.running)
     assert "Aborted" not in dialog.status.text()  # nothing was aborted: it finished (G-2)
-    assert dialog.status.text() == "Finished: all 1 were done."
+    assert dialog.status.text() == "Finished: the one thing was done."  # the English a person writes, also for one (OR-23)
     assert (other / "only.txt").exists()
     dialog.close()
     _ = root

@@ -22,16 +22,20 @@ from chrono_ftp.ui.localside import LocalSide
 from chrono_ftp.ui.queueview import QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
 from chrono_ftp.ui.propertiesdialog import Calculator
-from chrono_ftp.ui.session import EditedFile, Session
+from chrono_ftp.ui.session import CopiedFiles, EditedFile, Relay, Session
 from chrono_ftp.ui.thumbnails import ThumbnailSide
 from chrono_ftp.ui.toolbars import Toolbars
 from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.44"
+__version__ = "windowbase.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Review round 2: open_another_tab is shared with the workspaces part
+# v0.0.45: Review round 1: open_workspace says how many tabs it opened
+# v0.0.45: Block FI: the All Tabs button, the tab labels, what Ctrl+C copied and the copies on their way from one server to another,
+#          and the methods of the tabs, workspaces and paste parts the other parts call
 # v0.0.44: Block FF: Synchronize starts its work from one Start button that becomes Abort (D-097)
 # v0.0.43: Block FF: the synchronize part builds its own list actions and greys them, and owns Synchronize, the window for two
 #          folders on this computer and Mark Differences
@@ -96,6 +100,7 @@ class WindowBase(QMainWindow):
     saved_sizes: dict[str, str]  # the window file as it was read at the start
     tab_bar: ConnectionTabBar
     new_tab_button: QToolButton
+    all_tabs_button: QToolButton  # the list of every open tab, for when more fit in the row than can be seen (FI-01)
     top_row: QWidget
     general_bar: QToolBar
     local_side: LocalSide
@@ -143,6 +148,9 @@ class WindowBase(QMainWindow):
     thumbnail_worker: Worker | None  # reads the pictures of this computer, made at its first use
     toolbars: Toolbars  # every toolbar and the choices for them (FQ-03)
     list_actions: dict[str, QAction]  # the selection, clipboard, sort and walk keys of each list, and F6 (block FG)
+    copied: CopiedFiles | None  # what Ctrl+C copied, for a Ctrl+V in another tab (FI-03)
+    relayed: dict[int, Relay]  # by job: the copies on their way from one server to another through this computer (FI-03)
+    opening_workspace: bool  # a workspace is being opened: its own order of the tabs wins over the remembered one (FI-02)
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -325,6 +333,48 @@ class WindowBase(QMainWindow):
         raise NotImplementedError
 
     def tab_refresh_items(self, menu: QMenu, session: Session) -> None:
+        raise NotImplementedError
+
+    def refresh_tab_label(self, session: Session) -> None:
+        raise NotImplementedError
+
+    def open_connection(self, connection: Connection, local_folder: str = "", remote_folder: str = "") -> None:
+        raise NotImplementedError
+
+    def copy_into(self, session: Session, folder: str, chosen: list[RemoteEntry], target: str) -> None:
+        raise NotImplementedError
+
+    def _go_remote(self, session: Session, path: str, quietly: bool = False, opened: Callable[[], None] | None = None) -> None:
+        raise NotImplementedError
+
+    def reconnect(self) -> None:
+        raise NotImplementedError
+
+    def workspaces_menu(self) -> QMenu:
+        raise NotImplementedError
+
+    def _side(self, side_name: str) -> "LocalSide | RemoteSide":
+        raise NotImplementedError
+
+    def _list_action(self, name: str, text: str, key: str, owner: QWidget, handler: Callable[[], None]) -> QAction:
+        raise NotImplementedError
+
+    def _update_paste_actions(self) -> None:
+        raise NotImplementedError
+
+    def _relay_job_ended(self, job: Job) -> None:
+        raise NotImplementedError
+
+    def _forget_relays(self) -> None:
+        raise NotImplementedError
+
+    def open_another_tab(self, connection: Connection, local_folder: str = "", remote_folder: str = "", index: int | None = None) -> Session:
+        raise NotImplementedError
+
+    def open_workspace(self, name: str) -> int:
+        raise NotImplementedError
+
+    def open_start_workspace(self) -> bool:
         raise NotImplementedError
 
     def remote_calculator(self, session: Session, folder: str, chosen: list[RemoteEntry]) -> Calculator | None:

@@ -10,9 +10,10 @@ from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.transferoptions import RESUME_OFF, RESUME_ON, RESUME_SMART, SMART_RESUME_BYTES, TransferOptions
 
 # --- Version ------------------------------------------------------------
-__version__ = "options.py 0.0.41"
+__version__ = "options.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A conflict can be one of a copy, on this computer or on one server, where nothing is sent anywhere (FI-03)
 # v0.0.41: Append is not offered for a text file whose line endings are converted (FD-02); why resume and splitting are greyed for text;
 #          the places an action writes, so two of its items whose names become one never write over each other (D-083)
 # v0.0.13: The answers of one action are shared by its jobs that run at once (FC-01); splitting a large file over several connections
@@ -116,6 +117,7 @@ class Conflict:
     source_size_known: bool = True  # False where the server gave no size: the size is then 0 and means nothing
     target_size_known: bool = True
     connection: str = ""  # the connection (its tab) the question is about
+    copying: bool = False  # a copy, not a transfer: nothing is sent anywhere, so there is nothing to append to or continue (FI-03)
 
     @property
     def append_possible(self) -> bool:

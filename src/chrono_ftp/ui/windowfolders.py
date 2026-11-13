@@ -15,9 +15,10 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowfolders.py 0.0.38"
+__version__ = "windowfolders.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A folder that arrived tells the tab bar, so a tab names the folder it is in (FI-01)
 # v0.0.38: Marking a tab as lost is shared, so the automatic refresh can do it (FP-01)
 # v0.0.34: A folder that can't be opened can go back to the one who asked, for a calm message of its own; each folder that arrives
 #          is told to synchronized browsing, and a step it asked for is forgotten on every way out; a lost connection ends it; a
@@ -106,6 +107,7 @@ class FoldersPart(WindowBase):
             previous = session.remote_folder
             session.remote_folder = folder
             session.entries = tuple(found)
+            self.refresh_tab_label(session)  # the tab names the folder it is in (FI-01)
             if session is self.current():
                 self.remote_side.show_folder(folder, list(session.entries))
                 self.update_actions()
@@ -168,6 +170,7 @@ class FoldersPart(WindowBase):
         if session is not None and session.remote_folder:
             self._reload(session)
 
+    @override
     def reconnect(self) -> None:
         """Reconnect of a dropped tab logs in with the connection as it is saved now, as Connect in the connections window does: a
         changed host, user, port, protocol or key is never passed over in silence (D-051)."""

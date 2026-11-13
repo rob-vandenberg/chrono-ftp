@@ -10,9 +10,10 @@ from chrono_ftp.ui.mainwindow import WINDOW_TITLE, MainWindow
 from chrono_ftp.ui.singlecopy import SingleCopy, socket_name, tell_running_copy
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.31"
+__version__ = "__init__.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: A workspace chosen to open by itself opens at start, and the connections window then stays shut (FI-02)
 # v0.0.31: The connections window starts on the connection that was last live (D-053)
 # v0.0.25: One Chrono FTP at a time: a second start brings the running one to the front (D-051)
 # v0.0.14: The program icon, and the windows belong to the start-menu entry chrono-ftp
@@ -36,7 +37,8 @@ def main() -> int:
     window = MainWindow()
     single_copy = SingleCopy(socket_name(), window.come_forward, application)
     window.show()
-    window.show_connection_list_at_start()
+    if not window.open_start_workspace():  # a workspace that opens by itself fills the window: the connections window would be in the way (FI-02)
+        window.show_connection_list_at_start()
     result = application.exec()
     single_copy.close()
     return result
