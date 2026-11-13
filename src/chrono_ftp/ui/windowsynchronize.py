@@ -1,5 +1,5 @@
 """The synchronize part of the main window (block FF): the Synchronize window of a tab, the same window for two folders on this
-computer (FF-14), Apply through the queue (FF-10), and the command that marks in both lists what differs from the other side (FF-12).
+computer (FF-14), Start through the queue (FF-10), and the command that marks in both lists what differs from the other side (FF-12).
 Every server call goes through the tab's own thread, and the work on this computer through a thread of its own, so the window never
 freezes (D-019)."""
 
@@ -51,9 +51,14 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowsynchronize.py 0.0.43"
+__version__ = "windowsynchronize.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: The window says "looking inside the files" where it said checksums
+# v0.0.44: An Abort pressed after the last step says it finished, because nothing was aborted
+# v0.0.44: Review by the owner: Start in place of Apply, and the same button aborts while the work runs; two folders on this
+#          computer are synchronized with the window on screen, abortable, and it says what was done and what was not; Start on a
+#          server opens the queue and says that the work went there; the background counting has its own button (D-097)
 # v0.0.43: Initial: the Synchronize window with its choices and its checklist, Apply through the queue, the deletes that are named and
 #          asked for first, the folder sizes counted in the background, the scan statistics, the two local folders and Mark
 #          Differences (FF-01 to FF-14, D-038 changed, D-091 to D-096); review round 1: a scan can be stopped and leaves nothing
@@ -68,9 +73,11 @@ MARK_WHY_NO_TAB: str = "There is no live connection to compare with."
 MARKED_TEXT: str = "{count} of {folder} differ from the other side."
 NONE_MARKED_TEXT: str = "Nothing in {folder} differs from the other side."
 LOCAL_SIDE_WORDS: str = "the other folder"
-LOCAL_APPLY_TEXT: str = "{done} of {count} done…"
-LOCAL_DONE_TEXT: str = "Synchronize is done: {done} of {count} succeeded."
-LOCAL_SOME_TEXT: str = "Synchronize is done: {done} of {count} succeeded; {failed} could not be done."
+LOCAL_DONE_TEXT: str = "Finished: all {count} were done."
+LOCAL_SOME_TEXT: str = "Finished: {done} of {count} were done; {failed} could not be."
+LOCAL_ABORTED_TEXT: str = "Aborted: {done} of {count} were done, and {left} were not. What was done stays done."
+TO_THE_QUEUE_TEXT: str = "{count} went to the queue under the two panels; you can watch, pause and stop them there."
+ONE_TO_THE_QUEUE_TEXT: str = "1 thing went to the queue under the two panels; you can watch, pause and stop it there."
 
 
 def _there_path(folder: str, row: Row, on_a_server: bool) -> str:
@@ -230,11 +237,11 @@ class SynchronizePart(WindowBase):
             if isinstance(rows, list):
                 self._count_sync_folders(session, dialog, here_folder, there_folder, [row for row in rows if isinstance(row, Row)])
 
-        def apply_rows(rows: object) -> None:
+        def start_rows(rows: object) -> None:
             if isinstance(rows, list):
-                self._apply_to_server(session, dialog, here_folder, there_folder, [row for row in rows if isinstance(row, Row)])
+                self._start_on_the_server(session, dialog, here_folder, there_folder, [row for row in rows if isinstance(row, Row)])
 
-        dialog.apply_requested.connect(apply_rows)
+        dialog.start_requested.connect(start_rows)
         dialog.scan_requested.connect(start_scan)
         dialog.scan_stopped.connect(stop_scan)
         dialog.contents_requested.connect(contents)
@@ -275,10 +282,12 @@ class SynchronizePart(WindowBase):
     # --- the size of a one-sided folder (FF-06) ----------------------------------
 
     def _count_sync_folders(self, session: Session | None, dialog: CompareDialog, here_folder: str, there_folder: str, rows: list[Row]) -> None:
-        """The folders that are on one side only, counted in the background with the counting of block FE, so the window never waits.
-        It ends with its window: a count nobody can see or stop may never go on working on a server (review round 2)."""
+        """The folders that are on one side only, worked out in the background with the counting of block FE, so the window never
+        waits. The person stops it from the button that says so, and it also ends with its window: work nobody can see or stop may
+        never go on running (D-097)."""
         stop = threading.Event()
         dialog.finished.connect(lambda _result=0: stop.set())
+        dialog.counting_stopped.connect(stop.set)
         remote = session.remote if session is not None else None
 
         def tell(row: Row, count: Count) -> None:
@@ -299,9 +308,13 @@ class SynchronizePart(WindowBase):
                 tell(row, found)
             return None
 
-        self.run_alone(work, lambda _result: None, lambda _error: None, stop)
+        def ended(_result: object) -> None:
+            if stop.is_set():
+                dialog.counting_was_stopped()
 
-    # --- Apply (FF-08, FF-10) -----------------------------------------------------
+        self.run_alone(work, ended, lambda _error: ended(None), stop)
+
+    # --- Start: what the ticked rows do (FF-08, FF-10) ----------------------------
 
     def _deletes_agreed(self, rows: list[Row], on_a_server: bool = True, a_mask_is_on: bool = False) -> bool:
         """A delete is the step that can't be undone: what will go is named in full, files and folders apart and a folder with
@@ -311,9 +324,10 @@ class SynchronizePart(WindowBase):
             return True
         return QMessageBox.question(self, "Synchronize", box_text(text)) == QMessageBox.StandardButton.Yes
 
-    def _apply_to_server(self, session: Session, dialog: CompareDialog, here_folder: str, there_folder: str, rows: list[Row]) -> None:
-        """The ticked rows are the decision: copies go to the queue without an overwrite question and without "only newer"; the
-        deletes, moves and dates go to the queue as items of their own (FF-10)."""
+    def _start_on_the_server(self, session: Session, dialog: CompareDialog, here_folder: str, there_folder: str, rows: list[Row]) -> None:
+        """Start on a server hands the work to the queue, where it can be watched, paused and stopped: the ticked rows are the
+        decision, so copies go without an overwrite question and without "only newer", and the deletes, moves and dates go as items
+        of their own (FF-10). The queue is opened and the status bar says so, so the screen itself shows where the work went (D-097)."""
         if not rows:
             self.status.showMessage(NOTHING_TICKED_TEXT)
             return
@@ -332,8 +346,12 @@ class SynchronizePart(WindowBase):
                 self._add_job(session, os.path.join(here, row.name), there, True, row.name, options)
             else:
                 self._add_job(session, here, joined(there, row.name), False, row.name, options)
+        queued = len([row for row in rows if row.action in COPIES])
         for side in self._side_jobs(here_folder, there_folder, rows, True):
             self._add_side_job(session, side)
+            queued += 1
+        self._show_queue()  # the work went there, and the person can see that from the screen (D-097)
+        self.status.showMessage(ONE_TO_THE_QUEUE_TEXT if queued == 1 else TO_THE_QUEUE_TEXT.format(count=f"{queued} things"))
         dialog.close()
 
     def _side_jobs(self, here_folder: str, there_folder: str, rows: list[Row], on_a_server: bool) -> list[SideJob]:
@@ -420,53 +438,68 @@ class SynchronizePart(WindowBase):
             if isinstance(rows, list):
                 self._count_sync_folders(None, dialog, here_folder, there_folder, [row for row in rows if isinstance(row, Row)])
 
-        def apply_rows(rows: object) -> None:
-            if isinstance(rows, list):
-                self._apply_two_local(dialog, here_folder, there_folder, [row for row in rows if isinstance(row, Row)])
+        work_stops: list[threading.Event] = []  # the run that is busy: Abort and closing the window both end it (D-097)
 
-        dialog.apply_requested.connect(apply_rows)
+        def start_rows(rows: object) -> None:
+            if isinstance(rows, list):
+                self._start_two_local(dialog, here_folder, there_folder, [row for row in rows if isinstance(row, Row)], work_stops)
+
+        def abort_work() -> None:
+            for running in work_stops:
+                running.set()
+
+        dialog.start_requested.connect(start_rows)
+        dialog.work_stopped.connect(abort_work)
         dialog.scan_requested.connect(start_scan)
         dialog.scan_stopped.connect(stop_scan)
         dialog.sizes_wanted.connect(sizes_wanted)
-        dialog.finished.connect(lambda _result=0: stop_scan())  # nothing is left running behind a closed window
+        dialog.finished.connect(lambda _result=0: (stop_scan(), abort_work()))  # nothing is left running behind a closed window
         dialog.show()
         start_scan()
 
-    def _apply_two_local(self, dialog: CompareDialog, here_folder: str, there_folder: str, rows: list[Row]) -> None:
-        """Two folders on this computer: no connection is in play, so the work runs on a thread of its own and says in the status bar
-        how far it is."""
+    def _start_two_local(self, dialog: CompareDialog, here_folder: str, there_folder: str, rows: list[Row], stops: list[threading.Event]) -> None:
+        """Two folders on this computer: no connection is in play, so the work runs on a thread of its own while the window stays on
+        screen, showing what it is doing and how far it is. The same button now reads Abort; it ends after the file it is busy with,
+        and the window says plainly what was done and what was not (D-097)."""
         if not rows:
-            self.status.showMessage(NOTHING_TICKED_TEXT)
+            dialog.work_ended(NOTHING_TICKED_TEXT)
             return
         if not self._deletes_agreed(rows, False, bool(dialog.chosen().mask)):
             return
         sides = self._side_jobs(here_folder, there_folder, rows, False)
         stop = threading.Event()
+        stops.append(stop)
         count = sum(side.count for side in sides)
-        done = [0]
-        failed = [0]
+        done, failed = [0], [0]
+        dialog.work_started(count)
 
         def work() -> object:
             for side in sides:
                 for step in side.steps:
                     if stop.is_set():
-                        return None
+                        return None  # after the file it was busy with: what was done stays done
                     try:
                         on_this_computer(side.work, step)
                         done[0] += 1
                     except (OSError, ValueError, shutil.Error):
                         failed[0] += 1
-                    told = done[0]
-                    self.bridge.deliver(lambda shown=told: self.status.showMessage(LOCAL_APPLY_TEXT.format(done=shown, count=count)))
+                    told, name = done[0] + failed[0], os.path.basename(step.target or step.path)
+                    self.bridge.deliver(lambda shown=told, what=name: dialog.work_progress(shown, count, what))
             return None
 
         def ended(_result: object) -> None:
-            text = LOCAL_DONE_TEXT.format(done=done[0], count=count) if not failed[0] else LOCAL_SOME_TEXT.format(done=done[0], count=count, failed=failed[0])
+            left = count - done[0] - failed[0]
+            if stop.is_set() and left > 0:  # an Abort after the last step stopped nothing: it finished (G-2)
+                text = LOCAL_ABORTED_TEXT.format(done=done[0], count=count, left=left + failed[0])
+            elif failed[0]:
+                text = LOCAL_SOME_TEXT.format(done=done[0], count=count, failed=failed[0])
+            else:
+                text = LOCAL_DONE_TEXT.format(done=done[0], count=count)
+            dialog.work_ended(text)
             self.status.showMessage(text)
             self.local_side.refresh()
 
         self.run_alone(work, ended, lambda _error: ended(None), stop)
-        dialog.close()
 
     # --- Mark Differences (FF-12) --------------------------------------------------
 
@@ -500,5 +533,5 @@ class SynchronizePart(WindowBase):
 
 
 NO_TIMESTAMPS_TEXT: str = "This connection can't set the date of a file on the server, so only dates on this computer could be set."
-NO_CHECKSUM_LOCALLY_TEXT: str = "Two folders on this computer are compared by date and size; checksums are for a server."
+NO_CHECKSUM_LOCALLY_TEXT: str = "Two folders on this computer are compared by date and size; looking inside the files is for a server."
 NOTHING_FOUND_TEXT: str = "The comparison was stopped."

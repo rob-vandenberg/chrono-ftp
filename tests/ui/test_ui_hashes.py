@@ -20,7 +20,7 @@ from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.engine import checksums, sizes
 from chrono_ftp.engine.sizes import Count
 from chrono_ftp.ui import propertiesdialog
-from chrono_ftp.ui.comparedialog import CONTENTS_STOPPED_TEXT, CONTENTS_TEXT, STOP_TEXT, CompareDialog
+from chrono_ftp.ui.comparedialog import CONTENTS_STOPPED_TEXT, CONTENTS_TEXT, STOP_CONTENTS_TEXT, CompareDialog
 from chrono_ftp.ui.filelist import AT_LEAST_TEXT
 from chrono_ftp.ui.mainwindow import MainWindow
 from chrono_ftp.ui.propertiesdialog import PropertiesDialog
@@ -32,9 +32,10 @@ from tests.ui.test_ui_selection import with_settings
 from tests.ui.test_ui_sessions import both_ways, connected, names_on_the_right, select, ssh_settings, synchronize_window, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_hashes.py 0.0.43"
+__version__ = "test_ui_hashes.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: The Synchronize window's buttons name the one action that applies (D-097)
 # v0.0.43: Synchronize now opens on the direction of the side with the focus, and its rows are the plan (block FF)
 # v0.0.42: Initial: block FE, hashes and sizes without a shell (FE-01 to FE-03); review round 1: calculations that never wait for
 #          each other, counts that stop with their tab, Shift+Space typing a space into a name being searched; review round 2: a
@@ -467,7 +468,7 @@ def test_a_stopped_compare_contents_says_so_and_keeps_its_rows(qtbot: QtBot, win
         qtbot.waitUntil(dialog.contents_button.isEnabled)
         dialog.contents_button.click()
         assert SLOW_HASHING.wait(10)
-        assert dialog.contents_button.text() == STOP_TEXT
+        assert dialog.contents_button.text() == STOP_CONTENTS_TEXT
         dialog.contents_button.click()
         qtbot.waitUntil(lambda: dialog.contents_button.text() == CONTENTS_TEXT)
         assert dialog.status.text() == CONTENTS_STOPPED_TEXT and dialog.table.rowCount() == 1

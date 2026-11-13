@@ -28,13 +28,14 @@ from chrono_ftp.ui.session import EditedFile, Session
 from chrono_ftp.ui.windowqueue import CALLED_OFF_TEXT, DISCONNECTED_TEXT, EDITS_TEXTS, NOT_ALLOWED_TEXTS, STOPPED_TEXT
 from tests.fakeservers import USER, ftp_server
 from tests.test_engine import Scripted
-from tests.ui.test_ui_sessions import connected, window
+from tests.ui.test_ui_sessions import connected, settled_tab, window
 from tests.ui.test_ui_transfers import settled
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_queue.py 0.0.40"
+__version__ = "test_ui_queue.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: A reconnect waits for the tab to have settled, not for alive alone (AGENTS.md 4.4.4)
 # v0.0.40: The menu of a tab also holds Pause Automatic Refresh and Clear Cached Listings (FG-15)
 # v0.0.38: The menu of a tab also holds Server Information and Session Log, after a separator (FP-02, FP-03)
 # v0.0.37: The menu of a tab also holds Install My Public Key, greyed with its reason on FTP, and no Change Password there (FM-09, FM-10)
@@ -580,6 +581,7 @@ def test_a_retry_after_a_reconnect_goes_over_the_new_connection_and_closing_the_
         window._disconnect(session)
         window.reconnect()
         qtbot.waitUntil(lambda: session.alive and session.remote is not old)
+        settled_tab(qtbot, session)  # the new login's first listing too: the server stops when this block ends
         (root / "missing").mkdir()
         choose(window, failing)
         window.queue_panel.actions_by_name["retry"].trigger()
@@ -890,6 +892,7 @@ def test_connect_with_new_settings_logs_in_again_in_the_same_tab(qtbot: QtBot, w
         old = session.remote
         window.open_connection(replace(ftp_settings(port), colour="#336699"))
         qtbot.waitUntil(lambda: session.alive and session.remote is not old)
+        settled_tab(qtbot, session)  # the new login's first listing too: the server stops when this block ends
         assert window.tab_bar.count() == 1
         assert session.connection.colour == "#336699"
 
@@ -912,7 +915,7 @@ def test_connect_with_the_same_settings_on_a_dropped_tab_reconnects(qtbot: QtBot
         window._disconnect(session)
         assert not session.alive
         window.open_connection(ftp_settings(port))
-        qtbot.waitUntil(lambda: session.alive)
+        settled_tab(qtbot, session)
         assert window.tab_bar.count() == 1
 
 

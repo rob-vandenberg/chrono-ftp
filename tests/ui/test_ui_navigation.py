@@ -23,12 +23,13 @@ from chrono_ftp.ui.remoteside import remote_parts
 from chrono_ftp.ui.windownavigation import PROGRAM_KEYS
 from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ssh_server
-from tests.ui.test_ui_sessions import connected, ssh_settings, trust_server, window
+from tests.ui.test_ui_sessions import connected, settled_tab, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_navigation.py 0.0.40"
+__version__ = "test_ui_navigation.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: A reconnect waits for the tab to have settled, not for alive alone (AGENTS.md 4.4.4)
 # v0.0.40: F6 moves since block FG, so F10 is the free function key a bookmark may take
 # v0.0.34: Initial: the clickable path, Ctrl+L, Ctrl+O, Ctrl+B, the bookmarks window and keys, location profiles, Ctrl+., synchronized
 #          browsing, and starting folders (FH-01 to FH-06); the faults of review rounds 1 and 2, each with its own test
@@ -754,7 +755,7 @@ def test_a_lost_connection_turns_synchronized_browsing_off_for_good(qtbot: QtBot
         assert not session.sync_browsing and not window.actions_by_name["sync_browsing"].isChecked()
         assert "connection ended" in window.status.currentMessage()
         window.reconnect()
-        qtbot.waitUntil(lambda: session.alive and not session.connecting)
+        settled_tab(qtbot, session)
         assert not session.sync_browsing and not window.actions_by_name["sync_browsing"].isChecked()
 
 
@@ -770,7 +771,8 @@ def test_a_new_login_that_falls_back_to_the_home_folder_is_no_step(qtbot: QtBot,
         window.actions_by_name["sync_browsing"].trigger()
         (root / "css").rmdir()
         window._connect(session)  # a new login, as after changed settings: /css is gone, so the home folder opens
-        qtbot.waitUntil(lambda: session.alive and not session.connecting and window.remote_side.folder == "/")
+        settled_tab(qtbot, session)
+        qtbot.waitUntil(lambda: window.remote_side.folder == "/")
         assert not session.sync_browsing and not window.actions_by_name["sync_browsing"].isChecked()
         assert window.local_side.folder == str(local / "css")
 
@@ -970,7 +972,8 @@ def test_reconnect_of_a_dropped_tab_logs_in_as_the_connection_is_saved_now(qtbot
         saved_connections.save([replace(settings, port=new_server.port)])
         window._mark_lost(session)
         window.reconnect()
-        qtbot.waitUntil(lambda: session.alive and not session.connecting and "new" in window.remote_side.file_list.names())
+        settled_tab(qtbot, session)
+        qtbot.waitUntil(lambda: "new" in window.remote_side.file_list.names())
         assert session.connection.port == new_server.port
 
 
@@ -1048,7 +1051,7 @@ def test_on_a_dropped_tab_the_remote_path_can_not_be_typed_or_clicked(qtbot: QtB
         bar.parts.part_clicked.emit("/")
         assert chosen == []
         window.reconnect()
-        qtbot.waitUntil(lambda: session.alive and not session.connecting)
+        settled_tab(qtbot, session)
         bar.start_typing()
         assert bar.typing and "Reconnect" not in bar.toolTip()
 

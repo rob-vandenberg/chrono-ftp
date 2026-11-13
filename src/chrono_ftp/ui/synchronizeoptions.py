@@ -5,44 +5,59 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import QButtonGroup, QCheckBox, QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QRadioButton, QVBoxLayout, QWidget
 
-from chrono_ftp.engine.synchronize import Criterion, Direction, Mode, Options
+from chrono_ftp.engine.synchronize import THERE_FOLDER, THERE_SERVER, Criterion, Direction, Mode, Options
 from chrono_ftp.ui.maskfield import MaskField
 
 # --- Version ------------------------------------------------------------
-__version__ = "synchronizeoptions.py 0.0.43"
+__version__ = "synchronizeoptions.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: No word on the window is one only a programmer uses: no source, no target, no checksum
+# v0.0.44: No hover text names a button that is not on the window any more
+# v0.0.44: Review by the owner: the direction says "the other folder" where there is no server (OR-1), and every choice was
+#          written as a person would read it, with a hover text that says what it means (D-097)
 # v0.0.43: Initial: the direction and the mode, the criterion with its case choice, the deletes and the scope, and the masks with
 #          "Skip empty folders" (FF-01, FF-02, FF-08, FF-09, D-091, D-092)
 
-DIRECTION_TITLE: str = "Direction"
+DIRECTION_TITLE: str = "Which way"
 MODE_TITLE: str = "What it does"
-CRITERION_TITLE: str = "Compare"
+CRITERION_TITLE: str = "When two files count as the same"
 SCOPE_TITLE: str = "What it looks at"
-MASK_TITLE: str = "Files"
+MASK_TITLE: str = "Which files"
+TO_THERE_TEXT: str = "To {there}"
+TO_HERE_TEXT: str = "To this computer"
+BOTH_WAYS_TEXT: str = "Both ways"
+TO_THERE_TIP: str = "Files go from this computer to {there}; only {there} is changed."
+TO_HERE_TIP: str = "Files go from {there} to this computer; only this computer is changed."
+BOTH_TIP: str = "Whichever side has the newer file sends it to the other; both sides are changed."
 CASE_TEXT: str = "Upper and lower case are different names"
 CASE_TIP: str = "Off: README on this computer and readme on the other side are the same file."
 DELETE_TEXT: str = "Delete on the other side"
-DELETE_TIP: str = "On: the rows that delete start ticked. They are always shown, and Apply asks before anything is deleted."
-DELETE_BOTH_WHY: str = "Both ways has no other side to delete on: each side is a source."
-DELETE_TIMESTAMPS_WHY: str = "Timestamps only sets dates; it never copies and never deletes."
-EXISTING_TEXT: str = "Existing files only"
-EXISTING_TIP: str = "Only names that are already on both sides; nothing new is copied."
-NO_SUBFOLDERS_TEXT: str = "No subfolders"
-SELECTED_TEXT: str = "The selected files only"
+DELETE_TIP: str = "On: the rows that delete start ticked. They are always shown either way, and Start asks before anything is deleted."
+DELETE_BOTH_WHY: str = "Both ways has no other side to delete on: each side sends files to the other."
+DELETE_TIMESTAMPS_WHY: str = "That choice only gives files the same date; it never copies and never deletes."
+EXISTING_TEXT: str = "Only files that are already on both sides"
+EXISTING_TIP: str = "Nothing new is copied; only files that both sides already have are brought up to date."
+NO_SUBFOLDERS_TEXT: str = "Don't look inside subfolders"
+SELECTED_TEXT: str = "Only what is selected on this computer"
 SELECTED_WHY: str = "Nothing is selected in the list of this computer."
-SKIP_EMPTY_TEXT: str = "Skip empty folders"
+SKIP_EMPTY_TEXT: str = "Leave out empty folders"
 MASK_PLACEHOLDER: str = "*.txt; docs/ | *.bak"
 MODE_TEXTS: dict[Mode, str] = {
-    Mode.SYNCHRONIZE: "Synchronize: copy what is new or newer",
-    Mode.MIRROR: "Mirror: make the target an exact copy",
-    Mode.TIMESTAMPS: "Timestamps only: give the same date, copy nothing",
+    Mode.SYNCHRONIZE: "Copy what is new or newer",
+    Mode.MIRROR: "Make the side it copies to exactly like the other one",
+    Mode.TIMESTAMPS: "Only give the same date, copy nothing",
 }
 CRITERION_TEXTS: dict[Criterion, str] = {
-    Criterion.DATE: "By date (and size)",
-    Criterion.SIZE: "By size",
-    Criterion.CHECKSUM: "By checksum",
-    Criterion.NAME: "By name only",
+    Criterion.DATE: "They have the same date and the same size",
+    Criterion.SIZE: "They have the same size",
+    Criterion.CHECKSUM: "They hold exactly the same thing (both files are looked inside)",
+    Criterion.NAME: "They have the same name (nothing else is looked at)",
+}
+MODE_TIPS: dict[Mode, str] = {
+    Mode.SYNCHRONIZE: "A newer file on the side it copies to is never written over.",
+    Mode.MIRROR: "The side it copies to ends up exactly like the other one: newer files on it are written over, and files the other side no longer has can be deleted.",
+    Mode.TIMESTAMPS: "No file is copied and no file is deleted; only dates are set.",
 }
 
 
@@ -61,19 +76,24 @@ class SynchronizeOptions(QWidget):
 
     changed = Signal()
 
-    def __init__(self, options: Options, why_no_checksum: str = "", why_no_timestamps: str = "", anything_selected: bool = False, history: tuple[str, ...] = (), parent: QWidget | None = None) -> None:
+    def __init__(self, options: Options, why_no_checksum: str = "", why_no_timestamps: str = "", anything_selected: bool = False, history: tuple[str, ...] = (), parent: QWidget | None = None, on_a_server: bool = True) -> None:
         super().__init__(parent)
         self.why_no_checksum: str = why_no_checksum
         self.why_no_timestamps: str = why_no_timestamps
-        self.to_there = QRadioButton(Direction.TO_THERE.value)
-        self.to_here = QRadioButton(Direction.TO_HERE.value)
-        self.both = QRadioButton(Direction.BOTH.value)
+        there = THERE_SERVER if on_a_server else THERE_FOLDER  # never "the server" for two folders on this computer (OR-1, FF-14)
+        self.to_there = QRadioButton(TO_THERE_TEXT.format(there=there))
+        self.to_there.setToolTip(TO_THERE_TIP.format(there=there))
+        self.to_here = QRadioButton(TO_HERE_TEXT)
+        self.to_here.setToolTip(TO_HERE_TIP.format(there=there))
+        self.both = QRadioButton(BOTH_WAYS_TEXT)
+        self.both.setToolTip(BOTH_TIP)
         self.directions: QButtonGroup = QButtonGroup(self)
         for number, button in enumerate((self.to_there, self.to_here, self.both)):
             self.directions.addButton(button, number)
         self.mode = QComboBox()
-        for mode in Mode:
+        for number, mode in enumerate(Mode):
             self.mode.addItem(MODE_TEXTS[mode], mode.name)
+            self.mode.setItemData(number, MODE_TIPS[mode], Qt.ItemDataRole.ToolTipRole)
         if why_no_timestamps:
             _greyed(self.mode, list(Mode).index(Mode.TIMESTAMPS), why_no_timestamps)
         self.criterion = QComboBox()

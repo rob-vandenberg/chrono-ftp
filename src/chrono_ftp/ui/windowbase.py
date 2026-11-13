@@ -29,9 +29,10 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.43"
+__version__ = "windowbase.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Block FF: Synchronize starts its work from one Start button that becomes Abort (D-097)
 # v0.0.43: Block FF: the synchronize part builds its own list actions and greys them, and owns Synchronize, the window for two
 #          folders on this computer and Mark Differences
 # v0.0.42: Block FE: what the Size and Checksum tabs of Properties ask, on each side, is made by the sizes part; the counts of a tab

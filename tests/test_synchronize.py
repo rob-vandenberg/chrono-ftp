@@ -1,6 +1,6 @@
 """Block FF without a screen: the directions and the modes, the criteria with their case choice, the timestamp precision a listing
 reports, the checklist rows with their counts, a row reversed, moved and renamed files, the deletes and the scope, the masks, and the
-deletes, moves and dates that Apply sends to the queue. Only the fake servers are used (OR-26)."""
+deletes, moves and dates that Start sends to the queue. Only the fake servers are used (OR-26)."""
 
 import os
 from pathlib import Path
@@ -23,9 +23,10 @@ from tests.test_hashes import ftp_of
 from tests.test_server_actions import connected_ssh
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_synchronize.py 0.0.43"
+__version__ = "test_synchronize.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: The words of a row and of the delete question, gone over one by one (D-097)
 # v0.0.43: Initial: block FF, synchronize (FF-01 to FF-13); review round 1: a copy on this computer replaces the file that is
 #          there and refuses a link in its place, the delete question never says less than it does, a delete reversed copies from the
 #          side the file is still on (the earlier test asserted the wrong side), a move can't be reversed, and a scan can be

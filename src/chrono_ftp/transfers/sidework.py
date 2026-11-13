@@ -1,4 +1,4 @@
-"""What Apply of the Synchronize window sends to the queue beside its copies (FF-10): the deletes, the moves on one side, the dates it
+"""What Start of the Synchronize window sends to the queue beside its copies (FF-10): the deletes, the moves on one side, the dates it
 sets, and the copies between two folders on this computer (FF-14). Each is one item of the queue, so the person sees it, can stop it
 and can watch it like any transfer; one item that is refused never stops the rest, and the job says afterwards what could not be done."""
 

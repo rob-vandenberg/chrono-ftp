@@ -47,9 +47,10 @@ from tests.test_engine import Scripted
 from tests.ui.test_ui_sessions import MAGENTA, both_ways, connected, names_on_the_right, pick_local, select, ssh_settings, synchronize_window, transfers_ended, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_transfers.py 0.0.43"
+__version__ = "test_ui_transfers.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Synchronize starts from the Start button, not Apply (D-097)
 # v0.0.43: Synchronize through its checklist window and Apply (block FF)
 # v0.0.34: The test of two tabs on one login opens two differently named connections, as one connection opens one tab only (D-051)
 # v0.0.12: Initial: the transfer window, Transfer settings greyed by the server, the overwrite question, the rights field, Settings; the
@@ -873,7 +874,7 @@ def test_synchronize_does_exactly_the_ticked_rows_without_a_question_or_only_new
         row = dialog.table.item(0, 0)
         assert row is not None
         row.setCheckState(Qt.CheckState.Checked)  # the person ticks it: that is the decision, no question follows
-        dialog.apply_button.click()
+        dialog.start_button.click()
         settled(qtbot, window)
     assert (root / "a.txt").read_text(encoding="utf-8") == "the longer one"
     assert (root / "a.txt").stat().st_mtime == OLD_TIME  # the dates of Settings still hold
@@ -1533,7 +1534,7 @@ def test_synchronize_queues_nothing_once_its_connection_was_lost(qtbot: QtBot, w
 
         monkeypatch.setattr(window.status, "showMessage", show)
         monkeypatch.setattr(QMessageBox, "information", box)
-        dialog.apply_button.click()
+        dialog.start_button.click()
     assert window.queue.jobs == [] and not (root / "a.txt").exists()
     assert shown == boxes == [f"Shop: {LOST_MEANWHILE_TEXT}"]
 

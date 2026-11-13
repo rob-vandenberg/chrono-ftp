@@ -1,6 +1,6 @@
 """The Synchronize window (block FF): its choices on top, and below them the checklist of every planned action (FF-04). Each row has a
 tick, what it would do, and the size and date of both sides; the rows can be sorted by any column and selected by action, the status
-line says how many and how much per action, and nothing happens until Apply (D-038)."""
+line says how many and how much per action, and nothing happens until the person presses Start (D-038, D-097)."""
 
 from typing import override
 
@@ -10,13 +10,13 @@ from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QHeaderVi
 from chrono_ftp.connections.base import RemoteEntry, shown_name
 from chrono_ftp.engine.listing import size_text
 from chrono_ftp.engine.sizes import Count
-from chrono_ftp.engine.synchronize import COPIES, DELETES, Action, Criterion, Options, Row, Total, can_turn, text_of, totals, turned, why_no_turn
+from chrono_ftp.engine.synchronize import COPIES, DELETES, HERE, THERE_FOLDER, THERE_SERVER, Action, Criterion, Options, Row, Total, can_turn, text_of, totals, turned, why_no_turn
 from chrono_ftp.ui.filelist import date_text
 from chrono_ftp.ui.plaintext import plain_label
 from chrono_ftp.ui.synchronizeoptions import SynchronizeOptions
 
 # --- Version ------------------------------------------------------------
-__version__ = "comparedialog.py 0.0.43"
+__version__ = "comparedialog.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
 # v0.0.43: Block FF: the window gets its choices (direction, mode, criterion, deletes, scope, masks) and becomes a checklist of every
@@ -24,6 +24,13 @@ __version__ = "comparedialog.py 0.0.43"
 #          of a one-sided folder counted in the background, and a progress bar that uses the last scan of the same folder pair; Apply
 #          names how many items will be deleted and asks first (FF-01 to FF-13, D-038 changed, D-091 to D-095); review round 1: a scan
 #          can be stopped from the same button, and Reverse is greyed with its reason on a row it has no meaning for
+# v0.0.44: The two steps are named as a person would: Compare the Folders Again / Stop Comparing the Folders against Look Inside the
+#          Files / Stop Looking Inside the Files, and no word on the window is one only a programmer uses
+# v0.0.44: The two stops say plainly which is which: Compare the Folders Again / Stop Comparing the Folders against Look Inside the
+#          Files / Stop Looking Inside the Files; no word on the window names a button that is not there
+# v0.0.44: Review by the owner: Apply became Start, and the same button reads Abort while the work runs; the window stays on screen
+#          while two folders on this computer are synchronized, showing what it is doing and how far it is; every long-running thing
+#          has a button on screen that stops it; the words a person reads were gone over one by one (D-097)
 # v0.0.42: Compare Contents: the files of the same size with other dates are compared by their checksums, greyed with its reason where
 #          the connection computes none, and stoppable; rows of other content go to the side with the later date (FE-01); review
 #          round 2: a stopped comparison says so
@@ -33,30 +40,54 @@ __version__ = "comparedialog.py 0.0.43"
 WINDOW_TITLE: str = "Synchronize"
 WIDTH: int = 1000
 HEIGHT: int = 640
-COLUMNS: tuple[str, ...] = ("Name", "Action", "Size here", "Date here", "Size there", "Date there", "Difference")
 NAME_COLUMN: int = 0
 ACTION_COLUMN: int = 1
-APPLY_TEXT: str = "Apply"
-COMPARE_AGAIN_TEXT: str = "Compare Again"
-REVERSE_TEXT: str = "Reverse"
-REVERSE_TIP: str = "Turns the selected rows around: a copy goes the other way, a delete becomes the copy that keeps the file."
-SELECT_TEXT: str = "Select"
+COLUMN_COUNT: int = 7
+NAME_HEADING: str = "Name"
+ACTION_HEADING: str = "What will happen"
+SIZE_HEADING: str = "Size on {side}"
+DATE_HEADING: str = "Date on {side}"
+WHY_HEADING: str = "Why"
+START_TEXT: str = "Start"  # the one word a person expects for starting the work (D-097)
+ABORT_TEXT: str = "Abort"  # the same button while it runs: one button, naming the one action that applies (OR-20, D-097)
+ABORT_TIP: str = "Stops after the file it is busy with; what was done stays done."
+WAIT_FOR_IT_WHY: str = "Wait until the list is finished."
+START_TIP: str = "Does everything that is ticked. Nothing happens before you press this."
+START_QUEUE_TIP: str = "Puts everything that is ticked in the queue under the two panels, where you can watch, pause and stop it."
+NOTHING_TICKED_WHY: str = "Nothing is ticked yet, so there is nothing to start."
+AFTER_A_RUN_WHY: str = "This list is from before the last run. Press Compare the Folders Again for a fresh look."
+COMPARE_AGAIN_TEXT: str = "Compare the Folders Again"
+COMPARE_AGAIN_TIP: str = "Goes through both folders again with the choices above and makes a new list."
+STOP_COMPARING_TEXT: str = "Stop Comparing the Folders"
+STOP_COUNTING_TEXT: str = "Stop Counting the Folders"
+STOP_COUNTING_TIP: str = "Stops working out how much is in the folders that are on one side only."
+REVERSE_TEXT: str = "Act on the Other Side"
+REVERSE_TIP: str = "Makes the selected rows act on the other side: a copy goes the other way, and a delete becomes the copy that keeps the file."
+SELECT_TEXT: str = "Tick Rows"
+SELECT_TIP: str = "Ticks every row, no row, or only the rows that do one thing."
 SELECT_ALL_TEXT: str = "Everything"
 SELECT_NOTHING_TEXT: str = "Nothing"
-CONTENTS_TEXT: str = "Compare Contents"
-STOP_TEXT: str = "Stop"
-CONTENTS_TIP: str = "Compares the files of the same size with other dates by their checksums, on both sides: those with the same content are left out."
-NO_SAME_SIZE_TEXT: str = "No files of the same size with other dates to compare."
-CONTENTS_RUNNING_TEXT: str = "Comparing the contents by {algorithm} checksums…"
-CONTENTS_DONE_TEXT: str = "{left} with the same content were left out; {count} differences remain."
-CONTENTS_UNKNOWN_TEXT: str = " {unknown} could not be compared and stay as they were."
-CONTENTS_STOPPED_TEXT: str = "Comparing the contents was stopped; the rows stay as they were."
-SCANNING_TEXT: str = "Looking at {here} and {there}…"
-SAME_TEXT: str = "These folders are the same."
-NOTHING_TO_DO_TEXT: str = "Nothing to do with these choices."
-CHOICES_CHANGED_TEXT: str = "The choices changed: press Compare Again to see the new plan."
-SCAN_STOPPED_TEXT: str = "Comparing was stopped; the rows stay as they were."
-MASK_FAULT_TEXT: str = "The mask could not be read, so every file is looked at: {why}"
+CONTENTS_TEXT: str = "Look Inside the Files"
+STOP_CONTENTS_TEXT: str = "Stop Looking Inside the Files"
+CONTENTS_TIP: str = "Opens every file of the same size on both sides and reads it from beginning to end, then takes out the rows whose two files turn out to hold exactly the same thing. This looks inside the files themselves; it does not go through the folders again."
+NO_SAME_SIZE_TEXT: str = "There are no files of the same size on both sides, so there is nothing to look inside."
+CONTENTS_RUNNING_TEXT: str = "Looking inside the files on both sides…"
+CONTENTS_DONE_TEXT: str = "{left} turned out to be the same on both sides and are gone from the list; {count} things left to do."
+CONTENTS_UNKNOWN_TEXT: str = " {unknown} could not be opened on one of the two sides and stay as they were."
+CONTENTS_STOPPED_TEXT: str = "Looking inside the files was stopped; the list stays as it was."
+SCANNING_TEXT: str = "Going through {here} and {there}…"
+COUNTING_RUNNING_TEXT: str = "Working out how much is in {count}…"
+ONE_FOLDER_TEXT: str = "1 folder"
+FOLDERS_TEXT: str = "{count} folders"
+COUNTING_STOPPED_TEXT: str = "Counting the folders was stopped; the sizes it had not reached stay unknown."
+TO_DO_TEXT: str = "{count} to do. Nothing happens until you press Start."
+ONE_TO_DO_TEXT: str = "1 thing"
+THINGS_TO_DO_TEXT: str = "{count} things"
+SAME_TEXT: str = "These two folders are already the same: there is nothing to do."
+CHOICES_CHANGED_TEXT: str = "The choices changed: press Compare the Folders Again to see what that means."
+SCAN_STOPPED_TEXT: str = "Comparing the folders was stopped; the list stays as it was."
+WORKING_TEXT: str = "Doing {done} of {count}: {name}"
+NOTHING_ACTION_TEXT: str = "Nothing"
 COUNTING_TEXT: str = "counting…"
 ROW_DATA: int = int(Qt.ItemDataRole.UserRole)
 SORT_DATA: int = int(Qt.ItemDataRole.UserRole) + 1
@@ -96,12 +127,14 @@ def _date_key(entry: RemoteEntry | None) -> tuple[str, float]:
 class CompareDialog(QDialog):
     """The Synchronize window. Its rows are the plan; the window itself never touches a file."""
 
-    apply_requested = Signal(object)  # the rows ticked, in the order they were planned
-    contents_requested = Signal()  # Compare Contents: the window runs the checksum step
+    start_requested = Signal(object)  # Start: the rows ticked, in the order they were planned
+    work_stopped = Signal()  # Abort: the work that runs here ends after the file it is busy with
+    contents_requested = Signal()  # Look Inside the Files: the window reads both sides through and drops the rows that match
     contents_stopped = Signal()
     scan_requested = Signal()  # the choices changed: the scan runs again
     scan_stopped = Signal()  # Stop while a scan runs: it ends and the rows stay as they were
-    sizes_wanted = Signal(object)  # the one-sided folders whose size is counted in the background (FF-06)
+    sizes_wanted = Signal(object)  # the one-sided folders whose size is worked out in the background (FF-06)
+    counting_stopped = Signal()  # Stop Counting Folders: that work ends and what it did not reach stays unknown
 
     def __init__(self, local_folder: str, remote_folder: str, parent: QWidget | None = None, contents_why: str = "", options: Options | None = None, why_no_timestamps: str = "", anything_selected: bool = False, history: tuple[str, ...] = (), on_a_server: bool = True) -> None:
         super().__init__(parent)
@@ -109,18 +142,22 @@ class CompareDialog(QDialog):
         self.on_a_server: bool = on_a_server
         self.comparing: bool = False
         self.scanning: bool = False
+        self.counting_left: int = 0  # the folders on one side only whose size is still being worked out (FF-06)
+        self.running: bool = False  # the work itself is being done, here on this computer (FF-14)
+        self.ran: bool = False  # it ran once: the list is from before that run
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WIDTH, HEIGHT)
         self.rows: list[Row] = []
         self.here_folder: str = local_folder
         self.there_folder: str = remote_folder
-        self.choices: SynchronizeOptions = SynchronizeOptions(options or Options(), contents_why, why_no_timestamps, anything_selected, history)
+        self.choices: SynchronizeOptions = SynchronizeOptions(options or Options(), contents_why, why_no_timestamps, anything_selected, history, on_a_server=on_a_server)
         self.status = plain_label(SCANNING_TEXT.format(here=shown_name(local_folder), there=shown_name(remote_folder)))
         self.counts = plain_label("")
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
-        self.table = QTableWidget(0, len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(list(COLUMNS))
+        there = THERE_SERVER if on_a_server else THERE_FOLDER
+        self.table = QTableWidget(0, COLUMN_COUNT)
+        self.table.setHorizontalHeaderLabels([NAME_HEADING, ACTION_HEADING, SIZE_HEADING.format(side=HERE), DATE_HEADING.format(side=HERE), SIZE_HEADING.format(side=there), DATE_HEADING.format(side=there), WHY_HEADING])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().hide()
@@ -128,10 +165,12 @@ class CompareDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(NAME_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSortIndicatorShown(True)
-        self.apply_button = QPushButton(APPLY_TEXT)
-        self.apply_button.setEnabled(False)
+        self.start_button = QPushButton(START_TEXT)
+        self.start_button.setEnabled(False)
+        self.start_button.setToolTip(START_QUEUE_TIP if on_a_server else START_TIP)
         self.again_button = QPushButton(COMPARE_AGAIN_TEXT)
         self.again_button.setAutoDefault(False)
+        self.again_button.setToolTip(COMPARE_AGAIN_TIP)
         self.reverse_button = QPushButton(REVERSE_TEXT)
         self.reverse_button.setAutoDefault(False)
         self.reverse_button.setToolTip(REVERSE_TIP)
@@ -141,13 +180,14 @@ class CompareDialog(QDialog):
         self.select_menu: QMenu = QMenu(self.select_button)
         self.select_menu.setToolTipsVisible(True)
         self.select_button.setMenu(self.select_menu)
+        self.select_button.setToolTip(SELECT_TIP)
         self.close_button = QPushButton("Close")
         self.contents_button = QPushButton(CONTENTS_TEXT)
         self.contents_button.setAutoDefault(False)
         self.contents_button.setEnabled(False)
         self._build()
         self.choices.changed.connect(self._choices_changed)
-        self.apply_button.clicked.connect(self._apply)
+        self.start_button.clicked.connect(self._start_pressed)
         self.close_button.clicked.connect(self.close)
         self.again_button.clicked.connect(self._again)
         self.reverse_button.clicked.connect(self._reverse)
@@ -164,7 +204,7 @@ class CompareDialog(QDialog):
         row.addWidget(self.select_button)
         row.addWidget(self.contents_button)
         row.addStretch(1)
-        row.addWidget(self.apply_button)
+        row.addWidget(self.start_button)
         row.addWidget(self.close_button)
         layout = QVBoxLayout(self)
         layout.addWidget(self.choices)
@@ -186,11 +226,27 @@ class CompareDialog(QDialog):
             self.status.setText(CHOICES_CHANGED_TEXT)
 
     def _again(self) -> None:
-        """While a scan runs the same button stops it, as Compare Contents does: a scan of a big tree takes minutes (FF-13)."""
+        """One button for comparing: it compares again, and while something of that comparing runs it stops exactly that (D-097).
+        A scan of a big tree takes minutes, and so can working out what is in the folders that are on one side only."""
         if self.scanning:
             self.scan_stopped.emit()
             return
+        if self.counting_left:
+            self.counting_stopped.emit()
+            return
         self.scan_requested.emit()
+
+    def _again_state(self) -> None:
+        """The button always names the one thing it would do now: stop what runs, or compare again (OR-20)."""
+        if self.scanning:
+            text, tip = STOP_COMPARING_TEXT, ABORT_TIP
+        elif self.counting_left:
+            text, tip = STOP_COUNTING_TEXT, STOP_COUNTING_TIP
+        else:
+            text, tip = COMPARE_AGAIN_TEXT, COMPARE_AGAIN_TIP
+        self.again_button.setText(text)
+        self.again_button.setToolTip(tip)
+        self.again_button.setEnabled(not self.running)
 
     def scan_started(self, expected: int = 0) -> None:
         """The progress bar counts the names looked at, against the count of the last scan of the same folder pair (FF-13); without
@@ -199,9 +255,8 @@ class CompareDialog(QDialog):
         self.progress.setRange(0, max(0, expected))
         self.progress.setValue(0)
         self.progress.show()
-        self.apply_button.setEnabled(False)
-        self.again_button.setText(STOP_TEXT)
-        self.again_button.setEnabled(True)
+        self._start_state()
+        self._again_state()
         self.status.setText(SCANNING_TEXT.format(here=shown_name(self.here_folder), there=shown_name(self.there_folder)))
 
     def scan_progress(self, seen: int) -> None:
@@ -213,19 +268,20 @@ class CompareDialog(QDialog):
         """The plan as it is now. The ticks the person set are kept where the row is still there."""
         self.scanning = False
         self.progress.hide()
-        self.again_button.setText(COMPARE_AGAIN_TEXT)
-        self.again_button.setEnabled(True)
         self.again_button.setDefault(False)
         kept = {(row.folder, row.name, row.action): row.ticked for row in self.rows}
         self.rows = [row if (row.folder, row.name, row.action) not in kept else _ticked(row, kept[(row.folder, row.name, row.action)]) for row in rows]
         self._fill()
-        self.status.setText(f"{len(self.rows)} rows" if self.rows else SAME_TEXT)
-        self.apply_button.setEnabled(bool(self.rows))
+        self.status.setText(TO_DO_TEXT.format(count=_things(len(self.rows))) if self.rows else SAME_TEXT)
+        wanted = [row for row in self.rows if row.is_folder and row.size is None and (row.here is None or row.there is None)]
+        self.counting_left = len(wanted)
+        self._start_state()
+        self._again_state()
         self._contents_state()
         self._fill_select_menu()
-        wanted = [row for row in self.rows if row.is_folder and row.size is None and (row.here is None or row.there is None)]
         if wanted:
-            self.sizes_wanted.emit(wanted)  # counted in the background, so the window never waits (FF-06)
+            self.status.setText(COUNTING_RUNNING_TEXT.format(count=ONE_FOLDER_TEXT if len(wanted) == 1 else FOLDERS_TEXT.format(count=len(wanted))))
+            self.sizes_wanted.emit(wanted)  # worked out in the background, so the window never waits (FF-06)
 
     def show_found(self, rows: list[Row]) -> None:
         """The name the window had before block FF; the rows are the plan."""
@@ -249,7 +305,7 @@ class CompareDialog(QDialog):
             here_date, here_moment = _date_key(row.here)
             there_date, there_moment = _date_key(row.there)
             cells = (
-                _Cell("" if row.action == Action.NOTHING else text_of(row.action.value, self.on_a_server)),
+                _Cell(NOTHING_ACTION_TEXT if row.action == Action.NOTHING else text_of(row.action.value, self.on_a_server)),
                 _Cell(here_size, here_key),
                 _Cell(here_date, here_moment),
                 _Cell(there_size, there_key),
@@ -264,17 +320,19 @@ class CompareDialog(QDialog):
         if column >= 0:
             self.table.sortItems(column, order)
         self._show_counts()
+        self._start_state()  # whatever changed the rows, Start says now whether there is anything to start (OR-20)
 
     def _row_of(self, item: QTableWidgetItem | None) -> int:
         number = item.data(ROW_DATA) if item is not None else None
         return number if isinstance(number, int) and 0 <= number < len(self.rows) else -1
 
-    def _tick_changed(self, item: QTableWidgetItem) -> None:
+    def _tick_changed(self, item: QTableWidgetItem) -> None:  # noqa: D102 - see below
         number = self._row_of(item)
         if number < 0 or item.column() != NAME_COLUMN:
             return
         self.rows[number] = _ticked(self.rows[number], item.checkState() == Qt.CheckState.Checked)
         self._show_counts()
+        self._start_state()  # Start is greyed while nothing is ticked, and says why (OR-20)
 
     # --- what the person does with the rows -------------------------------------
 
@@ -320,8 +378,51 @@ class CompareDialog(QDialog):
     def deletes_ticked(self) -> int:
         return len([row for row in self.ticked() if row.action in DELETES])
 
-    def _apply(self) -> None:
-        self.apply_requested.emit(self.ticked())
+    def _start_pressed(self) -> None:
+        """One button: it starts the work, and while that work runs it aborts it (D-097)."""
+        if self.running:
+            self.work_stopped.emit()
+            return
+        self.start_requested.emit(self.ticked())
+
+    def _start_state(self) -> None:
+        """Start, or Abort while the work runs; greyed with its reason where there is nothing to start (OR-20)."""
+        if self.running:
+            self.start_button.setText(ABORT_TEXT)
+            self.start_button.setToolTip(ABORT_TIP)
+            self.start_button.setEnabled(True)
+            return
+        self.start_button.setText(START_TEXT)
+        why = "" if self.ticked() else AFTER_A_RUN_WHY if self.ran else NOTHING_TICKED_WHY
+        if self.scanning or self.comparing:
+            why = WAIT_FOR_IT_WHY
+        self.start_button.setEnabled(not why)
+        self.start_button.setToolTip(why or (START_QUEUE_TIP if self.on_a_server else START_TIP))
+
+    # --- the work itself, while it runs here on this computer (FF-14) ----------------
+
+    def work_started(self, count: int) -> None:
+        self.running = True
+        self.ran = True
+        self.progress.setRange(0, max(1, count))
+        self.progress.setValue(0)
+        self.progress.show()
+        self.again_button.setEnabled(False)
+        self.contents_button.setEnabled(False)
+        self._start_state()
+
+    def work_progress(self, done: int, count: int, name: str) -> None:
+        self.progress.setValue(done)
+        self.status.setText(WORKING_TEXT.format(done=done, count=count, name=shown_name(name)))
+
+    def work_ended(self, text: str) -> None:
+        """What was done and what was not, in words, with the window still on screen to read them (G-2)."""
+        self.running = False
+        self.progress.hide()
+        self.again_button.setEnabled(True)
+        self.status.setText(text)
+        self._contents_state()
+        self._start_state()
 
     def _show_counts(self) -> None:
         found = totals(self.rows, ticked_only=True)
@@ -336,12 +437,22 @@ class CompareDialog(QDialog):
         for number, row in enumerate(self.rows):
             if row.folder == folder and row.name == name and row.is_folder:
                 self.rows[number] = _sized(row, count)
+        self.counting_left = max(0, self.counting_left - 1)
         self._fill()
+        if not self.counting_left and not self.running:
+            self.status.setText(TO_DO_TEXT.format(count=_things(len(self.rows))) if self.rows else SAME_TEXT)
+        self._again_state()
+
+    def counting_was_stopped(self) -> None:
+        """The person pressed Stop Counting Folders: what was not reached stays unknown, and the window says so calmly (OR-23)."""
+        self.counting_left = 0
+        self.status.setText(COUNTING_STOPPED_TEXT)
+        self._again_state()
 
     # --- the checksum step (block FE) --------------------------------------------
 
     def _contents_state(self) -> None:
-        if self.comparing:
+        if self.comparing or self.running:
             return
         same_size = any(row.here is not None and row.there is not None and not row.is_folder and row.here.size == row.there.size for row in self.rows)
         why = self.contents_why or ("" if same_size else NO_SAME_SIZE_TEXT)
@@ -356,10 +467,11 @@ class CompareDialog(QDialog):
 
     def contents_started(self, algorithm: str) -> None:
         self.comparing = True
-        self.contents_button.setText(STOP_TEXT)
-        self.contents_button.setToolTip("")
-        self.apply_button.setEnabled(False)
-        self.status.setText(CONTENTS_RUNNING_TEXT.format(algorithm=algorithm))
+        self.contents_button.setText(STOP_CONTENTS_TEXT)
+        self.contents_button.setToolTip(ABORT_TIP)
+        self._start_state()
+        _ = algorithm  # how the two sides are compared is ours to pick, never a word the person has to know
+        self.status.setText(CONTENTS_RUNNING_TEXT)
 
     def contents_ended(self, rows: list[Row] | None, same: int = 0, unknown: int = 0) -> None:
         """rows None: stopped or failed, the rows stay as they were."""
@@ -367,7 +479,7 @@ class CompareDialog(QDialog):
         self.contents_button.setText(CONTENTS_TEXT)
         if rows is None:
             self.status.setText(CONTENTS_STOPPED_TEXT)  # a failure says its own reason after this
-            self.apply_button.setEnabled(bool(self.rows))
+            self._start_state()
             self._contents_state()
             return
         self.show_rows(rows)
@@ -377,13 +489,12 @@ class CompareDialog(QDialog):
     def scan_was_stopped(self) -> None:
         """The person pressed Stop: the rows stay exactly as they were, and the window says so calmly (OR-23)."""
         self.show_failure(SCAN_STOPPED_TEXT)
-        self.apply_button.setEnabled(bool(self.rows))
+        self._start_state()
 
     def show_failure(self, text: str) -> None:
         self.scanning = False
         self.progress.hide()
-        self.again_button.setText(COMPARE_AGAIN_TEXT)
-        self.again_button.setEnabled(True)
+        self._again_state()
         self.status.setText(text)
 
     @override
@@ -392,7 +503,15 @@ class CompareDialog(QDialog):
             self.contents_stopped.emit()  # a comparison that runs stops with the window
         if self.scanning:
             self.scan_stopped.emit()  # and so does a scan: nothing is left running behind a closed window
+        if self.counting_left:
+            self.counting_stopped.emit()
+        if self.running:
+            self.work_stopped.emit()  # closing the window aborts the work it started (D-097)
         super().done(result)
+
+
+def _things(count: int) -> str:
+    return ONE_TO_DO_TEXT if count == 1 else THINGS_TO_DO_TEXT.format(count=count)
 
 
 def _ticked(row: Row, ticked: bool) -> Row:

@@ -1,5 +1,5 @@
 """Opt-in tests of block FF against a real SFTP server (D-026): the scan of a real listing, the precision its dates come back in, the
-plan of each direction and mode, and the deletes, moves and dates that Apply would send to the queue, all in a throwaway folder that
+plan of each direction and mode, and the deletes, moves and dates that Start would send to the queue, all in a throwaway folder that
 goes again afterwards (OR-26). Run with `pytest -m live`; the servers are named as in test_live_transfers.py."""
 
 import os

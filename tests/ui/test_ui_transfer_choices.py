@@ -27,9 +27,10 @@ from tests.ui.test_ui_sessions import both_ways, connected, names_on_the_right, 
 from tests.ui.test_ui_transfers import OLD_TIME, ftp_settings, settled, upload_one, write_at
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_transfer_choices.py 0.0.43"
+__version__ = "test_ui_transfer_choices.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Synchronize starts from the Start button, not Apply (D-097)
 # v0.0.43: Synchronize through its checklist window and Apply (block FF)
 # v0.0.12: Initial: an Edit save and Synchronize carry only what the connection can do; Transfer settings from the transfer window
 #          reach the summary and the job; Synchronize's downloads ask nothing and use the options; a drop on the way up on the right;
@@ -75,7 +76,7 @@ def test_synchronize_on_a_server_without_dates_and_rights_carries_only_what_it_c
         window.local_side.go_to(str(here))
         dialog = synchronize_window(qtbot, window)
         both_ways(qtbot, dialog, 1)
-        dialog.apply_button.click()
+        dialog.start_button.click()
         qtbot.waitUntil(lambda: transfers_ended(window))
         settled(qtbot, window)
     [job] = window.queue.jobs
@@ -134,7 +135,7 @@ def test_synchronize_fetches_a_ticked_file_over_the_one_here_without_a_question_
         window.local_side.go_to(str(here))
         dialog = synchronize_window(qtbot, window)
         both_ways(qtbot, dialog, 1)
-        dialog.apply_button.click()
+        dialog.start_button.click()
         qtbot.waitUntil(lambda: transfers_ended(window))
         settled(qtbot, window)
     [job] = window.queue.jobs

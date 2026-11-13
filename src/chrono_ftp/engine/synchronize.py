@@ -18,9 +18,10 @@ from chrono_ftp.engine import checksums, localfiles
 from chrono_ftp.engine.sizes import Count
 
 # --- Version ------------------------------------------------------------
-__version__ = "synchronize.py 0.0.43"
+__version__ = "synchronize.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: The words of a row and the reason of a choice are read by a person, not by a manual: gone over one by one (D-097)
 # v0.0.43: Initial: the directions and modes, the criteria, the timestamp precision the server reports, the checklist rows with their
 #          counts, a row reversed, moved and renamed files, the deletes and the scope, and the masks (FF-01 to FF-09, D-038 changed,
 #          D-091 to D-094)
@@ -395,7 +396,7 @@ def move_candidates(rows: list[Row]) -> tuple[list[Row], list[Row]]:
 
 
 def with_moves(rows: list[Row], options: Options, precision: int, move_sums: dict[str, str] | None = None, on_a_server: bool = True) -> list[Row]:
-    """A file only on the target, plus a file of the same size only on the source, becomes one row "Move on the server" in place of a
+    """A file only on the target, plus a file of the same size only on the source, becomes one row that moves it on that side in place of a
     copy and a delete (FF-07). It is ticked only when the dates match too, or the checksums where both were computed. Only a size that
     belongs to exactly one file on each side is paired: two files of the same size say nothing about which became which."""
     if options.mode == Mode.TIMESTAMPS:
@@ -502,7 +503,7 @@ CANNOT_UNDO_TEXT: str = " This can't be brought back. Go on?"
 
 
 def delete_warning(rows: list[Row], on_a_server: bool = True, a_mask_is_on: bool = False) -> str:
-    """What Apply says before it deletes (FF-08, G-2). It never says less than it does: the files and the folders are named apart, a
+    """What the window says before it deletes, when the person presses Start (FF-08, G-2, D-097). It never says less than it does: the files and the folders are named apart, a
     folder is said to go with everything in it, the files inside the folders are named where they were counted (FF-06) and said to be
     unknown where they were not, and a mask in use is named too, since a folder goes whole. Empty when nothing is deleted."""
     deletes = [row for row in rows if row.action in DELETES]

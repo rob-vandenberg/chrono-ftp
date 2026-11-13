@@ -40,9 +40,12 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.43"
+__version__ = "test_ui_sessions.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: settled_tab: a tab is ready only once its connection is up and the listing that connection started has answered, so a test
+#          never ends while its fake server is still being asked something (AGENTS.md 4.4.4)
+# v0.0.44: Synchronize starts from the Start button, not Apply (D-097)
 # v0.0.43: The Synchronize window of a tab and its both-ways direction, as the helpers every window test uses (block FF)
 # v0.0.38: The name of the edit folders comes from engine/cleanup.py
 # v0.0.37: Owner and permissions are changed in the Properties window, its rights as a chmod that sets exactly the shown boxes, for
@@ -122,10 +125,19 @@ def window(qtbot: QtBot, memory_store: MemoryStore, monkeypatch: pytest.MonkeyPa
         shutil.rmtree(folder, ignore_errors=True)  # a copy the program keeps on purpose (unsent changes) is the test's own here
 
 
+def settled_tab(qtbot: QtBot, session: Session) -> None:
+    """A tab is ready only once its connection is up AND the request that connection started has answered. _connected sets alive and
+    asks for the first listing in one and the same step, so an idle worker after alive means nothing is in flight any more. A test
+    that goes on at alive alone ends while its server is still being asked something: the fake server then stops under that request,
+    the window says calmly that the connection was lost, and nobody answers that box (AGENTS.md 4.4.4)."""
+    qtbot.waitUntil(lambda: session.alive and not session.connecting and session.worker.idle())
+
+
 def connected(qtbot: QtBot, window: MainWindow, connection: Connection) -> None:
     window.open_connection(connection)
     session = window.sessions[-1]
     qtbot.waitUntil(lambda: session.alive and session.remote_folder != "")
+    settled_tab(qtbot, session)
 
 
 def synchronize_window(qtbot: QtBot, window: MainWindow) -> CompareDialog:
@@ -981,7 +993,7 @@ def test_synchronize_copies_only_what_is_ticked_and_deletes_nothing(qtbot: QtBot
         window.local_side.go_to(str(here))
         dialog = synchronize_window(qtbot, window)
         both_ways(qtbot, dialog, 3)
-        dialog.apply_button.click()
+        dialog.start_button.click()
         qtbot.waitUntil(lambda: (root / "mine.txt").exists() and (here / "theirs.txt").exists() and (root / "shared" / "deep.txt").exists())
         qtbot.waitUntil(lambda: all(job.state == State.DONE for job in window.queue.jobs))
         assert (root / "theirs.txt").exists() and (here / "mine.txt").exists()
