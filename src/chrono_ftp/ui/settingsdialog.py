@@ -3,6 +3,7 @@ from collections.abc import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 
+from chrono_ftp.config.settings import BYTES, CLASSIC_KEYS, FILE_MANAGER_KEYS, KILOBYTES, SHORT, TITLE_FULL, TITLE_NONE, TITLE_SHORT
 from chrono_ftp.config.settings import DOUBLE_CLICKS, FEWEST_AT_ONCE, FEWEST_REFRESH_SECONDS, FEWEST_THUMBNAIL_MEGABYTES, MOST_AT_ONCE, MOST_KEEP_DONE_SECONDS, MOST_REFRESH_SECONDS, MOST_THUMBNAIL_MEGABYTES, OPEN, TRANSFER, TREE_ABOVE, TREE_HIDDEN, TREE_LEFT, Settings
 from chrono_ftp.connections.base import shown_name
 from chrono_ftp.connections.sessionlog import log_folder
@@ -13,9 +14,11 @@ from chrono_ftp.ui.queueview import AT_ONCE_TEXT, AT_ONCE_TIP
 from chrono_ftp.ui.transferoptionsform import RIGHTS_INCOMPLETE_TEXT, TransferOptionsForm
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.39"
+__version__ = "settingsdialog.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: Selection and keys (block FG): the key set and the path in the title bar on the General page; the two-pane selection mode,
+#          the size format, natural sort and moving by a right-button drag on the Panels page
 # v0.0.39: Looks (block FQ): a Colours page with the rules of file colours (FQ-01); the largest file and the names that get a thumbnail
 #          on the Panels page (FQ-02); the toolbar choices, made on the toolbars themselves, stay as they are (FQ-03)
 # v0.0.38: Preferences (FP-01): pages on the left (General, Panels, Transfers, Queue, Confirmations, Log), each choice on its page with
@@ -51,6 +54,17 @@ CLEAN_UP_TEXT: str = "Clean Up Stored Data…"
 CLEAN_UP_TIP: str = "See what Chrono FTP keeps on this computer, and remove what you choose"
 PAGE_LIST_CHARACTERS: int = 14
 THUMBNAIL_SIZE_TIP: str = "A larger file gets no thumbnail, so a picture is never a long wait. Thumbnails are kept in memory only."
+KEY_SET_LABELS: dict[str, str] = {CLASSIC_KEYS: "Classic two-pane keys", FILE_MANAGER_KEYS: "File manager keys"}
+KEY_SET_TIP: str = "Classic two-pane keys: Alt+F7 finds files and Ctrl+F4 sorts by extension. File manager keys: Ctrl+F finds files. The other keys are the same in both."
+TITLE_LABELS: dict[str, str] = {TITLE_SHORT: "The last folder of the server", TITLE_FULL: "The whole path on the server", TITLE_NONE: "No path"}
+TITLE_TIP: str = "What the title bar shows after the name and version of Chrono FTP"
+SIZE_LABELS: dict[str, str] = {SHORT: "Short: 1.2 MB", KILOBYTES: "Kilobytes: 1,206 KB", BYTES: "Bytes: 1,234,567"}
+TWO_PANE_TEXT: str = "Two-pane selection: a click or an arrow key moves without selecting"
+TWO_PANE_TIP: str = "Insert or Space marks the file under the cursor, Ctrl+click marks too. An action works on the marked files, or on the file under the cursor when nothing is marked."
+NATURAL_TEXT: str = "Natural order of names: file2 before file10"
+NATURAL_TIP: str = "Folders always come first, ordered by their names."
+DRAG_MOVE_TEXT: str = "Offer Move Here after dragging with the right mouse button"
+DRAG_MOVE_TIP: str = "Dragging with the right mouse button ends with a small menu: Copy Here, Move Here or Cancel. Dragging with the left button is not changed."
 THUMBNAIL_MASK_TIP: str = "The names that get a thumbnail in the Thumbnails view; other files keep their normal icon. Empty: no thumbnails."
 
 
@@ -77,8 +91,20 @@ class SettingsDialog(QDialog):
         self.clean_up_button.setToolTip(CLEAN_UP_TIP)
         self.clean_up_button.setEnabled(clean_up is not None)
         self.clean_up_button.clicked.connect(self._clean_up)
+        self.key_set = QComboBox()
+        for key_set, label in KEY_SET_LABELS.items():
+            self.key_set.addItem(label, key_set)
+        self.key_set.setCurrentIndex(self.key_set.findData(settings.key_set))
+        self.key_set.setToolTip(KEY_SET_TIP)
+        self.title_path = QComboBox()
+        for place, label in TITLE_LABELS.items():
+            self.title_path.addItem(label, place)
+        self.title_path.setCurrentIndex(self.title_path.findData(settings.title_path))
+        self.title_path.setToolTip(TITLE_TIP)
         general = QFormLayout()
         general.addRow("Folder tree", self.tree_place)
+        general.addRow("Keys", self.key_set)
+        general.addRow("Title bar", self.title_path)
         general.addRow("Stored data", self.clean_up_button)
 
         # Panels
@@ -105,8 +131,25 @@ class SettingsDialog(QDialog):
         self.thumbnail_mask = QLineEdit(settings.thumbnail_mask)
         self.thumbnail_mask.setMaxLength(LONGEST_MASK)
         self.thumbnail_mask.setToolTip(THUMBNAIL_MASK_TIP)
+        self.two_pane = QCheckBox(TWO_PANE_TEXT)
+        self.two_pane.setChecked(settings.two_pane_selection)
+        self.two_pane.setToolTip(TWO_PANE_TIP)
+        self.size_format = QComboBox()
+        for style, label in SIZE_LABELS.items():
+            self.size_format.addItem(label, style)
+        self.size_format.setCurrentIndex(self.size_format.findData(settings.size_format))
+        self.natural_sort = QCheckBox(NATURAL_TEXT)
+        self.natural_sort.setChecked(settings.natural_sort)
+        self.natural_sort.setToolTip(NATURAL_TIP)
+        self.drag_move = QCheckBox(DRAG_MOVE_TEXT)
+        self.drag_move.setChecked(settings.drag_move)
+        self.drag_move.setToolTip(DRAG_MOVE_TIP)
         panels = QFormLayout()
         panels.addRow("", self.show_hidden)
+        panels.addRow("", self.two_pane)
+        panels.addRow("Sizes", self.size_format)
+        panels.addRow("", self.natural_sort)
+        panels.addRow("", self.drag_move)
         panels.addRow("A double-click on a file", self.double_click)
         panels.addRow("Refresh the server's folder", self.refresh)
         panels.addRow("", self.columns_per_tab)
@@ -248,4 +291,10 @@ class SettingsDialog(QDialog):
             thumbnail_megabytes=self.thumbnail_size.value(),
             thumbnail_mask=self.thumbnail_mask.text().strip(),
             toolbars=self.toolbars,
+            two_pane_selection=self.two_pane.isChecked(),
+            key_set=key_set if isinstance(key_set := self.key_set.currentData(), str) else CLASSIC_KEYS,
+            size_format=size if isinstance(size := self.size_format.currentData(), str) else SHORT,
+            natural_sort=self.natural_sort.isChecked(),
+            title_path=place if isinstance(place := self.title_path.currentData(), str) else TITLE_SHORT,
+            drag_move=self.drag_move.isChecked(),
         )

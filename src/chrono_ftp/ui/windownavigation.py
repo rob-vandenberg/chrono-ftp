@@ -28,9 +28,10 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windownavigation.py 0.0.37"
+__version__ = "windownavigation.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The keys of block FG are keys of the program: a bookmark can't take them
 # v0.0.37: F9, Shift+F4, Shift+F5, Alt+F6 and Ctrl+Alt+E are keys of the program: a bookmark can't take them (block FM)
 # v0.0.35: F1 is a key of the program: a bookmark can't take it (D-059)
 # v0.0.34: Initial: Ctrl+L, Ctrl+O, Ctrl+B and Ctrl+. on the focused side, the bookmark menus and keys, location profiles,
@@ -64,6 +65,28 @@ PROGRAM_KEYS: dict[str, str] = {  # the keys of the program itself: a bookmark c
     "Shift+F5": "Copy to",
     "Alt+F6": "Link",
     "Ctrl+Alt+E": "Open in the file manager",
+    "Ctrl+I": "Invert Selection",  # block FG
+    "Ctrl+Shift+A": "Clear Selection",
+    "Insert": "Mark and Move Down",
+    "Space": "marking in the two-pane selection mode",
+    "F6": "Move to the other side",
+    "Shift+F6": "Move on the server",
+    "Alt+F7": "Find Files",
+    "Ctrl+F": "Find Files",
+    "Ctrl+F3": "Sort by name",
+    "Ctrl+F4": "Sort by extension",
+    "Ctrl+F5": "Sort by date",
+    "Ctrl+F6": "Sort by size",
+    "Ctrl+F7": "Sort by rights",
+    "Ctrl+F8": "Sort by owner",
+    "Ctrl+F9": "Sort by group",
+    "Alt+Left": "Back",
+    "Alt+Right": "Forward",
+    "Ctrl+Shift+C": "Copy the Selected Names",
+    "Ctrl+Alt+H": "Show or Hide Hidden Files",
+    "Ctrl+R": "Refresh",
+    "Tab": "the next name that fits what was typed",
+    "Esc": "starting the typed name afresh",
 }
 SIDE_ACTIONS: tuple[tuple[str, str, str, str], ...] = (  # name after the side, text, icon, key
     ("open", "Open Folder…", "document-open-folder", "Ctrl+O"),

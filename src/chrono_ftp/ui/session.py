@@ -9,9 +9,10 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.39"
+__version__ = "session.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: Each tab can pause its automatic refresh (FG-15)
 # v0.0.39: Each tab keeps whether each side shows thumbnails (FQ-02)
 # v0.0.38: Each tab can keep its own sort order and column widths, and knows whether an automatic refresh is on its way (FP-01)
 # v0.0.34: Each tab keeps whether synchronized browsing is on, and the folder a step of it asked for on the server (FH-05); the folder
@@ -73,6 +74,7 @@ class Session:
     local_thumbnails: bool = False  # the thumbnail view of each side, per tab (FQ-02)
     remote_thumbnails: bool = False
     refresh_problem: str = ""  # what the last automatic refresh could not do: said once, not at every refresh
+    refresh_paused: bool = False  # Pause Automatic Refresh, from the menu of the tab (FG-15)
 
     @property
     def capabilities(self) -> Capabilities:

@@ -26,9 +26,10 @@ from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ssh_server
 from tests.ui.test_ui_sessions import connected, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_navigation.py 0.0.34"
+__version__ = "test_ui_navigation.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: F6 moves since block FG, so F10 is the free function key a bookmark may take
 # v0.0.34: Initial: the clickable path, Ctrl+L, Ctrl+O, Ctrl+B, the bookmarks window and keys, location profiles, Ctrl+., synchronized
 #          browsing, and starting folders (FH-01 to FH-06); the faults of review rounds 1 and 2, each with its own test
 
@@ -665,7 +666,7 @@ def test_a_key_lists_or_fields_need_is_never_a_bookmark_key(qtbot: QtBot, monkey
     assert ("Ctrl or Alt" in told.texts[0] and "F1 to F12" in told.texts[0]) or (key in PROGRAM_KEYS and "already opens" in told.texts[0])
 
 
-@pytest.mark.parametrize("key", ["Ctrl+1", "Alt+1", "Ctrl+Shift+J", "Alt+Shift+Left", "F6", "F12"])
+@pytest.mark.parametrize("key", ["Ctrl+1", "Alt+1", "Ctrl+Shift+J", "Alt+Shift+Left", "F10", "F12"])  # F6 moves since block FG
 def test_a_key_with_ctrl_or_alt_or_a_free_function_key_is_a_bookmark_key(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, key: str) -> None:
     told = Told(monkeypatch)
     dialog = BookmarksDialog(Places((Bookmark("one", "/1", LOCAL),)), "", PROGRAM_KEYS)

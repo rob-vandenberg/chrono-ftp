@@ -30,9 +30,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.39"
+__version__ = "windowtabs.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The menu of a tab pauses the automatic refresh of that tab and clears its cached listings (FG-15)
 # v0.0.39: A tab shows each side with or without thumbnails, as it left them (FQ-02)
 # v0.0.38: The menu of a tab opens Server Information, greyed while the tab is not connected (FP-03), and the Session Log (FP-02);
 #          closing a tab with running transfers asks unless switched off (FP-01); a tab keeps its own sort order and columns where
@@ -151,6 +152,8 @@ class TabsPart(WindowBase):
         log = QAction(icons.icon("view-list-text"), LOG_TEXT, menu)
         log.triggered.connect(lambda: self.show_session_log(session))
         menu.addAction(log)
+        menu.addSeparator()
+        self.tab_refresh_items(menu, session)  # Pause Automatic Refresh and Clear Cached Listings (FG-15)
         return menu
 
     def _show_tab_menu(self, place: QPoint) -> None:

@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.39; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.40; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -76,6 +76,7 @@ Each connection reports what it can do after connecting (D-016): the system, the
    13. `ui/windowproperties.py`: Properties and server actions (block FM): Properties on both sides, new folders with rights, new files, links, Duplicate and Copy To, my key and my password on the server, the file manager.
    14. `ui/windowprogram.py`: the program-wide part (block FP).
    15. `ui/windowlooks.py`: the looks (block FQ): file colours, the thumbnail view of each side and the toolbar menu.
+   16. `ui/windowselection.py`: selection and keys (block FG): the selection keys and menus, the two-pane mode, the key set, This File Only, the clipboard, the title bar, the right-button drag, pausing the refresh and clearing the listings.
 8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).
 
 ## 7. Transfers (block FB, version 0.0.12)
@@ -167,3 +168,14 @@ The modules of block FQ, one line each:
 8. `ui/toolbars.py`: every toolbar, its icon size and buttons, and the right-click menu (D-071).
 9. `ui/colourrules.py`: the Colours page of Settings (D-069).
 10. `ui/windowlooks.py`: the part of the main window that ties them together, per tab for the thumbnails (D-070).
+
+## 13. Selection and keys (block FG, version 0.0.40)
+
+The modules of block FG, one line each:
+
+1. `engine/listing.py`: the logic of a file list without a screen: type-ahead matching, the extension of a name, size formats, natural order, the selection totals, clipboard lines, the folders above a path and the folders of the history drop-down (D-072 to D-078).
+2. `config/settings.py`: the two-pane selection mode, the key set, the size format, natural sort, the path in the title bar and moving by a right-button drag, each checked when read (D-073 to D-079).
+3. `ui/filelist.py`: type-ahead, the selection actions, the two-pane mode and what an action acts on (`acting_entries`), sort keys, the column header menu, the hidden and filtered counts, the right-button drag and the right-click menu that waits for the button (D-072 to D-076, D-079).
+4. `ui/sidebar.py`: the history drop-down of Back and Forward, several steps at once, and the status line of a side with its counts (D-076, D-077).
+5. `ui/pathbar.py`: the drop-down of the folders above the path (D-077).
+6. `ui/windowselection.py`: the part of the main window that ties them together (D-073 to D-080).

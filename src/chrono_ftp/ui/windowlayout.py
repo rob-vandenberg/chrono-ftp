@@ -8,6 +8,7 @@ from PySide6.QtCore import QByteArray, QPoint
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu
 
 from chrono_ftp.config import settings as saved_settings
+from chrono_ftp.config.bookmarks import LOCAL, REMOTE
 from chrono_ftp.ui.filelist import FileList
 from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.queueview import LOWEST_HEIGHT
@@ -15,9 +16,11 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.39"
+__version__ = "windowlayout.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The menu of a list also moves to the other side and has This File Only, Select and Copy to Clipboard (block FG); it opens
+#          and goes again after use; the settings also apply block FG
 # v0.0.39: The settings also apply the looks: file colours, thumbnails and toolbars (block FQ)
 # v0.0.38: The settings also apply the session log and the automatic refresh (FP-01, FP-02); the settings window can open Clean Up
 #          Stored Data, and window places removed there are not written back on closing (FP-04)
@@ -40,6 +43,7 @@ class LayoutPart(WindowBase):
         self._apply_queue_settings()
         self._apply_program_settings()
         self._apply_looks()
+        self._apply_selection_settings()
 
     def _sized_parts(self) -> dict[str, Callable[[], QByteArray]]:
         return {
@@ -100,10 +104,16 @@ class LayoutPart(WindowBase):
         return menu
 
     def _local_menu_wanted(self, place: QPoint) -> None:
-        open_menu(self.menu_for(LOCAL_MENU), self.local_side.file_list.mapToGlobal(place))
+        menu = self.menu_for(LOCAL_MENU)
+        self._add_list_items(menu, LOCAL)  # block FG: move to the other side, This File Only, Select, Copy to Clipboard
+        open_menu(menu, self.local_side.file_list.mapToGlobal(place))
+        menu.deleteLater()
 
     def _remote_menu_wanted(self, place: QPoint) -> None:
-        open_menu(self.menu_for(REMOTE_MENU), self.remote_side.file_list.mapToGlobal(place))
+        menu = self.menu_for(REMOTE_MENU)
+        self._add_list_items(menu, REMOTE)
+        open_menu(menu, self.remote_side.file_list.mapToGlobal(place))
+        menu.deleteLater()
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self, self.clean_up_stored_data)

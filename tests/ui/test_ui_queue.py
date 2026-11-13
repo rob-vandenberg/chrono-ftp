@@ -32,9 +32,10 @@ from tests.ui.test_ui_sessions import connected, window
 from tests.ui.test_ui_transfers import settled
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_queue.py 0.0.38"
+__version__ = "test_ui_queue.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The menu of a tab also holds Pause Automatic Refresh and Clear Cached Listings (FG-15)
 # v0.0.38: The menu of a tab also holds Server Information and Session Log, after a separator (FP-02, FP-03)
 # v0.0.37: The menu of a tab also holds Install My Public Key, greyed with its reason on FTP, and no Change Password there (FM-09, FM-10)
 # v0.0.28: The menu of a tab says Edit settings…, has an icon and a normal width
@@ -952,7 +953,7 @@ def test_the_menu_of_a_tab_has_edit_which_opens_its_connection(qtbot: QtBot, win
         menu = window.tab_menu_for(window.tab_bar.tabRect(0).center())
         assert menu is not None
         actions = menu.actions()
-        assert [action.text() for action in actions] == ["Edit settings…", "Install My Public Key…", "", "Server Information…", "Session Log…"]  # Change Password needs a shell: not on FTP
+        assert [action.text() for action in actions] == ["Edit settings…", "Install My Public Key…", "", "Server Information…", "Session Log…", "", "Pause Automatic Refresh", "Clear Cached Listings"]  # Change Password needs a shell: not on FTP; FG-15
         assert not actions[1].isEnabled() and actions[1].toolTip()  # a key logs in over SSH: greyed with its reason
         assert not actions[0].icon().isNull()
         assert menu.minimumWidth() >= 10 * menu.fontMetrics().averageCharWidth()

@@ -34,3 +34,12 @@
 32. [[D-069]] File colours by mask
 33. [[D-070]] Thumbnails
 34. [[D-071]] Toolbars
+35. [[D-072]] Type-ahead
+36. [[D-073]] Selection keys, the two-pane selection mode and This File Only
+37. [[D-074]] The key set
+38. [[D-075]] Sizes, natural sort and the column header menu
+39. [[D-076]] The status line of a side
+40. [[D-077]] The history drop-down and the folders above the path
+41. [[D-078]] Clipboard copies and the path in the title bar
+42. [[D-079]] Dragging with the right mouse button
+43. [[D-080]] Pausing the automatic refresh and clearing cached listings

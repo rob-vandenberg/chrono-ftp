@@ -7,9 +7,10 @@ from PySide6.QtWidgets import QMenu
 from chrono_ftp.ui import theme
 
 # --- Version ------------------------------------------------------------
-__version__ = "menus.py 0.0.30"
+__version__ = "menus.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: A drop-down menu of a button (Back and Forward, FG-10; the folders above a path, FG-16) gets the same style and lets go of the keyboard
 # v0.0.30: Every menu gets the menu style here, not from the whole program
 # v0.0.29: Initial: a menu lets go of the keyboard once it is open (the trial on the tab menu, now for every menu)
 
@@ -19,6 +20,12 @@ def let_go_of_the_keyboard(menu: QMenu) -> None:
     window = menu.windowHandle()
     if window is not None and menu.isVisible():
         window.setKeyboardGrabEnabled(False)
+
+
+def as_drop_down(menu: QMenu) -> None:
+    """A menu Qt opens itself, as the drop-down of a button: the menu style, and it lets go of the keyboard as every menu does (D-052)."""
+    menu.setStyleSheet(theme.MENU_STYLE)
+    menu.aboutToShow.connect(lambda: QTimer.singleShot(0, lambda: let_go_of_the_keyboard(menu)))
 
 
 def open_menu(menu: QMenu, place: QPoint) -> None:

@@ -21,9 +21,10 @@ from chrono_ftp.ui.sidebar import FolderHistory
 from tests.test_engine import Scripted
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_filelist.py 0.0.37"
+__version__ = "test_ui_filelist.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The count line says the selected size of all, then the count of all (FG-13)
 # v0.0.37: The menus hold the actions of block FM; a new folder is named in the New folder window (FM-08)
 # v0.0.34: A typed path that is no folder is told calmly, never put back in silence (D-055)
 # v0.0.16: The splitter of the connections window is where it was after a restart
@@ -113,7 +114,7 @@ def test_rights_read_as_letters() -> None:
 
 
 def test_the_count_line_says_what_is_selected_of_what_is_here() -> None:
-    assert summary_text(ENTRIES[:1], ENTRIES) == f"{size_text(10)} of {size_text(311)} in 1 of 5"
+    assert summary_text(ENTRIES[:1], ENTRIES) == f"{size_text(10)} of {size_text(311)}, 1 of 5"  # FG-13
 
 
 def test_backspace_goes_up_and_only_where_there_is_an_up(qtbot: QtBot) -> None:

@@ -24,9 +24,10 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowprogram.py 0.0.38"
+__version__ = "windowprogram.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: A tab whose automatic refresh is paused is left alone (FG-15)
 # v0.0.38: Initial: block FP: the double-click on a file opens or transfers it, the right side refreshes itself every few seconds where
 #          chosen, a tab keeps its own sort order and columns where chosen (FP-01); the Session Log (FP-02), Server Information (FP-03)
 #          and Clean Up Stored Data (FP-04) windows; review: the automatic refresh waits while a drag runs from or onto either side,
@@ -98,7 +99,7 @@ class ProgramPart(WindowBase):
         """The folder on the right read again, quietly: never under an open question or menu, never twice at once, and a failure says so
         in the status bar only; a lost connection makes the tab grey as the regular check does (OR-3)."""
         shown = self.current()
-        if shown is None or not shown.alive or shown.connecting or shown.auto_refreshing or not shown.remote_folder:
+        if shown is None or not shown.alive or shown.connecting or shown.auto_refreshing or shown.refresh_paused or not shown.remote_folder:
             return
         session: Session = shown
         if QApplication.activeModalWidget() is not None or QApplication.activePopupWidget() is not None:

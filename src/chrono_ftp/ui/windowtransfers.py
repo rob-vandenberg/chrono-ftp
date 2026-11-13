@@ -24,9 +24,11 @@ from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, Windo
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtransfers.py 0.0.38"
+__version__ = "windowtransfers.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: A transfer can be a move from the start (F6, Move Here of a right-button drag): ticked in the transfer window, or asked
+#          first where that window is off (FG-04, FG-14)
 # v0.0.38: A drop asks first: through the transfer window, or a short question where that window is off; with the question switched off
 #          in Settings, a drop starts at once (FP-01)
 # v0.0.36: The question about a missing local folder is titled with the program's name, not the window title with its version (D-059)
@@ -55,6 +57,8 @@ IS_A_FILE_TEXT: str = "{folder} on the server of {connection} is a file, not a f
 DROP_TEXTS: tuple[str, str] = ("1 item", "{count} items")
 UPLOAD_DROP_TEXT: str = "Upload {items} to {folder} on the server?"
 DOWNLOAD_DROP_TEXT: str = "Download {items} to {folder} on this computer?"
+UPLOAD_MOVE_TEXT: str = "Move {items} to {folder} on the server? Each is removed from this computer once it arrived."
+DOWNLOAD_MOVE_TEXT: str = "Move {items} to {folder} on this computer? Each is removed from the server once it arrived."
 MISSING: str = "missing"
 A_FILE: str = "file"
 A_FOLDER: str = "folder"
@@ -151,29 +155,32 @@ class TransfersPart(WindowBase):
             self._offer(screen[0], [joined(screen[1], entry.name) for entry in screen[2]], target, False, after_a_drop)
 
     @override
-    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False, dropped: bool = False) -> None:
+    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False, dropped: bool = False, move: bool = False) -> None:
         """The transfer window first, unless the person switched it off (FB-09). sources: local paths for an upload, server paths for a
         download; target: the folder they go into. After a drop the window waits until the drop has finished, so the drag lets go of
         what it held first: what was dropped is taken now. A drop is confirmed by the transfer window, or by a question where that window
-        is off, unless the person switched that off too (FP-01)."""
+        is off, unless the person switched that off too (FP-01). move: F6 or Move Here (FG-04, FG-14): the move is ticked in the transfer
+        window; without that window a question always comes first, as the sources go."""
         if after_a_drop:
-            QTimer.singleShot(0, self, lambda: self._offer(session, sources, target, upload, dropped=True))  # with the window as context: never runs on a deleted window
+            QTimer.singleShot(0, self, lambda: self._offer(session, sources, target, upload, dropped=True, move=move))  # with the window as context: never runs on a deleted window
             return
         if not sources or session not in self.sessions:
             return
         never_again = False
         options, reasons = usable(self.settings.transfer_options, session.capabilities, session.connection.protocol, upload)  # what will happen
-        if dropped and self.settings.confirm_drop and not self.settings.show_transfer_window:
+        window_wanted = self.settings.show_transfer_window and (self.settings.confirm_drop or not dropped)
+        if not window_wanted and (move or (dropped and self.settings.confirm_drop)):
             count = DROP_TEXTS[0] if len(sources) == 1 else DROP_TEXTS[1].format(count=len(sources))
-            text = (UPLOAD_DROP_TEXT if upload else DOWNLOAD_DROP_TEXT).format(items=count, folder=fitting(shown_name(target), self))
+            texts = (UPLOAD_MOVE_TEXT, DOWNLOAD_MOVE_TEXT) if move else (UPLOAD_DROP_TEXT, DOWNLOAD_DROP_TEXT)
+            text = (texts[0] if upload else texts[1]).format(items=count, folder=fitting(shown_name(target), self))
             if QMessageBox.question(self, WINDOW_TITLE, box_text(text)) != QMessageBox.StandardButton.Yes:
                 return
-        if self.settings.show_transfer_window and (self.settings.confirm_drop or not dropped):
+        if window_wanted:
             names = [Path(source).name if upload else source.rsplit("/", 1)[-1] for source in sources]
             def browse(start: str) -> str | None:
                 return self._pick_remote_folder(session, start) if upload else self._pick_local_folder(start)
 
-            dialog = TransferDialog(upload, names, target, options, reasons, browse, self, session.capabilities.durable)
+            dialog = TransferDialog(upload, names, target, options, reasons, browse, self, session.capabilities.durable, move)
             accepted = dialog.exec() == QDialog.DialogCode.Accepted.value
             target, options, never_again, to_make = dialog.folder(), dialog.chosen_options(), dialog.never_again.isChecked(), dialog.to_make
             dialog.deleteLater()  # its parent is the window: without this every transfer would leave one behind
@@ -181,6 +188,7 @@ class TransfersPart(WindowBase):
                 return
         else:
             to_make = ""
+            options = replace(options, delete_source=move)  # asked above where it is a move
         chosen = options
 
         def start(make: str = to_make) -> None:

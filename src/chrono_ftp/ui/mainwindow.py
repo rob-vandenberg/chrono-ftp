@@ -34,15 +34,17 @@ from chrono_ftp.ui.windownavigation import NavigationPart
 from chrono_ftp.ui.windowqueue import QueuePart, stoppable
 from chrono_ftp.ui.windowproperties import NO_FILE_MANAGER_TEXT, PropertiesPart
 from chrono_ftp.ui.windowprogram import ProgramPart
+from chrono_ftp.ui.windowselection import SelectionPart
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowtabs import TabsPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.39"
+__version__ = "mainwindow.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: Block FG, selection and keys (windowselection.py); Shift+F6 moves on the server
 # v0.0.39: Block FQ, looks: the file colours, the thumbnail view of each side and the toolbar menu (windowlooks.py); closing stops the
 #          reading of thumbnails on this computer
 # v0.0.38: Block FP: the program-wide part (windowprogram.py): a double-click on a file opens or transfers it as Settings say, the
@@ -76,7 +78,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -195,6 +197,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.check_timer.start()
         self._build_program()  # a double-click on a file, the automatic refresh and the windows of block FP
         self._build_looks()  # file colours, thumbnails and the toolbar menu (block FQ)
+        self._build_selection()  # the selection, the keys and the menus of block FG
         self.settings = saved_settings.load()
         self._apply_settings()
         self._restore_sizes()
@@ -232,7 +235,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             ("edit", "Edit", "document-edit", "F4", self.edit),
             ("delete", "Delete", "edit-delete", "Del", self.delete),
             ("rename", "Rename", "edit-rename", "F2", self.rename),
-            ("move", "Move", "edit-cut", "", self.move_on_server),
+            ("move", "Move", "edit-cut", "Shift+F6", self.move_on_server),
             ("duplicate", "Duplicate…", "edit-copy", "", self.duplicate),
             ("copy_to", "Copy To…", "edit-copy", "Shift+F5", self.copy_to),
             ("properties", "Properties", "document-properties", "F9", self.remote_properties),
@@ -380,3 +383,4 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             if name in reasons:
                 action.setToolTip(reasons[name] if reasons[name] and not enabled[name] else action.text().removesuffix("…"))  # greyed with its reason (OR-20)
         self.update_queue_actions()
+        self._update_selection_actions()

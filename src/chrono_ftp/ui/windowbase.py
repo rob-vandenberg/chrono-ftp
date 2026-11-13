@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QSpinBox, QSplitter, QStatusBar, QToolBar, QToolButton, QWidget
+from PySide6.QtWidgets import QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QSpinBox, QSplitter, QStatusBar, QToolBar, QToolButton, QWidget
 
 from chrono_ftp.config.bookmarks import Places
 from chrono_ftp.config.settings import Settings
@@ -27,9 +27,10 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.39"
+__version__ = "windowbase.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: Block FG: the actions of each list (list_actions); the settings, the greyed state and the menu items of block FG; a transfer can be a move
 # v0.0.39: Block FQ: the thumbnails of each side and their thread on this computer, the toolbars; the looks applied, and entered per tab
 # v0.0.38: Block FP: the automatic refresh, the open Session Log and Server Information windows, the columns per tab, the program's
 #          settings applied, Clean Up, and whether the window places were cleaned up; _mark_lost and _offer are shared
@@ -133,6 +134,7 @@ class WindowBase(QMainWindow):
     remote_thumbnails: ThumbnailSide
     thumbnail_worker: Worker | None  # reads the pictures of this computer, made at its first use
     toolbars: Toolbars  # every toolbar and the choices for them (FQ-03)
+    list_actions: dict[str, QAction]  # the selection, clipboard, sort and walk keys of each list, and F6 (block FG)
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -299,5 +301,17 @@ class WindowBase(QMainWindow):
     def _mark_lost(self, session: Session) -> None:
         raise NotImplementedError
 
-    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False, dropped: bool = False) -> None:
+    def _offer(self, session: Session, sources: list[str], target: str, upload: bool, after_a_drop: bool = False, dropped: bool = False, move: bool = False) -> None:
+        raise NotImplementedError
+
+    def _apply_selection_settings(self) -> None:
+        raise NotImplementedError
+
+    def _update_selection_actions(self) -> None:
+        raise NotImplementedError
+
+    def _add_list_items(self, menu: QMenu, side_name: str) -> None:
+        raise NotImplementedError
+
+    def tab_refresh_items(self, menu: QMenu, session: Session) -> None:
         raise NotImplementedError

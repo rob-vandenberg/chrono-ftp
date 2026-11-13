@@ -8,15 +8,17 @@ from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, shown_name
 from chrono_ftp.engine import localfiles
 from chrono_ftp.engine.browsing import typed_local_path
-from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, button_row
-from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, FileList, mask_text, summary_text
+from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, SideStatus, action_bar, button_row
+from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, FileList, status_text
 from chrono_ftp.ui.pathbar import PathBar
-from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "localside.py 0.0.34"
+__version__ = "localside.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The status line shows the selection totals, or what was typed to find a name, with the hidden and filtered counts (FG-01,
+#          FG-09, FG-13); Back and Forward go several steps from their drop-down, which leaves out folders removed since (FG-10); a folder
+#          chosen in the drop-down of the path field opens (FG-16)
 # v0.0.34: The path is a row of clickable folder parts; a click on its empty part or Ctrl+L types a path, read as Ctrl+O reads it, and
 #          one that is no folder is told; a click on a part gives this side the focus (FH-01); the path bar keeps the real path; a move
 #          up because the folder went away is marked as the side's own (moved_by_itself), no step of the person
@@ -61,7 +63,8 @@ class LocalSide(QWidget):
         self.path_bar = PathBar()
         self.path_bar.setToolTip(PATH_TIP)
         self.path_line = self.path_bar.line  # the field to type a path in
-        self.count_label = plain_label()
+        self.status = SideStatus()
+        self.count_label = self.status.count_label
         self.history = FolderHistory()
         self.tree_model = QFileSystemModel(self)
         self.tree_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
@@ -87,13 +90,17 @@ class LocalSide(QWidget):
         layout.addLayout(button_row(self.navigation, self.actions_bar))
         layout.addWidget(self.path_bar)
         layout.addWidget(self.parts, 1)  # all the height goes to the lists
-        layout.addWidget(self.count_label)
+        layout.addWidget(self.status)
         selection = self.tree.selectionModel()
         if selection is not None:
             selection.currentChanged.connect(self._tree_moved)  # a click and the arrow keys alike
         self.file_list.opened.connect(self._entry_opened)  # a double click and Return alike
         self.file_list.selection_changed.connect(self.selection_changed)
         self.file_list.selection_changed.connect(self._show_count)
+        self.file_list.typing_changed.connect(self._show_count)
+        self.navigation.history_of = self._history_of
+        self.navigation.history_chosen.connect(self._history_chosen)
+        self.status.filtered_clicked.connect(self.filter_wanted)
         self.navigation.wanted.connect(self._button_pressed)
         self.path_line.returnPressed.connect(self._path_typed)
         self.path_bar.folder_chosen.connect(self._part_chosen)
@@ -170,7 +177,22 @@ class LocalSide(QWidget):
             self.go_to(path)
 
     def _show_count(self) -> None:
-        self.count_label.setText(summary_text(self.selected_entries(), self.file_list.visible_entries()) + mask_text(self.file_list.name_mask))
+        view = self.file_list
+        self.count_label.setText(status_text(view))
+        self.status.show_counts(view.hidden_count, view.dot_count, view.show_hidden, view.filtered_count, view.name_mask)
+
+    def _history_of(self, name: str) -> list[str]:
+        """The folders Back or Forward lead to; one removed since is no step, and goes from the history (FG-10)."""
+        self.history.behind = [folder for folder in self.history.behind if os.path.isdir(folder)]
+        self.history.ahead = [folder for folder in self.history.ahead if os.path.isdir(folder)]
+        return list(self.history.behind if name == "back" else self.history.ahead)
+
+    def _history_chosen(self, name: str, steps: int) -> None:
+        self._history_of(name)
+        if name == "back" and self.history.behind:
+            self.walk_to(self.history.back(self.folder, steps))
+        elif name == "forward" and self.history.ahead:
+            self.walk_to(self.history.forward(self.folder, steps))
 
     def refresh(self) -> None:
         self._read(True)
@@ -185,10 +207,11 @@ class LocalSide(QWidget):
         self.tree_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | hidden)
 
     def selected_entries(self) -> list[RemoteEntry]:
-        return self.file_list.selected_entries()
+        """What an action works on: the marked entries, or the focused one where that applies (FG-03, FG-05)."""
+        return self.file_list.acting_entries()
 
     def selected_paths(self) -> list[str]:
-        return [os.path.join(self.folder, entry.name) for entry in self.file_list.selected_entries()]
+        return [os.path.join(self.folder, entry.name) for entry in self.file_list.acting_entries()]
 
     def _read(self, same_folder: bool) -> None:
         entries = localfiles.read_folder(self.folder)

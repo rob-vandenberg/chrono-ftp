@@ -10,9 +10,11 @@ from chrono_ftp.core.masks import LONGEST_MASK
 from chrono_ftp.core.transferoptions import RESUME_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.39"
+__version__ = "settings.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: Selection and keys (block FG): the two-pane selection mode, the key set, the size format, natural sort, the path in the
+#          title bar and moving by a right-button drag; each checked on load, a bad one gives its standard
 # v0.0.39: Looks (block FQ): the rules of file colours (FQ-01); the largest file and the mask of thumbnails (FQ-02); which toolbars
 #          are hidden, their icon size and the buttons with their text under them (FQ-03); each checked on load, a bad one gives its standard
 # v0.0.38: Preferences (FP-01): the confirmations before closing a tab with running transfers, before deleting and before a drop; what
@@ -52,6 +54,17 @@ LARGE: str = "large"
 ICON_SIZES: tuple[str, ...] = (SMALL, MEDIUM, LARGE)
 MOST_TOOLBAR_NAMES: int = 200  # a list from a file is input (OR-15)
 LONGEST_TOOLBAR_NAME: int = 100
+CLASSIC_KEYS: str = "classic"  # the classic two-pane key set: Alt+F7 finds files, Ctrl+F4 sorts by extension (FG-04)
+FILE_MANAGER_KEYS: str = "file manager"  # the key set of a file manager: Ctrl+F finds files, Ctrl+F4 is free
+KEY_SETS: tuple[str, ...] = (CLASSIC_KEYS, FILE_MANAGER_KEYS)
+TITLE_SHORT: str = "short"  # the last folder of the right side after the name and version in the title bar (FG-12)
+TITLE_FULL: str = "full"
+TITLE_NONE: str = "none"
+TITLE_PATHS: tuple[str, ...] = (TITLE_SHORT, TITLE_FULL, TITLE_NONE)
+BYTES: str = "bytes"  # sizes as 1,234,567 (FG-06)
+KILOBYTES: str = "kilobytes"  # 1,206 KB
+SHORT: str = "short"  # 1.2 MB, as the lists showed sizes before block FG
+SIZE_FORMATS: tuple[str, ...] = (BYTES, KILOBYTES, SHORT)
 
 
 @dataclass(frozen=True)
@@ -87,6 +100,12 @@ class Settings:
     thumbnail_megabytes: int = THUMBNAIL_MEGABYTES
     thumbnail_mask: str = THUMBNAIL_MASK
     toolbars: ToolbarChoices = field(default_factory=ToolbarChoices)
+    two_pane_selection: bool = False  # a click or an arrow key moves without selecting; Insert or Space marks (FG-03)
+    key_set: str = CLASSIC_KEYS
+    size_format: str = SHORT  # how the lists show sizes (FG-06)
+    natural_sort: bool = True  # "file2" before "file10" (FG-08)
+    title_path: str = TITLE_SHORT  # the folder of the right side in the title bar (FG-12)
+    drag_move: bool = True  # a right-button drag offers Move Here (FG-14)
 
 
 def keep_done_valid(value: object) -> bool:
@@ -189,6 +208,11 @@ def load() -> Settings:
         return value if isinstance(value, int) and valid(value) else default  # a bad value gives its standard one (OR-15)
 
     click = data.get("double_click")
+
+    def choice(name: str, choices: tuple[str, ...], default: str) -> str:
+        value = data.get(name)
+        return value if isinstance(value, str) and value in choices else default
+
     return Settings(
         place if isinstance(place, str) and place in TREE_PLACES else TREE_LEFT,
         hidden if isinstance(hidden, bool) else True,
@@ -212,6 +236,12 @@ def load() -> Settings:
         thumbnail_megabytes=number("thumbnail_megabytes", thumbnail_megabytes_valid, THUMBNAIL_MEGABYTES),
         thumbnail_mask=mask if isinstance(mask := data.get("thumbnail_mask"), str) and len(mask) <= LONGEST_MASK else THUMBNAIL_MASK,
         toolbars=_toolbars(data.get("toolbars")),
+        two_pane_selection=flag("two_pane_selection", False),
+        key_set=choice("key_set", KEY_SETS, CLASSIC_KEYS),
+        size_format=choice("size_format", SIZE_FORMATS, SHORT),
+        natural_sort=flag("natural_sort", True),
+        title_path=choice("title_path", TITLE_PATHS, TITLE_SHORT),
+        drag_move=flag("drag_move", True),
     )
 
 

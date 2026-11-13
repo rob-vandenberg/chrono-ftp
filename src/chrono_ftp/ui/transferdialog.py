@@ -13,9 +13,10 @@ from chrono_ftp.ui.transferoptionsform import TransferOptionsDialog, summary_tex
 from chrono_ftp.ui.plaintext import box_text, fitting, plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "transferdialog.py 0.0.36"
+__version__ = "transferdialog.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The move can be ticked from the start: F6 and Move Here of a right-button drag (FG-04, FG-14)
 # v0.0.36: The question about a missing local folder can be given its title: the main window's title holds the version (D-059)
 # v0.0.12: Initial: the target folder with Browse, the options in one line, Transfer settings, move, and never show again (FB-09, FB-08);
 #          ~ is the home folder, a relative local path is refused, Browse starts at the real folder; a server folder is taken in its one
@@ -47,7 +48,7 @@ NOT_WHOLE_PATH_TEXT: str = "Please give the whole path of the folder, starting w
 class TransferDialog(QDialog):
     """browse: picks a target folder starting at the one given, or None when the person cancels."""
 
-    def __init__(self, upload: bool, names: list[str], target: str, options: TransferOptions, reasons: dict[str, str], browse: Callable[[str], str | None], parent: QWidget | None = None, durable: bool = True) -> None:
+    def __init__(self, upload: bool, names: list[str], target: str, options: TransferOptions, reasons: dict[str, str], browse: Callable[[str], str | None], parent: QWidget | None = None, durable: bool = True, move: bool = False) -> None:
         super().__init__(parent)
         self.upload: bool = upload
         self.options: TransferOptions = options
@@ -71,6 +72,7 @@ class TransferDialog(QDialog):
         self.settings_button.setToolTip("The settings for this transfer only; Settings keeps the ones every transfer starts with")
         self.move_tick = QCheckBox("Delete the source once it arrived")
         self.move_tick.setToolTip((MOVE_UP_TEXT if durable else MOVE_UP_UNFLUSHED_TEXT) if upload else MOVE_DOWN_TEXT)  # only what is checked
+        self.move_tick.setChecked(move)  # F6, or Move Here of a right-button drag (FG-04, FG-14)
         self.never_again = QCheckBox("Don't show this window again")
         self.never_again.setToolTip(NEVER_AGAIN_TEXT)
         self.to_make: str = ""  # a download folder here the person agreed to have made: made only when the transfer really starts

@@ -4,16 +4,19 @@ field to type a path in. The path of the side with the keyboard focus is highlig
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFocusEvent, QFont, QFontMetrics, QKeyEvent, QMouseEvent, QPainter, QPaintEvent
-from PySide6.QtWidgets import QLineEdit, QSizePolicy, QStackedLayout, QWidget
+from PySide6.QtGui import QAction, QColor, QFocusEvent, QFont, QFontMetrics, QKeyEvent, QMouseEvent, QPainter, QPaintEvent
+from PySide6.QtWidgets import QLineEdit, QMenu, QSizePolicy, QStackedLayout, QWidget
 
 from chrono_ftp.connections.base import shown_name
 from chrono_ftp.core import colours
+from chrono_ftp.ui import icons
+from chrono_ftp.ui.menus import open_menu
 
 # --- Version ------------------------------------------------------------
-__version__ = "pathbar.py 0.0.34"
+__version__ = "pathbar.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The field has a drop-down of the folders above the one shown, from its arrow or Alt+Down; a folder chosen there opens (FG-16)
 # v0.0.34: Initial: the folder parts, typing a path, the highlight of the focused side, shortened from the left (FH-01); typing goes on
 #          while another window or a menu has the focus; the field keeps the real path of the folder (also a name that is not valid
 #          UTF-8, and never a note), a refresh leaves what is typed alone, and the side's list takes the focus when typing ends; a
@@ -23,6 +26,7 @@ ELLIPSIS: str = "…"
 SEPARATOR: str = "/"
 PADDING: int = 6  # room at both ends of the row
 GAP: int = 2  # room around a separator
+PARENTS_TIP: str = "The folders above this one (Alt+Down)"
 KEPT_TYPING: tuple[Qt.FocusReason, ...] = (Qt.FocusReason.ActiveWindowFocusReason, Qt.FocusReason.PopupFocusReason)  # another window or a menu: the typing waits
 
 
@@ -164,6 +168,29 @@ class PathBar(QWidget):
         self.parts.part_clicked.connect(self._part_clicked)
         self.parts.empty_clicked.connect(self.start_typing)
         self.line.installEventFilter(self)
+        self.parents_action: QAction = self.line.addAction(icons.icon("arrow-down"), QLineEdit.ActionPosition.TrailingPosition)
+        self.parents_action.setToolTip(PARENTS_TIP)
+        self.parents_action.triggered.connect(self.show_parents)
+
+    def parents_menu(self) -> QMenu:
+        """The folder shown and every folder above it, nearest first (FG-16); a choice opens it."""
+        menu = QMenu(self)
+        for text, path in reversed(self.parts.parts):
+            entry = QAction(text.replace("&", "&&"), menu)
+            entry.setToolTip(shown_name(path))
+            entry.triggered.connect(lambda _checked=False, path=path: self._parent_chosen(path))
+            menu.addAction(entry)
+        return menu
+
+    def show_parents(self) -> None:
+        menu = self.parents_menu()
+        open_menu(menu, self.line.mapToGlobal(self.line.rect().bottomLeft()))
+        menu.deleteLater()
+
+    def _parent_chosen(self, path: str) -> None:
+        self.stop_typing()
+        if self.typing_allowed:
+            self.folder_chosen.emit(path)
 
     @property
     def typing(self) -> bool:
@@ -232,6 +259,9 @@ class PathBar(QWidget):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.line and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent) and event.key() == Qt.Key.Key_Escape:
             self.stop_typing()
+            return True
+        if watched is self.line and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent) and event.key() == Qt.Key.Key_Down and event.modifiers() == Qt.KeyboardModifier.AltModifier:
+            self.show_parents()
             return True
         if watched is self.line and event.type() == QEvent.Type.FocusOut and isinstance(event, QFocusEvent) and event.reason() not in KEPT_TYPING and self.typing:
             self.stop_typing()  # what was typed and never sent with Enter goes

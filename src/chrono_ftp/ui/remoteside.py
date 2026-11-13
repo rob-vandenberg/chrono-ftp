@@ -10,15 +10,16 @@ from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, joined, parent_of, shown_name
 from chrono_ftp.core import colours
 from chrono_ftp.engine.browsing import typed_remote_path
-from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, action_bar, button_row
-from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, mask_text, summary_text
+from chrono_ftp.ui.sidebar import FolderHistory, NavigationBar, SideStatus, action_bar, button_row
+from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, FileList, status_text
 from chrono_ftp.ui.pathbar import PathBar
-from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.39"
+__version__ = "remoteside.py 0.0.40"
 
 # --- Version history ----------------------------------------------------
+# v0.0.40: The status line shows the selection totals, or what was typed to find a name, with the hidden and filtered counts (FG-01,
+#          FG-09, FG-13); Back and Forward go several steps from their drop-down (FG-10); the folders the tree read can be forgotten (FG-15)
 # v0.0.39: The file colours show only while the connection is live, so a colour on this side always means a live one (FQ-01, OR-3)
 # v0.0.34: The path is a row of clickable folder parts, its hover text names user@host; a click on its empty part or Ctrl+L types a
 #          path, read as Ctrl+O reads it; a click on a part gives this side the focus (FH-01); the path bar keeps the real path; on a
@@ -75,11 +76,12 @@ class RemoteSide(QWidget):
         self.actions_bar = action_bar()
         self.path_bar = PathBar()
         self.path_line = self.path_bar.line  # the field to type a path in
-        self.count_label = plain_label()
+        self.status = SideStatus()
+        self.count_label = self.status.count_label
         self.history = FolderHistory()
         self.home_folder: str = ""
         self.folder: str = ""
-        self._walk: tuple[str, str] | None = None  # Back or Forward on its way: its folder; the history changes when the folder is there
+        self._walk: tuple[str, str, int] | None = None  # Back or Forward on its way: its folder and steps; the history changes when the folder is there
         self.show_hidden: bool = True
         self._filling: bool = False  # the tree moves by itself while it follows the list
         self.tree_model = QStandardItemModel(0, 1, self)
@@ -102,7 +104,7 @@ class RemoteSide(QWidget):
         layout.addLayout(button_row(self.navigation, self.actions_bar))
         layout.addWidget(self.path_bar)
         layout.addWidget(self.parts, 1)
-        layout.addWidget(self.count_label)
+        layout.addWidget(self.status)
         tree_selection = self.tree.selectionModel()
         if tree_selection is not None:
             tree_selection.currentChanged.connect(self._tree_moved)  # a click and the arrow keys alike
@@ -110,6 +112,10 @@ class RemoteSide(QWidget):
         self.file_list.opened.connect(self._entry_opened)
         self.file_list.selection_changed.connect(self.selection_changed)
         self.file_list.selection_changed.connect(self._show_count)
+        self.file_list.typing_changed.connect(self._show_count)
+        self.navigation.history_of = self._history_of
+        self.navigation.history_chosen.connect(self._history_chosen)
+        self.status.filtered_clicked.connect(self.filter_wanted)
         self.navigation.wanted.connect(self._button_pressed)
         self.path_line.returnPressed.connect(self._path_typed)
         self.path_bar.folder_chosen.connect(self._part_chosen)
@@ -147,12 +153,8 @@ class RemoteSide(QWidget):
             view.setPalette(palette)
 
     def _button_pressed(self, name: str) -> None:
-        if name == "back" and self.history.behind:
-            self._walk = ("back", self.history.behind[-1])
-            self.folder_requested.emit(self.history.behind[-1])
-        elif name == "forward" and self.history.ahead:
-            self._walk = ("forward", self.history.ahead[-1])
-            self.folder_requested.emit(self.history.ahead[-1])
+        if name in ("back", "forward"):
+            self._history_chosen(name, 1)
         elif name == "parent":
             self.folder_requested.emit(parent_of(self.folder))
         elif name == "root":
@@ -192,7 +194,23 @@ class RemoteSide(QWidget):
         self.path_bar.setToolTip(f"{login}\n{PATH_HINT}" if login else NOT_CONNECTED_TEXT)
 
     def _show_count(self) -> None:
-        self.count_label.setText(summary_text(self.selected_entries(), self.file_list.visible_entries()) + mask_text(self.file_list.name_mask) if self.folder else "")
+        view = self.file_list
+        self.count_label.setText(status_text(view) if self.folder else "")
+        self.status.show_counts(view.hidden_count, view.dot_count if self.folder else 0, view.show_hidden, view.filtered_count if self.folder else 0, view.name_mask)
+
+    def _history_of(self, name: str) -> list[str]:
+        return list(self.history.behind if name == "back" else self.history.ahead)
+
+    def _history_chosen(self, name: str, steps: int) -> None:
+        """A folder from the drop-down of Back or Forward: the history moves when the folder is there, as with one step (FG-10)."""
+        folders = self.history.behind if name == "back" else self.history.ahead
+        if 0 < steps <= len(folders):
+            self._walk = (name, folders[-steps], steps)
+            self.folder_requested.emit(folders[-steps])
+
+    def forget_tree(self) -> None:
+        """Clear Cached Listings (FG-15): the folders the tree read are forgotten; the folder shown is read again by the window."""
+        self.tree_model.removeRows(0, self.tree_model.rowCount())
 
     def clear(self) -> None:
         self.folder = ""
@@ -265,10 +283,11 @@ class RemoteSide(QWidget):
     def show_folder(self, path: str, entries: list[RemoteEntry]) -> None:
         same = path == self.folder
         if self.folder and not same:
-            if self._walk == ("back", path):
-                self.history.back(self.folder)
-            elif self._walk == ("forward", path):
-                self.history.forward(self.folder)
+            walk = self._walk
+            if walk is not None and walk[:2] == ("back", path):
+                self.history.back(self.folder, walk[2])
+            elif walk is not None and walk[:2] == ("forward", path):
+                self.history.forward(self.folder, walk[2])
             else:
                 self.history.left(self.folder)
         self._walk = None
@@ -288,7 +307,8 @@ class RemoteSide(QWidget):
         self._show_count()
 
     def selected_entries(self) -> list[RemoteEntry]:
-        return self.file_list.selected_entries()
+        """What an action works on: the marked entries, or the focused one where that applies (FG-03, FG-05)."""
+        return self.file_list.acting_entries()
 
     def _tree_moved(self, index: QModelIndex) -> None:
         place = index.data(PATH_ROLE)
