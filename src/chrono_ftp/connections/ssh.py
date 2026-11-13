@@ -15,15 +15,16 @@ import asyncssh
 
 from chrono_ftp.connections import sessionlog, trust
 from chrono_ftp.connections.passwordchange import PASSWD_COMMAND, AskedTooOften, PasswordAnswer, PasswordTalk, shown_answer
-from chrono_ftp.connections.base import FreeSpace, ServerInfo, log_listing, size_from, HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
+from chrono_ftp.connections.base import TOO_LARGE_TEXT, FreeSpace, KeepGoing, ServerInfo, log_listing, size_from, HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.logrules import DEBUG, NORMAL
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.38"
+__version__ = "ssh.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: A small file read into memory block by block, stopped as soon as it is told to, for the thumbnails (FQ-02)
 # v0.0.38: The session log: the login, every SFTP request and command with the server's answer, transfers, and at the debug level the
 #          encryption agreed and what the server offers; the passwords of the connection and of passwd are never written (FP-02); what
 #          the connection tells about itself, and the free space of a folder through statvfs@openssh.com or df (FP-03)
@@ -1071,6 +1072,41 @@ class SshConnection(RemoteConnection):
         self.log.answered(f"exit status {result.status}")
         self.log.answered_lines(result.output.splitlines())
         self.log.answered_lines(result.errors.splitlines())
+
+    @override
+    def read_file(self, path: str, most: int, keep_going: KeepGoing) -> bytes | None:
+        """Block by block, so a stop waits for one block at most; nothing is written on this computer."""
+        sftp = self._sftp_now()
+
+        async def read() -> bytes | None:
+            async with sftp.open(path, "rb") as remote:
+                parts: list[bytes] = []
+                place = 0
+                while keep_going():
+                    block = cast(bytes, await remote.read(BLOCK_SIZE, place))
+                    if not block:
+                        return b"".join(parts)
+                    place += len(block)
+                    if place > most:
+                        raise RemoteActionFailed(TOO_LARGE_TEXT.format(most=most))
+                    parts.append(block)
+                return None
+
+        self.log.asked(f"read {path} into memory, at most {most} bytes")
+        try:
+            found = self._await(read())
+        except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
+            raise ConnectionLost(LOST_TEXT) from error
+        except (asyncssh.Error, OSError) as error:
+            text = str(error) or "The server refused to read this file."
+            self.log.failed(text)
+            raise RemoteActionFailed(text) from error
+        except ChronoFtpError as error:
+            self.log.failed(str(error))
+            raise
+        self.log.answered("stopped" if found is None else f"{len(found)} bytes")
+        return found
 
     @override
     def server_info(self) -> ServerInfo:

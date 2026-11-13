@@ -31,3 +31,6 @@
 29. [[D-064]] Preferences
 30. [[D-067]] Clean up stored data
 31. [[D-068]] The licence and the update check
+32. [[D-069]] File colours by mask
+33. [[D-070]] Thumbnails
+34. [[D-071]] Toolbars

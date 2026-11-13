@@ -4,13 +4,17 @@ from dataclasses import asdict, dataclass, field
 from typing import cast
 
 from chrono_ftp.config.connections import config_folder, write_whole
+from chrono_ftp.core.filecolours import MOST_RULES, ColourRule, colour_valid
 from chrono_ftp.core.logrules import KEPT, OFF, SIZE_MEGABYTES, kept_valid, level_valid, size_valid
+from chrono_ftp.core.masks import LONGEST_MASK
 from chrono_ftp.core.transferoptions import RESUME_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.38"
+__version__ = "settings.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: Looks (block FQ): the rules of file colours (FQ-01); the largest file and the mask of thumbnails (FQ-02); which toolbars
+#          are hidden, their icon size and the buttons with their text under them (FQ-03); each checked on load, a bad one gives its standard
 # v0.0.38: Preferences (FP-01): the confirmations before closing a tab with running transfers, before deleting and before a drop; what
 #          a double-click on a file does; the automatic refresh of the right side; the sort order and columns per tab; the session log's
 #          level, size and kept logs (FP-02); each checked on load, and a file without them gives their standard values
@@ -38,6 +42,25 @@ TRANSFER: str = "transfer"  # a double-click on a file sends it to the other sid
 DOUBLE_CLICKS: tuple[str, ...] = (OPEN, TRANSFER)
 FEWEST_REFRESH_SECONDS: int = 5  # the automatic refresh of the right side asks the server no more often than this
 MOST_REFRESH_SECONDS: int = 3600
+THUMBNAIL_MEGABYTES: int = 5  # a larger file gets no thumbnail (FQ-02)
+FEWEST_THUMBNAIL_MEGABYTES: int = 1
+MOST_THUMBNAIL_MEGABYTES: int = 100
+THUMBNAIL_MASK: str = "*.jpg; *.jpeg; *.png; *.gif; *.bmp; *.webp; *.svg; *.ico"  # the pictures Chrono FTP can show
+SMALL: str = "small"  # the icon sizes of the toolbars (FQ-03)
+MEDIUM: str = "medium"  # the sizes the toolbars had before block FQ
+LARGE: str = "large"
+ICON_SIZES: tuple[str, ...] = (SMALL, MEDIUM, LARGE)
+MOST_TOOLBAR_NAMES: int = 200  # a list from a file is input (OR-15)
+LONGEST_TOOLBAR_NAME: int = 100
+
+
+@dataclass(frozen=True)
+class ToolbarChoices:
+    """What the person chose for the toolbars (FQ-03); the standard is every toolbar shown, medium icons, no text under a button that has none."""
+
+    hidden: tuple[str, ...] = ()  # the names of the hidden toolbars
+    icon_size: str = MEDIUM
+    text_under: tuple[str, ...] = ()  # "toolbar/button": the buttons with their text under the icon
 
 
 @dataclass(frozen=True)
@@ -60,6 +83,10 @@ class Settings:
     log_level: int = OFF  # the session log (FP-02); off until the person switches it on
     log_size_megabytes: int = SIZE_MEGABYTES
     logs_kept: int = KEPT
+    file_colours: tuple[ColourRule, ...] = ()  # the first rule that fits a name colours its row (FQ-01); none at first
+    thumbnail_megabytes: int = THUMBNAIL_MEGABYTES
+    thumbnail_mask: str = THUMBNAIL_MASK
+    toolbars: ToolbarChoices = field(default_factory=ToolbarChoices)
 
 
 def keep_done_valid(value: object) -> bool:
@@ -72,6 +99,37 @@ def at_once_valid(value: object) -> bool:
 
 def refresh_valid(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and (value == 0 or FEWEST_REFRESH_SECONDS <= value <= MOST_REFRESH_SECONDS)
+
+
+def thumbnail_megabytes_valid(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and FEWEST_THUMBNAIL_MEGABYTES <= value <= MOST_THUMBNAIL_MEGABYTES
+
+
+def _file_colours(data: object) -> tuple[ColourRule, ...]:
+    """Each rule on its own: one that is damaged is left out, the others stay in their order (OR-15)."""
+    found: list[ColourRule] = []
+    for item in cast(list[object], data)[:MOST_RULES] if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        values = cast(dict[str, object], item)
+        mask, text, background = values.get("mask"), values.get("text", ""), values.get("background", "")
+        if isinstance(mask, str) and mask.strip() and len(mask) <= LONGEST_MASK and isinstance(text, str) and isinstance(background, str) and colour_valid(text) and colour_valid(background):
+            found.append(ColourRule(mask, text, background))
+    return tuple(found)
+
+
+def _names(data: object) -> tuple[str, ...]:
+    if not isinstance(data, list):
+        return ()
+    names = {item for item in cast(list[object], data)[:MOST_TOOLBAR_NAMES] if isinstance(item, str) and 0 < len(item) <= LONGEST_TOOLBAR_NAME}
+    return tuple(sorted(names))
+
+
+def _toolbars(data: object) -> ToolbarChoices:
+    """Each value on its own: a bad one gives its standard value (OR-15). A name the program does not know is kept and does nothing."""
+    found = cast(dict[str, object], data) if isinstance(data, dict) else {}
+    size = found.get("icon_size")
+    return ToolbarChoices(_names(found.get("hidden")), size if isinstance(size, str) and size in ICON_SIZES else MEDIUM, _names(found.get("text_under")))
 
 
 def _transfer_options(data: object) -> TransferOptions:
@@ -150,6 +208,10 @@ def load() -> Settings:
         log_level=number("log_level", level_valid, OFF),
         log_size_megabytes=number("log_size_megabytes", size_valid, SIZE_MEGABYTES),
         logs_kept=number("logs_kept", kept_valid, KEPT),
+        file_colours=_file_colours(data.get("file_colours")),
+        thumbnail_megabytes=number("thumbnail_megabytes", thumbnail_megabytes_valid, THUMBNAIL_MEGABYTES),
+        thumbnail_mask=mask if isinstance(mask := data.get("thumbnail_mask"), str) and len(mask) <= LONGEST_MASK else THUMBNAIL_MASK,
+        toolbars=_toolbars(data.get("toolbars")),
     )
 
 

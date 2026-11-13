@@ -12,9 +12,10 @@ from chrono_ftp.core.logrules import DETAILED
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "base.py 0.0.38"
+__version__ = "base.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: A small file read into memory, never onto the disk, that stops as soon as it is told to: the thumbnails (FQ-02)
 # v0.0.38: Every connection has its session log, a quiet one unless it makes its own (FP-02); what a connection tells about itself for
 #          the server information window, and the free space of a folder where the server tells it (FP-03)
 # v0.0.37: What a connection can do without a shell: copy a file on the server, make a symbolic or hard link; a link made, a file
@@ -56,6 +57,9 @@ NO_COPY_TEXT: str = "This server can't copy a file on itself. You can download i
 HALF_COPY_LEFT_TEXT: str = "The unfinished copy {path} could not be removed; you can delete it once the connection is back."
 NO_ATOMIC_TEXT: str = "This server can't replace a name in one step."
 NO_PASSWORD_TEXT: str = "The password can be changed only on an SFTP connection with a shell."
+NO_READ_TEXT: str = "This connection can't read a file into memory."
+TOO_LARGE_TEXT: str = "This file is larger than {most} bytes, so it was not read."
+KeepGoing = Callable[[], bool]  # asked before every block: False stops the work at once
 Progress = Callable[[int], None]  # bytes done since the last call; it may raise to stop the transfer
 Limit = int | Callable[[], int]  # KB per second, 0 for none; a function is asked again for every block, so a change takes effect at once
 LIMIT_STEP_SECONDS: float = 0.2  # a pause for the limit is cut in steps this long, so a stop or a new limit is never kept waiting
@@ -486,6 +490,11 @@ class RemoteConnection(ABC):
     def change_password(self, old: str, new: str) -> PasswordAnswer:
         """The password of this login changed on the server, by its own passwd (FM-10). Neither password is ever written anywhere."""
         raise RemoteActionFailed(NO_PASSWORD_TEXT)
+
+    def read_file(self, path: str, most: int, keep_going: KeepGoing) -> bytes | None:
+        """A small file read into memory, never onto the disk (FQ-02): its bytes, or None when keep_going said stop before the end. A file
+        larger than most bytes is refused (RemoteActionFailed) once that many have come, whatever the listing said of its size."""
+        raise RemoteActionFailed(NO_READ_TEXT)
 
     def server_info(self) -> ServerInfo:
         """What the connection tells about itself (FP-03); a connection that knows nothing of it tells nothing."""

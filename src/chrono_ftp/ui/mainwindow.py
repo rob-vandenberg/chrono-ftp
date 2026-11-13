@@ -29,6 +29,7 @@ from chrono_ftp.ui.windowedit import EditPart
 from chrono_ftp.ui.windowfolders import FoldersPart
 from chrono_ftp.ui.windowlayout import LayoutPart
 from chrono_ftp.ui.windowlocal import LocalPart
+from chrono_ftp.ui.windowlooks import LooksPart
 from chrono_ftp.ui.windownavigation import NavigationPart
 from chrono_ftp.ui.windowqueue import QueuePart, stoppable
 from chrono_ftp.ui.windowproperties import NO_FILE_MANAGER_TEXT, PropertiesPart
@@ -39,9 +40,11 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.38"
+__version__ = "mainwindow.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: Block FQ, looks: the file colours, the thumbnail view of each side and the toolbar menu (windowlooks.py); closing stops the
+#          reading of thumbnails on this computer
 # v0.0.38: Block FP: the program-wide part (windowprogram.py): a double-click on a file opens or transfers it as Settings say, the
 #          automatic refresh, the Session Log, Server Information and Clean Up windows (FP-01 to FP-04)
 # v0.0.37: Block FM: Properties (F9), New File (Shift+F4), Link (Alt+F6) on both sides, Open in File Manager (Ctrl+Alt+E) on the left,
@@ -73,7 +76,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -191,6 +194,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.check_timer.timeout.connect(self.check_connections)
         self.check_timer.start()
         self._build_program()  # a double-click on a file, the automatic refresh and the windows of block FP
+        self._build_looks()  # file colours, thumbnails and the toolbar menu (block FQ)
         self.settings = saved_settings.load()
         self._apply_settings()
         self._restore_sizes()
@@ -304,6 +308,8 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.bridge.close()  # from here on nothing happens in this window: what its threads still answer goes nowhere
         if self.local_worker is not None:
             self.local_worker.stop()
+        if self.thumbnail_worker is not None:
+            self.thumbnail_worker.stop()
         self._save_sizes()
         if self.countdown is not None:
             self.countdown.reject()

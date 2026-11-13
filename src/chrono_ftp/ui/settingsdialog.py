@@ -1,19 +1,23 @@
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 
-from chrono_ftp.config.settings import DOUBLE_CLICKS, FEWEST_AT_ONCE, FEWEST_REFRESH_SECONDS, MOST_AT_ONCE, MOST_KEEP_DONE_SECONDS, MOST_REFRESH_SECONDS, OPEN, TRANSFER, TREE_ABOVE, TREE_HIDDEN, TREE_LEFT, Settings
+from chrono_ftp.config.settings import DOUBLE_CLICKS, FEWEST_AT_ONCE, FEWEST_REFRESH_SECONDS, FEWEST_THUMBNAIL_MEGABYTES, MOST_AT_ONCE, MOST_KEEP_DONE_SECONDS, MOST_REFRESH_SECONDS, MOST_THUMBNAIL_MEGABYTES, OPEN, TRANSFER, TREE_ABOVE, TREE_HIDDEN, TREE_LEFT, Settings
 from chrono_ftp.connections.base import shown_name
 from chrono_ftp.connections.sessionlog import log_folder
+from chrono_ftp.core.masks import LONGEST_MASK
 from chrono_ftp.core.logrules import DEBUG, DETAILED, LEAST_SIZE_MEGABYTES, MOST_KEPT, MOST_SIZE_MEGABYTES, NORMAL, OFF
+from chrono_ftp.ui.colourrules import ColourRulesEditor
 from chrono_ftp.ui.queueview import AT_ONCE_TEXT, AT_ONCE_TIP
 from chrono_ftp.ui.transferoptionsform import RIGHTS_INCOMPLETE_TEXT, TransferOptionsForm
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.38"
+__version__ = "settingsdialog.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: Looks (block FQ): a Colours page with the rules of file colours (FQ-01); the largest file and the names that get a thumbnail
+#          on the Panels page (FQ-02); the toolbar choices, made on the toolbars themselves, stay as they are (FQ-03)
 # v0.0.38: Preferences (FP-01): pages on the left (General, Panels, Transfers, Queue, Confirmations, Log), each choice on its page with
 #          the values it had; the confirmations, the double-click, the automatic refresh and the columns per tab; the session log's
 #          level, size and kept logs (FP-02); Clean Up Stored Data on the General page (FP-04); the last connection stays as it was
@@ -24,7 +28,7 @@ __version__ = "settingsdialog.py 0.0.38"
 # v0.0.5: Initial: where the folder tree is (the owner)
 
 WINDOW_TITLE: str = "Settings"
-PAGES: tuple[str, ...] = ("General", "Panels", "Transfers", "Queue", "Confirmations", "Log")
+PAGES: tuple[str, ...] = ("General", "Panels", "Colours", "Transfers", "Queue", "Confirmations", "Log")
 TREE_LABELS: dict[str, str] = {TREE_LEFT: "To the left of the file list", TREE_ABOVE: "Above the file list", TREE_HIDDEN: "Hidden"}
 GO_ON_TEXT: str = "Go on with the next item"
 PAUSE_TEXT: str = "Pause the queue"
@@ -46,6 +50,8 @@ LOG_TIP: str = "A log per connection of what Chrono FTP asks the server and what
 CLEAN_UP_TEXT: str = "Clean Up Stored Data…"
 CLEAN_UP_TIP: str = "See what Chrono FTP keeps on this computer, and remove what you choose"
 PAGE_LIST_CHARACTERS: int = 14
+THUMBNAIL_SIZE_TIP: str = "A larger file gets no thumbnail, so a picture is never a long wait. Thumbnails are kept in memory only."
+THUMBNAIL_MASK_TIP: str = "The names that get a thumbnail in the Thumbnails view; other files keep their normal icon. Empty: no thumbnails."
 
 
 class SettingsDialog(QDialog):
@@ -54,6 +60,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(WINDOW_TITLE)
         self.last_connection: str = settings.last_connection  # not shown here, and kept as it is
+        self.toolbars = settings.toolbars  # chosen on the toolbars themselves (FQ-03), and kept as they are
         self.clean_up_callback: Callable[[], bool] | None = clean_up
         self.pages = QStackedWidget()
         self.page_list = QListWidget()
@@ -90,11 +97,26 @@ class SettingsDialog(QDialog):
         self.columns_per_tab = QCheckBox("Each tab keeps its own sort order and columns")
         self.columns_per_tab.setChecked(settings.columns_per_tab)
         self.columns_per_tab.setToolTip(COLUMNS_TIP)
+        self.thumbnail_size = QSpinBox()
+        self.thumbnail_size.setRange(FEWEST_THUMBNAIL_MEGABYTES, MOST_THUMBNAIL_MEGABYTES)
+        self.thumbnail_size.setSuffix(" MB")
+        self.thumbnail_size.setValue(settings.thumbnail_megabytes)
+        self.thumbnail_size.setToolTip(THUMBNAIL_SIZE_TIP)
+        self.thumbnail_mask = QLineEdit(settings.thumbnail_mask)
+        self.thumbnail_mask.setMaxLength(LONGEST_MASK)
+        self.thumbnail_mask.setToolTip(THUMBNAIL_MASK_TIP)
         panels = QFormLayout()
         panels.addRow("", self.show_hidden)
         panels.addRow("A double-click on a file", self.double_click)
         panels.addRow("Refresh the server's folder", self.refresh)
         panels.addRow("", self.columns_per_tab)
+        panels.addRow("Thumbnails of files up to", self.thumbnail_size)
+        panels.addRow("Thumbnails of the names", self.thumbnail_mask)
+
+        # Colours
+        self.file_colours = ColourRulesEditor(settings.file_colours)
+        colour_page = QVBoxLayout()
+        colour_page.addWidget(self.file_colours)
 
         # Transfers
         self.transfer_options = TransferOptionsForm()
@@ -166,7 +188,7 @@ class SettingsDialog(QDialog):
         log.addRow("Older logs kept", self.logs_kept)
         log.addRow("Written to", self.log_place)
 
-        for layout in (general, panels, transfers, queue, confirmations, log):
+        for layout in (general, panels, colour_page, transfers, queue, confirmations, log):
             page = QWidget()
             holder = QVBoxLayout(page)
             box = QGroupBox(PAGES[self.pages.count()])
@@ -222,4 +244,8 @@ class SettingsDialog(QDialog):
             log_level=level if isinstance(level, int) else OFF,
             log_size_megabytes=self.log_size.value(),
             logs_kept=self.logs_kept.value(),
+            file_colours=self.file_colours.chosen(),
+            thumbnail_megabytes=self.thumbnail_size.value(),
+            thumbnail_mask=self.thumbnail_mask.text().strip(),
+            toolbars=self.toolbars,
         )

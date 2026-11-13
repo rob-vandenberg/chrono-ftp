@@ -16,9 +16,10 @@ from chrono_ftp.ui.pathbar import PathBar
 from chrono_ftp.ui.plaintext import plain_label
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.34"
+__version__ = "remoteside.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: The file colours show only while the connection is live, so a colour on this side always means a live one (FQ-01, OR-3)
 # v0.0.34: The path is a row of clickable folder parts, its hover text names user@host; a click on its empty part or Ctrl+L types a
 #          path, read as Ctrl+O reads it; a click on a part gives this side the focus (FH-01); the path bar keeps the real path; on a
 #          dropped tab the path can't be typed in or clicked, its hover text says to reconnect
@@ -136,6 +137,7 @@ class RemoteSide(QWidget):
             background, text = colour, colours.readable_text(colour)
             selected, on_selected = text, background
         self.file_list.setAlternatingRowColors(colour == "")  # as on the left side
+        self.file_list.set_file_colours(self.file_list.files.colour_rules, colour is not None)  # file colours only on a live connection (OR-3)
         for view in (self.tree, self.file_list):
             palette = QPalette(view.palette())
             palette.setColor(QPalette.ColorRole.Base, QColor(background))

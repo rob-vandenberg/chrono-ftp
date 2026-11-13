@@ -21,13 +21,16 @@ from chrono_ftp.ui.localside import LocalSide
 from chrono_ftp.ui.queueview import QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
 from chrono_ftp.ui.session import EditedFile, Session
+from chrono_ftp.ui.thumbnails import ThumbnailSide
+from chrono_ftp.ui.toolbars import Toolbars
 from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.38"
+__version__ = "windowbase.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: Block FQ: the thumbnails of each side and their thread on this computer, the toolbars; the looks applied, and entered per tab
 # v0.0.38: Block FP: the automatic refresh, the open Session Log and Server Information windows, the columns per tab, the program's
 #          settings applied, Clean Up, and whether the window places were cleaned up; _mark_lost and _offer are shared
 # v0.0.37: Block FM: Properties, New File, Link and the file manager on the left; Properties, Duplicate, Copy to, New File and Link on
@@ -126,6 +129,10 @@ class WindowBase(QMainWindow):
     log_windows: dict[str, QWidget]  # the open Session Log windows, by connection name (FP-02)
     info_windows: dict[str, QWidget]  # the open Server Information windows, by connection name (FP-03)
     sizes_forgotten: bool  # the window places were cleaned up: closing writes none (FP-04)
+    local_thumbnails: ThumbnailSide  # the thumbnail view of each side (FQ-02)
+    remote_thumbnails: ThumbnailSide
+    thumbnail_worker: Worker | None  # reads the pictures of this computer, made at its first use
+    toolbars: Toolbars  # every toolbar and the choices for them (FQ-03)
 
     def _ask_text(self, title: str, label: str, start: str = "") -> str | None:
         text, given = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, start)
@@ -266,6 +273,12 @@ class WindowBase(QMainWindow):
         raise NotImplementedError
 
     def _apply_settings(self) -> None:
+        raise NotImplementedError
+
+    def _apply_looks(self) -> None:
+        raise NotImplementedError
+
+    def _enter_looks(self, session: Session | None) -> None:
         raise NotImplementedError
 
     def _leave_columns(self, session: Session | None) -> None:

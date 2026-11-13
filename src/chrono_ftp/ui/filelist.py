@@ -1,18 +1,23 @@
 import datetime
 import fnmatch
 import os
+from collections.abc import Callable
 from typing import cast, override
 
-from PySide6.QtCore import QAbstractTableModel, QByteArray, QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, QPersistentModelIndex, QPoint, Qt, QUrl, Signal
-from PySide6.QtGui import QDrag, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent
+from PySide6.QtCore import QAbstractTableModel, QByteArray, QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, QPersistentModelIndex, QPoint, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QDrag, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import QAbstractItemView, QStyle, QTreeView, QWidget
 
 from chrono_ftp.connections.base import RemoteEntry, shown_name
+from chrono_ftp.core.filecolours import ColourRule, rule_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.38"
+__version__ = "filelist.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: File colours by mask: the first rule that fits colours the text and background of a row, the selection drawn over it
+#          (FQ-01); the thumbnail view: tall rows with a small picture of each image file where it has arrived, and the rows in view
+#          (FQ-02)
 # v0.0.38: Whether a drag runs from this list or over it, so the automatic refresh waits for its end (FP-01)
 # v0.0.6: Initial: the one file list of both sides: sorting, selection kept, drag and drop, names that aren't valid UTF-8
 
@@ -29,6 +34,8 @@ DRAG_MARK: bytes = str(os.getpid()).encode()  # a drag from another Chrono FTP i
 FROM_LOCAL: str = "local"
 FROM_REMOTE: str = "remote"
 FROM_OUTSIDE: str = "outside"  # the file manager
+THUMBNAIL_PIXELS: int = 64  # the height of a row, and the largest side of a picture, in the thumbnail view (FQ-02)
+ThumbnailOf = Callable[[RemoteEntry], QIcon | None]
 
 
 def size_text(size: int) -> str:
@@ -96,6 +103,10 @@ class FileModel(QAbstractTableModel):
         self.icons: tuple[QIcon, QIcon, QIcon] = (folder_icon, file_icon, link_icon)
         self.rows: list[RemoteEntry | None] = []
         self.sorted_by: tuple[int, Qt.SortOrder] = (0, Qt.SortOrder.AscendingOrder)
+        self.colour_rules: tuple[ColourRule, ...] = ()  # the person's file colours (FQ-01)
+        self.colours_shown: bool = True  # off on the right side while no connection is live: a colour there means a live one (OR-3)
+        self._rule_of: dict[tuple[str, bool], ColourRule | None] = {}  # the rule of each name, found once per list of rules
+        self.thumbnail_of: ThumbnailOf | None = None  # the thumbnail view is on: the picture of a file, None while it has none (FQ-02)
 
     @override
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
@@ -137,8 +148,35 @@ class FileModel(QAbstractTableModel):
         if role == ENTRY_ROLE:
             return entry
         if role == Qt.ItemDataRole.DecorationRole and index.column() == 0 and entry is not None:
+            picture = self.thumbnail_of(entry) if self.thumbnail_of is not None and not entry.is_folder else None
+            if picture is not None:
+                return picture
             return self.icons[2] if entry.is_link else self.icons[0] if entry.is_folder else self.icons[1]
+        if role in (Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.BackgroundRole) and entry is not None:
+            rule = self.rule_of(entry)
+            if rule is None:
+                return None
+            colour = rule.text if role == Qt.ItemDataRole.ForegroundRole else rule.background
+            return QBrush(QColor(colour)) if colour else None  # selected, a row shows the selection's colours over this (FQ-01)
         return None
+
+    def rule_of(self, entry: RemoteEntry) -> ColourRule | None:
+        """The file colour of a row: the first rule that fits its name (FQ-01)."""
+        if not self.colours_shown or not self.colour_rules:
+            return None
+        found = (entry.name, entry.is_folder)
+        if found not in self._rule_of:
+            self._rule_of[found] = rule_for(self.colour_rules, entry.name, entry.is_folder)
+        return self._rule_of[found]
+
+    def set_colours(self, rules: tuple[ColourRule, ...], shown: bool) -> None:
+        if rules == self.colour_rules and shown == self.colours_shown:
+            return
+        self.colour_rules = rules
+        self.colours_shown = shown
+        self._rule_of.clear()
+        if self.rows:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self.rows) - 1, self.column_count - 1))
 
     def _in_order(self, rows: list[RemoteEntry | None]) -> list[RemoteEntry | None]:
         column, order = self.sorted_by
@@ -150,6 +188,7 @@ class FileModel(QAbstractTableModel):
 
     def set_rows(self, rows: list[RemoteEntry | None]) -> None:
         self.beginResetModel()
+        self._rule_of.clear()  # only the names of this folder are kept
         self.rows = self._in_order(rows)
         self.endResetModel()
 
@@ -170,6 +209,7 @@ class FileList(QTreeView):
 
     opened = Signal(object)  # an entry; None for the parent entry
     selection_changed = Signal()
+    view_moved = Signal()  # other rows came into view: scrolled, resized, or another folder (FQ-02)
     dropped = Signal(str, object, object)  # where it came from, the paths of an outside drag, the name of the folder it fell on ("" for this folder)
 
     def __init__(self, column_count: int, kind: str, accepts: frozenset[str], parent: QWidget | None = None) -> None:
@@ -202,6 +242,7 @@ class FileList(QTreeView):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.activated.connect(self._activated)
+        self.verticalScrollBar().valueChanged.connect(self._scrolled)
         selection = self.selectionModel()
         if selection is not None:
             selection.selectionChanged.connect(self.selection_changed)
@@ -241,6 +282,48 @@ class FileList(QTreeView):
         self.name_mask = mask
         self._fill({entry.name for entry in self.selected_entries()}, None)
 
+    def set_file_colours(self, rules: tuple[ColourRule, ...], shown: bool = True) -> None:
+        """The person's file colours (FQ-01); shown False leaves every row as its side shows it."""
+        self.files.set_colours(rules, shown)
+
+    @property
+    def thumbnails_on(self) -> bool:
+        return self.files.thumbnail_of is not None
+
+    def set_thumbnails(self, thumbnail_of: ThumbnailOf | None) -> None:
+        """The thumbnail view (FQ-02): tall rows, a file's picture where it has one; None goes back to the plain list."""
+        if thumbnail_of is self.files.thumbnail_of:
+            return
+        self.files.thumbnail_of = thumbnail_of
+        self.setIconSize(QSize(THUMBNAIL_PIXELS, THUMBNAIL_PIXELS) if thumbnail_of is not None else QSize())
+        self.view_moved.emit()
+
+    def thumbnail_arrived(self, name: str) -> None:
+        """A picture came: its row is drawn again; anything else stays exactly as it is."""
+        index = self.index_of(name)
+        if index.isValid():
+            self.files.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
+
+    def entries_in_view(self) -> list[RemoteEntry]:
+        """The entries whose rows can be seen now, top to bottom."""
+        rows = self.files.rows
+        viewport = self.viewport()
+        if not rows or viewport.height() <= 0:
+            return []
+        top = self.indexAt(QPoint(1, 1)).row()
+        bottom = self.indexAt(QPoint(1, max(viewport.height() - 2, 1))).row()
+        first = top if top >= 0 else 0
+        last = bottom if bottom >= 0 else len(rows) - 1
+        return [entry for entry in rows[first : last + 1] if entry is not None]
+
+    def _scrolled(self, _value: int) -> None:
+        self.view_moved.emit()
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.view_moved.emit()
+
     def visible_entries(self) -> list[RemoteEntry]:
         return [row for row in self.files.rows if row is not None]
 
@@ -264,6 +347,7 @@ class FileList(QTreeView):
                 chosen.select(self.files.index(row, 0), self.files.index(row, self.files.column_count - 1))
         selection.select(chosen, QItemSelectionModel.SelectionFlag.Select)
         self.selection_changed.emit()
+        self.view_moved.emit()
 
     def _activated(self, index: QModelIndex) -> None:
         self.opened.emit(self.files.rows[index.row()])

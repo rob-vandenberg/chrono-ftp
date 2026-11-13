@@ -15,9 +15,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.38"
+__version__ = "windowlayout.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: The settings also apply the looks: file colours, thumbnails and toolbars (block FQ)
 # v0.0.38: The settings also apply the session log and the automatic refresh (FP-01, FP-02); the settings window can open Clean Up
 #          Stored Data, and window places removed there are not written back on closing (FP-04)
 # v0.0.31: The settings window keeps the last connection, which it does not show (D-053)
@@ -38,6 +39,7 @@ class LayoutPart(WindowBase):
             side.set_show_hidden(self.settings.show_hidden)
         self._apply_queue_settings()
         self._apply_program_settings()
+        self._apply_looks()
 
     def _sized_parts(self) -> dict[str, Callable[[], QByteArray]]:
         return {

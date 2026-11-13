@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.38; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.39; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -74,6 +74,8 @@ Each connection reports what it can do after connecting (D-016): the system, the
    11. `ui/windowtransfers.py`: upload, download, drag and drop, the speed limit and stop;
    12. `ui/windownavigation.py`: navigation (block FH): Ctrl+L, Ctrl+O, Ctrl+B and Ctrl+. on the focused side, the bookmark menus and keys, location profiles, synchronized browsing and the last folders written back;
    13. `ui/windowproperties.py`: Properties and server actions (block FM): Properties on both sides, new folders with rights, new files, links, Duplicate and Copy To, my key and my password on the server, the file manager.
+   14. `ui/windowprogram.py`: the program-wide part (block FP).
+   15. `ui/windowlooks.py`: the looks (block FQ): file colours, the thumbnail view of each side and the toolbar menu.
 8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).
 
 ## 7. Transfers (block FB, version 0.0.12)
@@ -150,3 +152,18 @@ The modules of block FP, one line each:
 7. `engine/updatecheck.py`: the newest version tag on GitHub against the running version; `core/appinfo.py` also gives the repository and the licence text (D-068).
 8. `ui/logwindow.py`, `ui/serverinfodialog.py`, `ui/cleanupdialog.py`, `ui/aboutdialog.py`: the Session Log, Server Information, Clean Up and About windows; the update check runs on a thread of its own (D-019).
 9. `ui/windowprogram.py`: the part of the main window that ties them together, with the double-click on a file, the automatic refresh and the columns per tab (D-064).
+
+## 12. Looks (block FQ, version 0.0.39)
+
+The modules of block FQ, one line each:
+
+1. `core/masks.py`: whether a name fits a mask such as `*.log; *.tmp`, the one function block FD's mask engine will replace (D-069).
+2. `core/filecolours.py`: a rule of file colours and the first rule that fits a name; `config/settings.py` keeps the rules, the thumbnail limit and mask, and the toolbar choices, each checked when read (D-069 to D-071).
+3. `engine/thumbnails.py`: which files in view get a thumbnail, the key a picture is kept under, and a file of this computer read into memory, stopped when told (D-070).
+4. `connections/base.py`, `ssh.py`, `ftp.py`: `read_file`, a small file read into memory block by block, stopped when told; on FTP the data connection is ended and its answer read (D-070).
+5. `engine/jobs.py`: a worker tells whether it is idle and whether a call waits behind the one that runs, so a thumbnail gives way at once (D-070).
+6. `ui/filelist.py`: the rows in a rule's colours, the selection over them, and the thumbnail view with the rows in view (D-069, D-070).
+7. `ui/thumbnails.py`: the thumbnails of one side, fetched one at a time through a source the window gives, kept in memory (D-070).
+8. `ui/toolbars.py`: every toolbar, its icon size and buttons, and the right-click menu (D-071).
+9. `ui/colourrules.py`: the Colours page of Settings (D-069).
+10. `ui/windowlooks.py`: the part of the main window that ties them together, per tab for the thumbnails (D-070).

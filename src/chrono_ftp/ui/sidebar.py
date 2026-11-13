@@ -5,9 +5,10 @@ from PySide6.QtWidgets import QHBoxLayout, QToolBar, QWidget
 from chrono_ftp.ui import icons
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebar.py 0.0.34"
+__version__ = "sidebar.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: A Thumbnails button, switched on and off (FQ-02)
 # v0.0.34: A Bookmarks button, whose menu adds, opens and organizes the bookmarks of the side (FH-02)
 # v0.0.23: The icons of the side bars are 24 pixels
 # v0.0.7: One compact row of buttons per side, icons only with the text on hover
@@ -24,7 +25,9 @@ BUTTONS: tuple[tuple[str, str, str], ...] = (
     ("bookmarks", "Bookmarks: add this folder, open a folder, organize", "bookmarks"),
     ("refresh", "Refresh", "view-refresh"),
     ("filter", "Filter", "view-filter"),
+    ("thumbnails", "Thumbnails: small pictures of image files", "view-preview"),
 )
+SWITCHES: tuple[str, ...] = ("thumbnails",)  # buttons that stay pressed while their view is on
 
 
 def _compact(bar: QToolBar) -> None:
@@ -72,6 +75,7 @@ class NavigationBar(QToolBar):
         for name, text, icon_name in BUTTONS:
             action = QAction(icons.icon(icon_name), text, self)
             action.setToolTip(text)
+            action.setCheckable(name in SWITCHES)
             action.triggered.connect(lambda _checked=False, name=name: self.wanted.emit(name))
             self.addAction(action)
             self.buttons[name] = action
@@ -80,7 +84,7 @@ class NavigationBar(QToolBar):
         self.buttons["back"].setEnabled(usable and bool(history.behind))
         self.buttons["forward"].setEnabled(usable and bool(history.ahead))
         self.buttons["parent"].setEnabled(usable and has_parent)
-        for name in ("root", "home", "bookmarks", "refresh", "filter"):
+        for name in ("root", "home", "bookmarks", "refresh", "filter", "thumbnails"):
             self.buttons[name].setEnabled(usable)
 
 

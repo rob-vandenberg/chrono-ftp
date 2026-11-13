@@ -19,7 +19,7 @@ from chrono_ftp.connections import sessionlog
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.logrules import DEBUG, DETAILED, NORMAL, OFF, LogRules
 from chrono_ftp.engine import cleanup, updatecheck
-from chrono_ftp.transfers.queue import Job, State
+from chrono_ftp.transfers.queue import ENDED, Job, State
 from chrono_ftp.ui.aboutdialog import CURRENT_TEXT, AboutWindow
 from chrono_ftp.ui.cleanupdialog import CleanupWindow
 from chrono_ftp.ui.logwindow import OFF_TEXT, LogWindow
@@ -32,9 +32,11 @@ from tests.fakeservers import PASSWORD, Passwd, USER, ssh_server
 from tests.ui.test_ui_sessions import connected, names_on_the_right, select, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_program.py 0.0.38"
+__version__ = "test_ui_program.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: The Colours page follows Panels (FQ-01); a test that transfers waits until its job has ended, not only until the file is
+#          there, so closing its window never finds a transfer still finishing (AGENTS.md 4.4.4)
 # v0.0.38: Initial: block FP in the window (FP-01 to FP-06); review: the automatic refresh writes a summary to the log and waits for a
 #          drag; the Log window takes new lines in batches
 
@@ -61,10 +63,10 @@ def test_the_settings_window_has_its_pages_and_keeps_every_choice(qtbot: QtBot) 
     chosen = saved_settings.Settings(tree_place=saved_settings.TREE_ABOVE, show_hidden=False, transfers_at_once=3, last_connection="Shop", confirm_delete=False, double_click=saved_settings.TRANSFER, refresh_seconds=60, columns_per_tab=True, log_level=NORMAL, log_size_megabytes=7, logs_kept=1)
     dialog = SettingsDialog(chosen)
     qtbot.addWidget(dialog)
-    assert [dialog.page_list.item(row).text() for row in range(dialog.page_list.count())] == ["General", "Panels", "Transfers", "Queue", "Confirmations", "Log"]
-    assert list(PAGES) == ["General", "Panels", "Transfers", "Queue", "Confirmations", "Log"]
+    assert [dialog.page_list.item(row).text() for row in range(dialog.page_list.count())] == ["General", "Panels", "Colours", "Transfers", "Queue", "Confirmations", "Log"]
+    assert list(PAGES) == ["General", "Panels", "Colours", "Transfers", "Queue", "Confirmations", "Log"]
     dialog.show_page("Confirmations")
-    assert dialog.pages.currentIndex() == 4
+    assert dialog.pages.currentIndex() == 5
     assert dialog.chosen() == chosen  # unchanged, every value comes back as it was, also the last connection it does not show
 
 
@@ -153,6 +155,8 @@ def test_a_drop_asks_through_a_question_where_the_transfer_window_is_off(qtbot: 
         monkeypatch.setattr(TransferDialog, "exec", no_question)  # the transfer window does not come either
         window._offer(session, [str(tmp_path / "a.txt")], "/", True, after_a_drop=True)
         qtbot.waitUntil(lambda: (root / "a.txt").exists())
+        qtbot.waitUntil(lambda: bool(window.queue.jobs) and all(job.state in ENDED for job in window.queue.jobs))  # the job, not only its file
+        assert all(job.state == State.DONE for job in window.queue.jobs)
 
 
 def test_a_double_click_on_a_server_file_downloads_it_where_that_is_chosen(qtbot: QtBot, window: MainWindow, tmp_path: Path) -> None:
@@ -170,6 +174,8 @@ def test_a_double_click_on_a_server_file_downloads_it_where_that_is_chosen(qtbot
         entry = next(entry for entry in window.remote_side.file_list.files.rows if entry is not None and entry.name == "a.txt")
         window.remote_side.file_opened.emit(entry)
         qtbot.waitUntil(lambda: (here / "a.txt").exists() and (here / "a.txt").read_text("utf-8") == "content")
+        qtbot.waitUntil(lambda: bool(window.queue.jobs) and all(job.state in ENDED for job in window.queue.jobs))  # the job, not only its file
+        assert all(job.state == State.DONE for job in window.queue.jobs)
         assert not window.edited  # transferred, not opened for editing
 
 

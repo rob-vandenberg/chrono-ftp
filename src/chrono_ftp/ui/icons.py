@@ -8,9 +8,10 @@ from PySide6.QtSvg import QSvgRenderer
 from chrono_ftp.core import colours
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.38"
+__version__ = "icons.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: Thumbnails (view-preview) (FQ-02); also drawn at the small and large sizes of the toolbars (FQ-03)
 # v0.0.38: Server Information (documentinfo) and Session Log (view-list-text) (FP-02, FP-03)
 # v0.0.37: Open in the file manager (folder-open) and Install my public key (database-change-key) (FM-09, FM-11)
 # v0.0.34: Add a bookmark, open a folder, and the link of synchronized browsing (FH-02, FH-05)
@@ -24,6 +25,7 @@ __version__ = "icons.py 0.0.38"
 ICON_FOLDER: Path = Path(__file__).resolve().parent / "resources" / "icons"
 APPLICATION_ICON_FILE: Path = Path(__file__).resolve().parent / "resources" / "chrono-ftp.svg"  # the program icon
 ICON_NAMES: tuple[str, ...] = (
+    "view-preview",
     "documentinfo",
     "view-list-text",
     "folder-sync",
@@ -76,7 +78,7 @@ ICON_NAMES: tuple[str, ...] = (
     "folder-open",
     "database-change-key",
 )
-SIZES: tuple[int, ...] = (22, 24, 33, 44, 48)  # the sizes in use, and sharp on a scaled screen
+SIZES: tuple[int, ...] = (14, 18, 22, 24, 27, 33, 36, 44, 48, 72)  # the sizes in use, also of small and large toolbars, and sharp on a scaled screen
 _TEXT_COLOUR: re.Pattern[str] = re.compile(r"(\.ColorScheme-Text\s*\{\s*color:\s*)#[0-9a-fA-F]{3,6}")
 
 

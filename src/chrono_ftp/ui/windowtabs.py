@@ -30,9 +30,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.38"
+__version__ = "windowtabs.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: A tab shows each side with or without thumbnails, as it left them (FQ-02)
 # v0.0.38: The menu of a tab opens Server Information, greyed while the tab is not connected (FP-03), and the Session Log (FP-02);
 #          closing a tab with running transfers asks unless switched off (FP-01); a tab keeps its own sort order and columns where
 #          that is chosen
@@ -358,6 +359,7 @@ class TabsPart(WindowBase):
         self.shown = session
         if session is None:
             self.remote_side.clear()
+            self._enter_looks(None)
             self._tab_shown()
             self.update_actions()
             return
@@ -371,6 +373,7 @@ class TabsPart(WindowBase):
         if session.remote_folder:
             self.remote_side.show_folder(session.remote_folder, list(session.entries))
         self._enter_columns(session)
+        self._enter_looks(session)
         self._tab_shown()
         self.update_actions()
 

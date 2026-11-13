@@ -17,15 +17,17 @@ from typing import BinaryIO, cast, override
 from cryptography import x509
 
 from chrono_ftp.connections import sessionlog, trust
-from chrono_ftp.connections.base import FreeSpace, ServerInfo, log_listing, HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
+from chrono_ftp.connections.base import TOO_LARGE_TEXT, FreeSpace, KeepGoing, ServerInfo, log_listing, HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.logrules import DEBUG
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, NoMoreLogins, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.38"
+__version__ = "ftp.py 0.0.39"
 
 # --- Version history ----------------------------------------------------
+# v0.0.39: A small file read into memory, its data connection ended as soon as it is told to stop or the file is too large, for the
+#          thumbnails (FQ-02)
 # v0.0.38: The session log: every command and every reply of the control connection, the PASS line never with its password, each
 #          listing's entries at the detailed level and the data connections at the debug level (FP-02); what the connection tells about
 #          itself (greeting, SYST, TLS and its certificate, FEAT), and the free space of a folder through AVBL where FEAT offers it (FP-03)
@@ -848,6 +850,49 @@ class FtpConnection(RemoteConnection):
             self._data(fetch, True)
         if got != wanted:
             raise RemoteActionFailed(SHORT_RANGE_TEXT)
+
+    @override
+    def read_file(self, path: str, most: int, keep_going: KeepGoing) -> bytes | None:
+        """Over the control connection of this login, while it holds nothing else: a stop or a file that is too large ends the data
+        connection after the block that is there, and the server's answer to that is read, so the next command is answered rightly."""
+        parts: list[bytes] = []
+        got = 0
+        ended = ""  # why the data connection was ended early: "stopped" or "too large"
+
+        def take(block: bytes) -> None:
+            nonlocal got, ended
+            got += len(block)
+            if got > most:
+                ended = "too large"
+                raise _RangeDone
+            parts.append(block)
+            if not keep_going():
+                ended = "stopped"
+                raise _RangeDone
+
+        def fetch() -> None:
+            nonlocal ended
+            session = self._session()
+            if not keep_going():
+                ended = "stopped"
+                return
+            try:
+                session.retrbinary(f"RETR {path}", take, BLOCK_SIZE)
+            except _RangeDone:
+                try:
+                    session.voidresp()  # the answer to the data connection we ended, whatever it is
+                except (ftplib.error_temp, ftplib.error_perm, ftplib.error_reply):
+                    pass
+                except (OSError, EOFError, ftplib.error_proto):
+                    self._start_afresh()  # no clear answer: the next call logs in again
+
+        with self._lock:
+            if not keep_going():
+                return None
+            self._data(fetch)
+        if ended == "too large":
+            raise RemoteActionFailed(TOO_LARGE_TEXT.format(most=most))
+        return None if ended == "stopped" else b"".join(parts)
 
     @override
     def server_info(self) -> ServerInfo:

@@ -58,8 +58,8 @@ One milestone per block of the private `FEATURES.md` (D-001, OR-13), in the orde
 8. FH, navigation, medium: done in 0.0.34. A clickable path, bookmarks, location profiles, the same folder on the other side, synchronized browsing, and remembered starting folders (D-055 to D-058).
 9. FM, Properties and server actions, large: done in 0.0.37. Properties on both sides and for several files, a rights editor, owner and group lists, links, Duplicate and Copy To on the server, a new file, a new folder with rights, installing your key, changing the server password, the file manager, and the terminal in the folder shown (D-060 to D-063).
 10. FP, program-wide, medium: done in 0.0.38. Preferences with pages and confirmations, a session log, a server information window with free space, cleaning up stored data, the About window (0.0.35, D-059) with its licence, and an update check on request (D-064 to D-068).
-11. FQ, looks, small: next. File colours by mask, thumbnails, and a customisable toolbar.
-12. FG, selection and keys, large: open. Type-ahead, selection keys, a keyboard-driven two-pane mode, the full key set, size format, column menu, natural sort, path in the title, clipboard copies, and selection totals.
+11. FQ, looks, small: done in 0.0.39. File colours by mask, thumbnails, and a customisable toolbar (D-069 to D-071).
+12. FG, selection and keys, large: next. Type-ahead, selection keys, a keyboard-driven two-pane mode, the full key set, size format, column menu, natural sort, path in the title, clipboard copies, and selection totals.
 13. FD, masks, large: open. One filter engine for include and exclude by name, path, size and date; text mode with line-ending conversion; file name conversion; transfer presets; selecting by mask; a filter window with history.
 14. FE, hashes and sizes without a shell, small: open. Checksums over SFTP and FTP; size and checksum tabs in Properties; folder sizes in the file list.
 15. FF, synchronize, huge: open. The full synchronize: directions, mirror, criteria, a checklist before applying, moved files, deletes, masks, through the queue, remembered settings, and two local folders.
