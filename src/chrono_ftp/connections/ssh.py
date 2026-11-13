@@ -12,18 +12,29 @@ from pathlib import Path
 from typing import BinaryIO, cast, override
 
 import asyncssh
+import asyncssh.sftp
+from asyncssh.constants import FXP_EXTENDED_REPLY, FXP_STATUS
+from asyncssh.packet import SSHPacket, String, UInt32, UInt64
 
 from chrono_ftp.connections import sessionlog, trust
 from chrono_ftp.connections.passwordchange import PASSWD_COMMAND, AskedTooOften, PasswordAnswer, PasswordTalk, shown_answer
-from chrono_ftp.connections.base import TOO_LARGE_TEXT, FreeSpace, KeepGoing, ServerInfo, log_listing, size_from, HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
+from chrono_ftp.connections.base import FIND_PRINTF, CHECKSUM_ALGORITHMS, NO_CHECKSUM_TEXT, TOO_LARGE_TEXT, FreeSpace, KeepGoing, ServerInfo, log_listing, size_from, HALF_COPY_LEFT_TEXT, NO_ATOMIC_TEXT, NO_COPY_TEXT, NO_HARD_LINKS_TEXT, NO_PASSWORD_TEXT, LOCAL_READ_TEXT, LOCAL_WRITE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, SHORT_TEXT, Capabilities, CommandResult, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_now, limit_pauses, safe_name
 from chrono_ftp.core.connection import Connection
+from chrono_ftp.core.hashes import CHECKSUM_HEX_LENGTHS
 from chrono_ftp.core.logrules import DEBUG, NORMAL
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.39"
+__version__ = "ssh.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The checksum of a file through SFTP's check-file extension, where the server names it in its hello; the checksum tools, awk
+#          and a find that prints sizes are detected with the other tools; a long command on the server is ended when told to stop
+#          (FE-01, FE-02, FE-03); review round 1: a check-file request stops as soon as it is told to; checksums run on an SFTP channel
+#          of their own over the same login, which a stop closes, so the tab's requests never wait behind the server's hashing; review
+#          round 2: a stop ends the whole command on the server, its process group, not only its shell; a channel closed after its
+#          connection leaves nothing behind; review round 3: the group is ended only where the shell printed itself as its leader, a
+#          plain number above 1, in the kill form dash, bash and busybox take
 # v0.0.39: A small file read into memory block by block, stopped as soon as it is told to, for the thumbnails (FQ-02)
 # v0.0.38: The session log: the login, every SFTP request and command with the server's answer, transfers, and at the debug level the
 #          encryption agreed and what the server offers; the passwords of the connection and of passwd are never written (FP-02); what
@@ -68,9 +79,9 @@ HIGHEST_TIME: int = 2**32  # SFTP carries a date as an unsigned 32-bit number of
 IN_FLIGHT_BYTES: int = 4 * 1024 * 1024  # as asyncssh's own copy: about this much travels at once, in 16 to 128 requests
 FEWEST_REQUESTS: int = 16
 MOST_REQUESTS: int = 128
-TOOLS: tuple[str, ...] = ("rsync", "find", "chown", "chmod", "cp", "mv", "rm", "sha256sum", "passwd", "ln", "df")
+TOOLS: tuple[str, ...] = ("rsync", "find", "chown", "chmod", "cp", "mv", "rm", "sha256sum", "passwd", "ln", "df", "md5sum", "sha1sum", "sha224sum", "sha384sum", "sha512sum", "awk")
 PROBE_MARK: str = "chrono-ftp-probe"
-PROBE: str = f"echo {PROBE_MARK}; uname -s; id -u; for tool in " + " ".join(TOOLS) + "; do command -v $tool >/dev/null 2>&1 && echo tool:$tool; done; exit 0"
+PROBE: str = f"echo {PROBE_MARK}; uname -s; id -u; for tool in " + " ".join(TOOLS) + f"; do command -v $tool >/dev/null 2>&1 && echo tool:$tool; done; find . -maxdepth 0 -printf '' >/dev/null 2>&1 && echo tool:{FIND_PRINTF}; exit 0"
 PROBE_SECONDS: float = 15.0
 CHANGED_TEXT: str = "This server's host key has changed since you trusted it, so Chrono FTP did not connect. If you know why, remove its line from known_hosts."
 NOT_REACHED_TEXT: str = "The server could not be reached. Please check the host and the port."
@@ -89,6 +100,19 @@ PASSWORD_NO_SESSION_TEXT: str = "The server opened no session to run passwd, so 
 PASSWORD_FAILED_TEXT: str = "The talk with passwd broke off ({reason}), so the server did not confirm a change; your stored password was left as it was."
 PASSWORD_UNKNOWN_TEXT: str = "The server did not say whether the password changed, and it may have taken the new one. Your stored password was left as it was; if the old password is refused at the next login, type the new one there."
 LOST_ERRORS: tuple[type[BaseException], ...] = (asyncssh.ConnectionLost, asyncssh.SFTPConnectionLost, asyncssh.SFTPNoConnection, ConnectionError)
+CHECK_FILE_EXTENSIONS: frozenset[str] = frozenset({"check-file", "check-file-name"})  # the draft names the first; some servers the second
+CHECK_FILE_REQUEST: bytes = b"check-file-name"
+HELLO_EXTENSIONS: str = "_chrono_ftp_hello_extensions"  # where a client handler keeps every extension name of the server's hello
+STOP_STEP_SECONDS: float = 0.2  # a long command looks this often whether it is to stop
+PID_MARK: str = "chrono-ftp-pid:"  # the first line of a stoppable command: the number of its shell and of that shell's process group
+GROUP_LINE: str = (  # the shell's own number ($$) and its process group, by ps or else /proc; the group may be empty where neither tells
+    'chrono_ftp_group=$(ps -o pgid= -p $$ 2>/dev/null); [ -n "$chrono_ftp_group" ] || chrono_ftp_group=$(cut -d" " -f5 /proc/$$/stat 2>/dev/null); '
+    f'printf \'{PID_MARK}%s %s\\n\' "$$" "$chrono_ftp_group"; '
+)
+PROCESS_NUMBER: re.Pattern[str] = re.compile(r"[1-9][0-9]{0,9}")
+ODD_CHECKSUM_TEXT: str = "The server's answer to the checksum request was not a checksum."
+OTHER_CHECKSUM_TEXT: str = "This server computes {used} checksums over SFTP, not {wanted}."
+NO_CHANNEL_TEXT: str = "The server opened no further SFTP channel."
 
 
 DF_LINE: re.Pattern[str] = re.compile(r"\s([0-9]{1,18})\s+([0-9]{1,18})\s+([0-9]{1,18})\s+[0-9]{1,3}%\s")  # blocks, used, available, capacity
@@ -113,6 +137,46 @@ def space_from_df(output: str) -> FreeSpace | None:
         return None
     total, available = int(found.group(1)), int(found.group(3))
     return FreeSpace(size_from(available * DF_BLOCK), size_from(total * DF_BLOCK), "df")
+
+
+def _remember_hello_extensions() -> None:
+    """asyncssh reads every extension the server names in its hello and keeps only those it uses itself; check-file is not among them.
+    Each name passes its log step, so that step also keeps the names on the handler, where connect reads them (FE-01, D-016). Where a
+    later asyncssh has no such step, no extension beyond its own is seen as offered: nothing is assumed."""
+    handler_class = asyncssh.sftp.SFTPClientHandler
+    original = cast("Callable[[object, list[tuple[bytes, bytes]]], None] | None", getattr(handler_class, "_log_extensions", None))
+    if original is None or getattr(original, HELLO_EXTENSIONS, False):
+        return
+
+    def remembering(handler: object, extensions: list[tuple[bytes, bytes]]) -> None:
+        setattr(handler, HELLO_EXTENSIONS, tuple(name.decode("ascii", "replace") for name, _data in extensions))
+        original(handler, extensions)
+
+    setattr(remembering, HELLO_EXTENSIONS, True)
+    setattr(handler_class, "_log_extensions", remembering)
+
+
+_remember_hello_extensions()
+
+
+def hello_extensions(sftp: object) -> tuple[str, ...]:
+    """The extension names of the server's hello, as the server wrote them."""
+    names: object = getattr(getattr(sftp, "_handler", None), HELLO_EXTENSIONS, ())
+    return tuple(name for name in cast(tuple[object, ...], names) if isinstance(name, str)) if isinstance(names, tuple) else ()
+
+
+def group_kill_command(line: str) -> str:
+    """The command that ends every process of a stopped command on the server, from the first line its shell printed: only where that
+    shell is the leader of its own process group (its number and its group are one), and that number is a plain decimal above 1, so
+    the stop never reaches another group, every process of the login (-1) or the group of the killing shell (0). Empty otherwise: the
+    stop then sends the SSH signal and closes the channel alone (NEVER DAMAGE A SERVER). `kill -TERM -N` is the form dash, bash and
+    busybox all take."""
+    if not line.startswith(PID_MARK):
+        return ""
+    parts = line.removeprefix(PID_MARK).split()
+    if len(parts) != 2 or parts[0] != parts[1] or PROCESS_NUMBER.fullmatch(parts[0]) is None or int(parts[0]) <= 1:
+        return ""
+    return f"kill -TERM -{parts[0]} 2>/dev/null"
 
 
 def _operation(work: object) -> str:
@@ -240,12 +304,17 @@ class SshConnection(RemoteConnection):
         self._client: asyncssh.SSHClientConnection | None = None
         self._sftp: asyncssh.SFTPClient | None = None
         self._witness: _KexWitness = _KexWitness()
+        self._own_channel: bool = False  # an SFTP channel of its own for long requests (SftpChannel): a stop closes it
 
     def _await[T](self, work: Coroutine[object, object, T], seconds: float | None = ANSWER_SECONDS) -> T:
         if self._closed:
             work.close()
             raise ConnectionLost(LOST_TEXT)
-        future = asyncio.run_coroutine_threadsafe(work, self._loop)
+        try:
+            future = asyncio.run_coroutine_threadsafe(work, self._loop)
+        except RuntimeError as error:  # the loop of the login is closed: a channel that outlived its connection
+            work.close()
+            raise ConnectionLost(LOST_TEXT) from error
         try:
             return future.result(seconds)
         except (TimeoutError, FutureTimeout) as error:
@@ -319,8 +388,9 @@ class SshConnection(RemoteConnection):
         hardlinks = bool(getattr(handler, "_supports_hardlink", False)) or self._sftp_now().version >= 6
         copies = bool(getattr(handler, "_supports_copy_data", False))
         atomic = bool(getattr(handler, "_supports_posix_rename", False))
+        hashes = frozenset(CHECKSUM_ALGORITHMS) if CHECK_FILE_EXTENSIONS & set(hello_extensions(self._sftp)) else frozenset[str]()  # the server says which it used
         # SFTP itself can do these, with or without a shell
-        self.capabilities = replace(self._detect(), resume=True, timestamps=True, rights=True, cut=True, durable=durable, server_copy=copies, symlinks=True, hardlinks=hardlinks, atomic_rename=atomic)
+        self.capabilities = replace(self._detect(), resume=True, timestamps=True, rights=True, cut=True, durable=durable, server_copy=copies, symlinks=True, hardlinks=hardlinks, atomic_rename=atomic, checksums=hashes)
 
     def _detect(self) -> Capabilities:
         try:
@@ -1020,6 +1090,144 @@ class SshConnection(RemoteConnection):
             raise RemoteActionFailed(PASSWORD_FAILED_TEXT.format(reason=str(error) or type(error).__name__)) from error
 
     @override
+    def checksum(self, path: str, algorithm: str, keep_going: KeepGoing = lambda: True) -> str | None:
+        """SFTP's check-file-name: the server reads the file and sends its hash; nothing travels through this computer (FE-01). The
+        server may answer with another algorithm than the one asked for: that is refused calmly, never shown as the one asked for."""
+        if algorithm not in self.capabilities.checksums:
+            raise RemoteActionFailed(NO_CHECKSUM_TEXT)
+        sftp = self._sftp_now()
+        handler = getattr(sftp, "_handler", None)
+        send = cast("Callable[[bytes, Sequence[bytes], asyncio.Future[tuple[int, SSHPacket]]], None] | None", getattr(handler, "_send_request", None))
+        status = cast("Callable[[SSHPacket], None] | None", getattr(handler, "_process_status", None))
+        if send is None or status is None:
+            raise RemoteActionFailed(NO_CHECKSUM_TEXT)
+        request, refusal = send, status
+
+        async def ask() -> tuple[str, bytes] | None:
+            waiter: asyncio.Future[tuple[int, SSHPacket]] = asyncio.get_running_loop().create_future()
+            request(CHECK_FILE_REQUEST, [String(sftp.encode(path)), String(algorithm), UInt64(0), UInt64(0), UInt32(0)], waiter)
+            while not waiter.done():
+                await asyncio.wait({waiter}, timeout=STOP_STEP_SECONDS)
+                if not waiter.done() and not keep_going():
+                    waiter.cancel()  # asyncssh leaves the late answer of a cancelled request aside
+                    if self._own_channel:
+                        sftp.exit()  # the server hashes on this channel alone: closing it lets the server stop
+                    return None
+            kind, packet = waiter.result()
+            if kind == FXP_STATUS:
+                refusal(packet)  # raises the server's refusal
+            if kind != FXP_EXTENDED_REPLY:
+                raise RemoteActionFailed(ODD_CHECKSUM_TEXT)
+            used = packet.get_string().decode("ascii", "replace")
+            return used, packet.get_remaining_payload()
+
+        self.log.asked(f"check-file-name {algorithm} {path}")
+        try:
+            answer = self._await(ask(), COMMAND_SECONDS)  # a large file takes the server a while
+        except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
+            raise ConnectionLost(LOST_TEXT) from error
+        except (asyncssh.Error, OSError, ValueError) as error:
+            text = str(error) or "The server refused to compute this checksum."
+            self.log.failed(text)
+            raise RemoteActionFailed(text) from error
+        except ChronoFtpError as error:
+            self.log.failed(str(error))
+            raise
+        if answer is None:
+            self.log.note("stopped")
+            return None
+        used, digest = answer
+        if used.lower() != algorithm:
+            self.log.failed(f"answered with {used}")
+            raise RemoteActionFailed(OTHER_CHECKSUM_TEXT.format(used=used, wanted=algorithm))
+        if len(digest) * 2 != CHECKSUM_HEX_LENGTHS[algorithm]:
+            self.log.failed("an answer of the wrong length")
+            raise RemoteActionFailed(ODD_CHECKSUM_TEXT)  # input (OR-15): a hash of blocks or of nothing is no checksum of the file
+        found = digest.hex()
+        self.log.answered(found)
+        return found
+
+    @override
+    def login_of_its_own(self) -> "SftpChannel":
+        """An SFTP channel of its own over this login, for checksums: a server answers one SFTP channel's requests in turn, so the
+        tab's own requests would wait behind a large file's hash. No new login is made."""
+        client = self._client_now()
+
+        async def opened() -> asyncssh.SFTPClient:
+            return await client.start_sftp_client(path_errors="surrogateescape")
+
+        try:
+            sftp = self._await(opened())
+        except LOST_ERRORS as error:
+            raise ConnectionLost(LOST_TEXT) from error
+        except (asyncssh.Error, OSError) as error:
+            raise ConnectionFailed(NO_CHANNEL_TEXT) from error
+        return SftpChannel(self, sftp)
+
+    @override
+    def run_stoppable(self, command: str, keep_going: KeepGoing) -> CommandResult | None:
+        """The command runs as run does; every STOP_STEP_SECONDS keep_going is asked. The shell first tells its number and its process
+        group: the server's SSH starts it in a session, and so a group, of its own, which holds every process of the command (find, the
+        *sum tools, awk); a stop ends that group where the shell is really its leader (group_kill_command), sends the SSH signal and
+        closes the channel, so nothing waits for it any more."""
+        client = self._client_now()
+
+        async def end(process: "asyncssh.SSHClientProcess[str]", killing: str) -> None:
+            if killing:
+                try:
+                    await asyncio.wait_for(client.run(killing, check=False, stdin=asyncssh.DEVNULL), PROBE_SECONDS)
+                except (asyncssh.Error, OSError):  # a TimeoutError is an OSError
+                    pass  # the channel is closed below all the same
+            try:
+                process.terminate()
+            except (asyncssh.Error, OSError):
+                pass
+            process.close()
+
+        async def go() -> CommandResult | None:
+            process = await client.create_process(sendable(GROUP_LINE + command), stdin=asyncssh.DEVNULL, encoding="utf-8", errors="surrogateescape")
+            first = asyncio.ensure_future(process.stdout.readline())
+            while not first.done():
+                await asyncio.wait({first}, timeout=STOP_STEP_SECONDS)
+                if not first.done() and not keep_going():
+                    first.cancel()
+                    await asyncio.gather(first, return_exceptions=True)
+                    await end(process, "")
+                    return None
+            line = first.result()
+            killing = group_kill_command(line)
+            before = "" if line.startswith(PID_MARK) else line  # a shell that did not tell it: that line is output
+            ending = asyncio.ensure_future(process.wait(check=False))
+            while not ending.done():
+                await asyncio.wait({ending}, timeout=STOP_STEP_SECONDS)
+                if not ending.done() and not keep_going():
+                    ending.cancel()
+                    await asyncio.gather(ending, return_exceptions=True)
+                    await end(process, killing)
+                    return None
+            result = ending.result()
+            return CommandResult(result.exit_status if result.exit_status is not None else -1, before + _text(cast("bytes | str | None", result.stdout)), _text(cast("bytes | str | None", result.stderr)))
+
+        self.log.asked(f"run {command}")
+        try:
+            result = self._await(go(), COMMAND_SECONDS)
+        except LOST_ERRORS as error:
+            self.log.failed(LOST_TEXT)
+            raise ConnectionLost(LOST_TEXT) from error
+        except (asyncssh.Error, OSError) as error:
+            self.log.failed(str(error) or "no shell")
+            raise RemoteActionFailed(str(error) or "The server has no shell for this login.") from error
+        except ConnectionLost as error:
+            self.log.failed(str(error))
+            raise
+        if result is None:
+            self.log.note("stopped")
+            return None
+        self._log_result(result)
+        return result
+
+    @override
     def run_briefly(self, command: str, seconds: float) -> CommandResult:
         """The command is ended on the server after seconds, and the connection goes on: a slow directory service never holds the
         tab's thread."""
@@ -1140,6 +1348,7 @@ class SshConnection(RemoteConnection):
                 pass  # a Python without MD5: the SHA-256 fingerprint says it all
         handler = getattr(sftp, "_handler", None)
         offers = tuple(name for flag, name in EXTENSIONS if getattr(handler, flag, False))
+        offers += tuple(sorted(CHECK_FILE_EXTENSIONS & set(hello_extensions(sftp))))
         return ServerInfo(f"SFTP version {sftp.version} over SSH-2", extra("server_version"), tuple(encryption), tuple(identity), offers)
 
     @override
@@ -1166,3 +1375,40 @@ class SshConnection(RemoteConnection):
                 return None
             return space_from_df(result.output) if result.status == 0 else None
         return None
+
+
+class SftpChannel(SshConnection):
+    """A second SFTP channel over the login of a connection, for long requests (check-file): it shares that connection's login and
+    thread, and closing it ends this channel alone, which also tells the server to stop its work on it."""
+
+    def __init__(self, owner: SshConnection, sftp: asyncssh.SFTPClient) -> None:
+        # SshConnection.__init__ is not called on purpose: it would start a thread and a login of its own
+        self.connection = owner.connection
+        self.password = None
+        self.known_hosts = owner.known_hosts
+        self.log = owner.log
+        self.capabilities = owner.capabilities
+        self._loop = owner._loop
+        self._thread = owner._thread
+        self._closed = False
+        self._client = owner._client
+        self._sftp = sftp
+        self._witness = owner._witness
+        self._own_channel = True
+
+    @override
+    def close(self) -> None:
+        sftp = self._sftp
+        if self._closed or sftp is None:
+            return
+        self._sftp = None
+
+        async def finish() -> None:
+            sftp.exit()
+            await sftp.wait_closed()
+
+        try:
+            self._await(finish(), CLOSE_SECONDS)
+        except (RemoteActionFailed, asyncssh.Error, OSError):
+            pass  # it was gone already
+        self._closed = True

@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import override
@@ -10,10 +11,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.connections.base import joined, parent_of, RemoteConnection, RemoteEntry, safe_name, shown_name
+from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.errors import RemoteActionFailed
 from chrono_ftp.core.transferoptions import plain
-from chrono_ftp.engine import commands
-from chrono_ftp.engine.compare import compare_folders, Found
+from chrono_ftp.engine import checksums, commands
+from chrono_ftp.engine.compare import Contents, compare_contents, compare_folders, Found
 from chrono_ftp.engine.terminal import terminal_arguments
 from chrono_ftp.ui.comparedialog import CompareDialog, uploads
 from chrono_ftp.ui.searchdialog import SearchDialog
@@ -22,9 +24,12 @@ from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowserver.py 0.0.41"
+__version__ = "windowserver.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Compare Contents in Synchronize: the checksum step through the best way the connection offers, also without a shell where
+#          the server computes checksums, on a thread of its own and stoppable (FE-01, D-027); review round 1: each run on a thread
+#          of its own, stopped when the main window closes; a note on the way shows in the window
 # v0.0.41: The rows ticked in Compare go byte for byte under their own names, whatever the transfer settings say of masks, text and names (FD-01 to FD-03)
 # v0.0.38: Delete asks first unless the person switched that question off (FP-01)
 # v0.0.37: New folder, copy, and owner and permissions moved to windowproperties.py (block FM); the terminal opens in the folder on the
@@ -137,11 +142,14 @@ class ServerPart(WindowBase):
             return
         session, folder, _chosen = screen
         local_folder = self.local_side.folder
-        dialog = CompareDialog(local_folder, folder, self)
-        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)  # it belongs to this tab: no other tab can come up meanwhile
         remote = session.remote
         if remote is None:
             return
+        algorithm = checksums.preferred_algorithm(session.capabilities)
+        dialog = CompareDialog(local_folder, folder, self, checksums.why_no_checksum(session.capabilities, session.connection.protocol == FTP))
+        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)  # it belongs to this tab: no other tab can come up meanwhile
+        connection: RemoteConnection = remote
+        runs: list[threading.Event] = []  # each run of the checksum step has its own stop: a stopped one never answers for the next
 
         def show(found: list[Found]) -> None:
             dialog.show_found(found)
@@ -163,7 +171,38 @@ class ServerPart(WindowBase):
                 else:
                     self._add_job(session, here, joined(there, row.name), False, row.name, options)
 
+        def contents() -> None:
+            """The checksum step (D-020, D-027) on a thread of its own: the tab's own thread stays free for browsing."""
+            stop = threading.Event()
+            runs.append(stop)
+            dialog.contents_started(algorithm)
+            rows = list(dialog.found)
+
+            def ended(result: Contents | None) -> None:
+                if stop is not runs[-1]:
+                    return  # an earlier run that was stopped
+                dialog.contents_ended(result.found if result is not None else None, *((result.same, result.unknown) if result is not None else (0, 0)))
+
+            def refused(error: Exception) -> None:
+                if stop is runs[-1]:
+                    dialog.contents_ended(None)
+                    dialog.show_failure(shown_name(str(error)))
+
+            def told(text: str) -> None:
+                self.bridge.deliver(lambda: dialog.show_failure(text) if stop is runs[-1] and not stop.is_set() else None)
+
+            def answered(result: object) -> None:
+                ended(result if isinstance(result, Contents) else None)
+
+            self.run_alone(lambda: compare_contents(connection, local_folder, folder, rows, algorithm, lambda: not stop.is_set(), told), answered, refused, stop)
+
+        def stopped() -> None:
+            if runs:
+                runs[-1].set()
+
         dialog.copy_requested.connect(copy)
+        dialog.contents_requested.connect(contents)
+        dialog.contents_stopped.connect(stopped)
         session.worker.submit(lambda: compare_folders(remote, local_folder, folder), show, failed)
         dialog.show()
 

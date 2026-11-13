@@ -28,9 +28,10 @@ from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windownavigation.py 0.0.40"
+__version__ = "windownavigation.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Shift+Space, Calculate Folder Sizes, is a key of the program: a bookmark can't take it (block FE)
 # v0.0.40: The keys of block FG are keys of the program: a bookmark can't take them
 # v0.0.37: F9, Shift+F4, Shift+F5, Alt+F6 and Ctrl+Alt+E are keys of the program: a bookmark can't take them (block FM)
 # v0.0.35: F1 is a key of the program: a bookmark can't take it (D-059)
@@ -87,6 +88,7 @@ PROGRAM_KEYS: dict[str, str] = {  # the keys of the program itself: a bookmark c
     "Ctrl+R": "Refresh",
     "Tab": "the next name that fits what was typed",
     "Esc": "starting the typed name afresh",
+    "Shift+Space": "Calculate Folder Sizes",  # block FE
 }
 SIDE_ACTIONS: tuple[tuple[str, str, str, str], ...] = (  # name after the side, text, icon, key
     ("open", "Open Folder…", "document-open-folder", "Ctrl+O"),

@@ -46,3 +46,5 @@
 44. [[D-081]] One mask engine
 45. [[D-085]] Selecting by mask
 46. [[D-086]] The filter window
+47. [[D-089]] The Size and Checksum tabs of Properties
+48. [[D-090]] Folder sizes in the file list

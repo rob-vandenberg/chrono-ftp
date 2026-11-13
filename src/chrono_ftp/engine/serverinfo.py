@@ -5,12 +5,13 @@ from dataclasses import dataclass
 
 from chrono_ftp.connections.base import Capabilities, FreeSpace, RemoteConnection
 from chrono_ftp.core.errors import ConnectionLost, RemoteActionFailed
-from chrono_ftp.engine import commands
+from chrono_ftp.engine import checksums, commands
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverinfo.py 0.0.38"
+__version__ = "serverinfo.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The checksums the server computes, by its shell or its protocol, named by algorithm, also over FTP (FE-01)
 # v0.0.38: Initial: protocol, software, encryption, the host key or certificate, the detected abilities as yes or no, and the free
 #          space, "unknown" where it can't be known (FP-03, D-066)
 
@@ -71,6 +72,7 @@ def ability_lines(capabilities: Capabilities, ftp: bool) -> Lines:
         ("Replace a name in one step", word(capabilities.atomic_rename)),
         ("Confirm a file is on the server's disk", word(capabilities.durable)),
         ("Cut a file back", word(capabilities.cut)),
+        ("Checksums on the server", ", ".join(checksums.algorithms_of(capabilities)) or word(False)),
     ]
     if not ftp:
         lines += [
@@ -78,7 +80,6 @@ def ability_lines(capabilities: Capabilities, ftp: bool) -> Lines:
             ("Change everything inside a folder in one command", word(capabilities.has("chmod") and capabilities.has("find"))),
             ("Find files on the server", word(commands.can_search(capabilities))),
             ("Fast transfers with rsync", word(capabilities.has("rsync"))),
-            ("Checksums (sha256sum)", word(capabilities.has("sha256sum"))),
             ("Change the password", word(capabilities.has("passwd"))),
         ]
     return tuple(lines)

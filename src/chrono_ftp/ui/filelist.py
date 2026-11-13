@@ -17,9 +17,12 @@ from chrono_ftp.engine.listing import summary_text as summary_text
 from chrono_ftp.ui.menus import open_menu
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.41"
+__version__ = "filelist.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The Size column shows the size of a folder once it was counted, "at least …" where it could not be read in full, kept while
+#          the same folder shows; Shift+Space never types a space nor marks, it belongs to counting the folder sizes (FE-03); review
+#          round 1: while a name is being typed, Shift+Space types a space into it
 # v0.0.41: The filter and selecting by mask ask the one mask engine: include and exclude, paths, sizes and dates (FD-05, FD-06); folders
 #          always stay in view; a mask with only an excluded part selects every file but that; the + and − of the number pad never
 #          start finding a name, and say so where their action is greyed; with Folders too, what the mask leaves out after its | is
@@ -64,6 +67,8 @@ FIT_TEXT: str = "Fit Column Widths"
 STANDARD_COLUMNS_TEXT: str = "Restore the Standard Columns"
 TYPING_TEXT: str = "Find: {typed}"
 TYPING_NEXT_TEXT: str = "Find: {typed}   (Tab: the next one)"
+AT_LEAST_TEXT: str = "at least {size}"
+AT_LEAST_TIP: str = "Some folders inside could not be read, so the folder holds at least this much."
 ThumbnailOf = Callable[[RemoteEntry], QIcon | None]
 
 
@@ -132,6 +137,7 @@ class FileModel(QAbstractTableModel):
         self.size_style: str = SHORT  # how sizes show (FG-06)
         self.natural: bool = True  # "file2" before "file10" (FG-08)
         self.by_extension: bool = False  # the name column sorts by the extension first (Ctrl+F4)
+        self.folder_sizes: dict[str, tuple[int, bool]] = {}  # a counted folder: its size, and whether all of it could be read (FE-03)
 
     @override
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
@@ -158,7 +164,13 @@ class FileModel(QAbstractTableModel):
         if column == 0:
             return shown_name(entry.name)
         if column == 1:
-            return "" if entry.is_folder else size_text(entry.size, self.size_style)
+            if entry.is_folder:
+                counted = self.folder_sizes.get(entry.name) if not entry.is_link else None
+                if counted is None:
+                    return ""
+                shown = size_text(counted[0], self.size_style)
+                return shown if counted[1] else AT_LEAST_TEXT.format(size=shown)
+            return size_text(entry.size, self.size_style)
         if column == 2:
             return date_text(entry.modified)
         return (rights_text(entry.permissions), entry.owner, entry.group, shown_name(entry.link_target))[column - 3]
@@ -172,6 +184,9 @@ class FileModel(QAbstractTableModel):
             return self._text(entry, index.column())
         if role == ENTRY_ROLE:
             return entry
+        if role == Qt.ItemDataRole.ToolTipRole and index.column() == 1 and entry is not None and entry.is_folder:
+            counted = self.folder_sizes.get(entry.name)
+            return AT_LEAST_TIP if counted is not None and not counted[1] else None
         if role == Qt.ItemDataRole.DecorationRole and index.column() == 0 and entry is not None:
             picture = self.thumbnail_of(entry) if self.thumbnail_of is not None and not entry.is_folder else None
             if picture is not None:
@@ -223,6 +238,13 @@ class FileModel(QAbstractTableModel):
             self.natural = natural
             self.sort(*self.sorted_by)
 
+    def set_folder_size(self, name: str, size: int, complete: bool) -> None:
+        """A folder of this list was counted: its Size cell shows it, and nothing else of the list changes."""
+        self.folder_sizes[name] = (size, complete)
+        row = next((number for number, entry in enumerate(self.rows) if entry is not None and entry.name == name), -1)
+        if row >= 0:
+            self.dataChanged.emit(self.index(row, 1), self.index(row, 1))
+
     def set_rows(self, rows: list[RemoteEntry | None]) -> None:
         self.beginResetModel()
         self._rule_of.clear()  # only the names of this folder are kept
@@ -250,6 +272,7 @@ class FileList(QTreeView):
     dropped = Signal(str, object, object)  # where it came from, the paths of an outside drag, the name of the folder it fell on ("" for this folder)
     right_dropped = Signal(str, object, object)  # the same for a drag made with the right mouse button: the window asks with a menu (FG-14)
     keypad_refused = Signal(bool)  # the number pad's + (True) or − reached the list: its action is greyed (FD-05)
+    sizes_refused = Signal()  # Shift+Space reached the list: counting the folder sizes is greyed (FE-03)
     typing_changed = Signal(str)  # what was typed to find a name; "" once it starts afresh (FG-01)
 
     def __init__(self, column_count: int, kind: str, accepts: frozenset[str], parent: QWidget | None = None) -> None:
@@ -595,6 +618,8 @@ class FileList(QTreeView):
     def show_entries(self, entries: list[RemoteEntry], with_parent: bool, same_folder: bool) -> None:
         """same_folder: what the person has selected and where the list stands stay as they are."""
         keep = {entry.name for entry in self.selected_entries()} if same_folder else set[str]()
+        if not same_folder:
+            self.files.folder_sizes.clear()  # the sizes counted belong to the folder they were counted in
         current_row = self.currentIndex().row()
         current = self.files.rows[current_row] if same_folder and 0 <= current_row < len(self.files.rows) else None
         scrollbar = self.verticalScrollBar()
@@ -731,6 +756,10 @@ class FileList(QTreeView):
             self.keypad_refused.emit(key == Qt.Key.Key_Plus)
             return
         held = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
+        if key == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ShiftModifier and not held and not self.typed:
+            event.accept()
+            self.sizes_refused.emit()  # Shift+Space counts the folder sizes; here only while that is greyed: it never types nor marks
+            return
         if self.typed and not held:
             if key == Qt.Key.Key_Escape:
                 self.stop_typing()

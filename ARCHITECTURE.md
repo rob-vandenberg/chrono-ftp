@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.41; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.42; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -19,7 +19,7 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 | `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list, the settings, the notes of part files, aside copies and appends (`config/parts.py`), and the bookmarks, location profiles and typed paths (`config/bookmarks.py`, `~/.config/chrono-ftp/bookmarks.json`). |
 | `connections` | The common connection layer (`base.py`), its two implementations (`ssh.py`, `ftp.py`), capability detection, and the servers the person trusted (`trust.py`). |
 | `transfers` | The transfer queue (`queue.py`), which job may start (`schedule.py`), and its two ways: `rsync` (`rsyncway.py`) and file by file over SFTP or FTP (`filebyfile.py`), with a large file in parts (`split.py`); a job and its progress (`job.py`); the overwrite question's answers and what a connection can do (`options.py`). |
-| `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`), actions on this computer (`localfiles.py`), comparing two folders (`compare.py`), the matching step of synchronized browsing (`browsing.py`). |
+| `engine` | Between the window and the rest: a thread per connection (`jobs.py`), the commands that run on a server (`commands.py`), the terminal (`terminal.py`), actions on this computer (`localfiles.py`), comparing two folders (`compare.py`), the matching step of synchronized browsing (`browsing.py`), checksums and folder sizes on both sides (`checksums.py`, `sizes.py`). |
 | `ui` | PySide6 user interface. Pure window actions live here; server work does not. |
 
 There is no separate command-line program (D-022).
@@ -49,7 +49,7 @@ Each connection reports what it can do after connecting (D-016): the system, the
 
 1. Recursive owner, group and permissions: one `chown -R` or `chmod -R` on the server, after the exact command is shown and confirmed (D-012, D-013).
 2. Rename, move, copy, delete and search: `mv`, `cp -a`, `find` and the like on the server (D-015).
-3. Without a shell: rename, move, delete and rights through the protocol, which is slower; a copy of a file through the protocol where the server offers it (SFTP copy-data, FTP SITE CPFR and CPTO, D-061); search, the recursive changes, the terminal, the password and the `sha256sum` step of compare are not available (D-027). Comparing by size and date works on every connection (D-020).
+3. Without a shell: rename, move, delete and rights through the protocol, which is slower; a copy of a file through the protocol where the server offers it (SFTP copy-data, FTP SITE CPFR and CPTO, D-061); search, the recursive changes, the terminal and the password are not available; the checksum step of compare uses SFTP's check-file or FTP's HASH where the server offers them (D-027, D-088). Comparing by size and date works on every connection (D-020).
 4. Every path in a shell command goes through `shlex.quote`.
 
 ## 6. The window
@@ -77,6 +77,7 @@ Each connection reports what it can do after connecting (D-016): the system, the
    14. `ui/windowprogram.py`: the program-wide part (block FP).
    15. `ui/windowlooks.py`: the looks (block FQ): file colours, the thumbnail view of each side and the toolbar menu.
    16. `ui/windowselection.py`: selection and keys (block FG): the selection keys and menus, the two-pane mode, the key set, This File Only, the clipboard, the title bar, the right-button drag, pausing the refresh and clearing the listings.
+   17. `ui/windowsizes.py`: hashes and sizes (block FE): the folder sizes of Shift+Space and what the Size and Checksum tabs of Properties ask.
 8. Answers of the connection threads reach the window through `ui/bridge.py`; once the window closes, the bridge is closed and a late answer goes nowhere (D-042).
 
 ## 7. Transfers (block FB, version 0.0.12)
@@ -192,3 +193,18 @@ The modules of block FD, one line each:
 6. `ui/maskfield.py`: the mask field with its history and its fault; `ui/maskdialog.py`: Select by Mask, Unselect by Mask and the Filter window (D-085, D-086).
 7. `ui/transferoptionsform.py`: the Files and Text and names tabs of the transfer settings; `ui/presetseditor.py`: the Presets page of Settings; `ui/transferdialog.py`: the preset of a transfer (D-084).
 8. `ui/pathbar.py`: the mark of the active filter next to the path; `ui/filelist.py`: the filter and selecting by mask through the engine; `ui/windowselection.py` and `ui/windowlayout.py`: Num+, Num−, the filter window and the history of masks.
+
+## 15. Hashes and sizes (block FE, version 0.0.42)
+
+The modules of block FE, one line each:
+
+1. `core/hashes.py`: the checksum algorithms and the length of each checksum, shared by the connections, the settings and the program logic.
+2. `connections/base.py`: what a protocol hashes without a shell (`Capabilities.checksums`), the checksum of one file through the protocol (`checksum`), an answer checked as input (`checksum_from`), and a command that ends when told to stop (`run_stoppable`).
+3. `connections/ssh.py`: check-file of SFTP, where the hello names it, on an SFTP channel of its own over the same login (`SftpChannel`) (the extension names of the hello are kept on asyncssh's handler); the `*sum` tools, `awk` and a find that prints sizes detected with the other tools; `run_stoppable` ends its command on the server (D-088).
+4. `connections/ftp.py`: HASH with the algorithms of FEAT, chosen with OPTS HASH, and the older XSHA256 and the like, on a login of its own; a stop shuts the control connection down (D-088).
+5. `engine/checksums.py`: the one checksum function, the choice of the way, one shell command for many files, files on this computer read in pieces, and the files inside folders (D-088).
+6. `engine/sizes.py`: the size, files and folders of a selection: one find with awk on the server for all folders where the shell can, else the listings; on this computer by walking (D-089).
+7. `engine/compare.py`: `compare_contents`, the checksum step of compare (D-020, D-088); `engine/serverinfo.py` names the checksums a server computes.
+8. `ui/propertiesdialog.py`: the Size and Checksum tabs and the `Calculator` they ask (D-089); `ui/comparedialog.py`: Compare Contents (D-088).
+9. `ui/filelist.py`: the folder sizes in the Size column, "at least" where something could not be read, and Shift+Space never typed nor marking (D-090).
+10. `ui/windowsizes.py`: the part of the main window that ties them together: a worker per side for the folder sizes, each tied to its tab, and a thread of its own for each calculation of Properties and Compare (`run_alone`), on the server over the tab's own connection, so the person's own requests never wait behind them (D-019, D-090); `ui/windowserver.py` runs Compare Contents through it.

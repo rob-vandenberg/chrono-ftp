@@ -27,9 +27,10 @@ from chrono_ftp.ui.session import Session, no_progress
 from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowproperties.py 0.0.37"
+__version__ = "windowproperties.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The Properties window has the Size and Checksum tabs, on both sides (FE-02)
 # v0.0.37: Initial: block FM, Properties and server actions (D-060 to D-063); review round 1: rights for everything inside through
 #          find, never X; a key comment beyond ASCII; a link never lost; a half copy removed; names of directories; a tree listed first;
 #          review round 2: Copy To goes on after a refused item and says what was and was not copied, and reads ~ and relative folders;
@@ -184,7 +185,7 @@ class PropertiesPart(WindowBase):
             return
         abilities = self._remote_abilities(session, chosen, names, known)
         location = f"{session.connection.user}@{session.connection.host}:{folder}" if session.connection.user else f"{session.connection.host}:{folder}"
-        dialog = PropertiesDialog(properties.summary(chosen), location, abilities, self)
+        dialog = PropertiesDialog(properties.summary(chosen), location, abilities, self, self.remote_calculator(session, folder, chosen))
         if dialog.exec() != PropertiesDialog.DialogCode.Accepted.value:
             return
         self._change_on_server(session, folder, chosen, dialog.change())
@@ -286,7 +287,7 @@ class PropertiesPart(WindowBase):
             groups=tuple(groups),
             names_known=True,
         )
-        dialog = PropertiesDialog(properties.summary(entries), folder, abilities, self)
+        dialog = PropertiesDialog(properties.summary(entries), folder, abilities, self, self.local_calculator(folder, entries))
         if dialog.exec() != PropertiesDialog.DialogCode.Accepted.value:
             return
         change = dialog.change()

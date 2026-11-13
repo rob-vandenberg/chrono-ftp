@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import cast
 
 from chrono_ftp.config.connections import config_folder, write_whole
+from chrono_ftp.core.hashes import CHECKSUM_ALGORITHMS, STANDARD_ALGORITHM
 from chrono_ftp.core.filecolours import MOST_RULES, ColourRule, colour_valid
 from chrono_ftp.core.logrules import KEPT, OFF, SIZE_MEGABYTES, kept_valid, level_valid, size_valid
 from chrono_ftp.core.masks import LONGEST_MASK, problem
@@ -11,9 +12,10 @@ from chrono_ftp.core.presets import LONGEST_NAME, MOST_PRESETS, STANDARD_NAME, P
 from chrono_ftp.core.transferoptions import NAME_CASES, RESUME_MODES, TRANSFER_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.41"
+__version__ = "settings.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The checksum algorithm last chosen in Properties (FE-02), checked on load
 # v0.0.41: Masks (block FD): the file mask, hidden files, empty folders, the transfer mode with its text mask and BOM, and the names of
 #          the transfer options (FD-01 to FD-03); the transfer presets with their rules (FD-04); the history of masks typed (FD-05,
 #          FD-06); each checked on load, a bad one gives its standard, and an older file loads as before
@@ -113,6 +115,7 @@ class Settings:
     drag_move: bool = True  # a right-button drag offers Move Here (FG-14)
     presets: tuple[Preset, ...] = ()  # named sets of transfer options with their rules (FD-04); the standard set is transfer_options
     mask_history: tuple[str, ...] = ()  # the masks typed last, the newest first
+    checksum_algorithm: str = STANDARD_ALGORITHM  # the last one chosen in Properties (FE-02)
 
 
 def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
@@ -306,6 +309,7 @@ def load() -> Settings:
         drag_move=flag("drag_move", True),
         presets=_presets(data.get("presets")),
         mask_history=_mask_history(data.get("mask_history")),
+        checksum_algorithm=choice("checksum_algorithm", CHECKSUM_ALGORITHMS, STANDARD_ALGORITHM),
     )
 
 

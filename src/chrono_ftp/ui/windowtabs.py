@@ -30,9 +30,10 @@ from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.41"
+__version__ = "windowtabs.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Closing a tab, or showing another one, stops the folder sizes counted for it, silently (FE-03)
 # v0.0.41: A tab shows the left side with its own filter, as it left it (FD-06)
 # v0.0.40: The menu of a tab pauses the automatic refresh of that tab and clears its cached listings (FG-15)
 # v0.0.39: A tab shows each side with or without thumbnails, as it left them (FQ-02)
@@ -361,6 +362,7 @@ class TabsPart(WindowBase):
             return  # another tab went away: this one stays as it is, with its selection
         self._leave_columns(self.shown)
         self.shown = session
+        self._stop_counts(lambda counted: counted is not None and counted is not session)  # a count belongs to the tab it was asked on
         if session is None:
             self.remote_side.clear()
             self._enter_looks(None)
@@ -431,6 +433,7 @@ class TabsPart(WindowBase):
         self._connect(session)
 
     def _let_go_of(self, session: Session) -> None:
+        self._stop_counts(lambda counted: counted is session)  # silently: nobody waits for those sizes any more
         remote = session.remote
         session.worker.finish_with(remote.close if remote is not None else lambda: None)
 

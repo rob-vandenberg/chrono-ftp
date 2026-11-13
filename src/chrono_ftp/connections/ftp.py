@@ -17,15 +17,19 @@ from typing import BinaryIO, cast, override
 from cryptography import x509
 
 from chrono_ftp.connections import sessionlog, trust
-from chrono_ftp.connections.base import TOO_LARGE_TEXT, FreeSpace, KeepGoing, ServerInfo, log_listing, HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
+from chrono_ftp.connections.base import NO_CHECKSUM_TEXT, KeepGoing, checksum_from, TOO_LARGE_TEXT, FreeSpace, KeepGoing, ServerInfo, log_listing, HALF_COPY_LEFT_TEXT, NO_COPY_TEXT, GONE_TEXT, LocalFile, NAME_TAKEN_TEXT, NO_ROOM_TEXT, NO_TIME_TEXT, NOT_EMPTY_TEXT, Capabilities, Limit, Progress, RemoteConnection, RemoteEntry, UnknownServer, joined, limit_pauses, parent_of, safe_name
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.logrules import DEBUG
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, NoMoreLogins, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.39"
+__version__ = "ftp.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The checksum of a file computed by the server: HASH with the algorithms FEAT names, chosen with OPTS HASH, or XMD5, MD5,
+#          XSHA1, XSHA256 and XSHA512 where FEAT names them; an answer that is no checksum is refused (FE-01); review round 1: a stop
+#          ends a checksum at once by closing its control connection (the next request logs in again), and checksums get a login of
+#          their own, so the tab never waits for them
 # v0.0.39: A small file read into memory, its data connection ended as soon as it is told to stop or the file is too large, for the
 #          thumbnails (FQ-02)
 # v0.0.38: The session log: every command and every reply of the control connection, the PASS line never with its password, each
@@ -79,6 +83,12 @@ PART_NOT_AS_LEFT_TEXT: str = "The unfinished copy on the server is not as it was
 BUSY_TEXT: str = "The server can't use this file right now ({reply}). The other files go on; you can send this one again later."
 SITE_COMMANDS: frozenset[str] = frozenset({"CHMOD", "CHOWN", "CHGRP", "CPFR", "CPTO", "SYMLINK", "UTIME", "MKDIR", "RMDIR", "UMASK", "IDLE", "MD5", "SHA1"})
 AVBL_REPLY: re.Pattern[str] = re.compile(r"213\s+([0-9]{1,18})\s*")
+HASH_NAMES: dict[str, str] = {"MD5": "md5", "SHA-1": "sha1", "SHA-224": "sha224", "SHA-256": "sha256", "SHA-384": "sha384", "SHA-512": "sha512"}  # HASH names (IANA) to ours
+CHECKSUM_COMMANDS: tuple[tuple[str, str], ...] = (("XSHA256", "sha256"), ("XSHA512", "sha512"), ("XSHA1", "sha1"), ("XMD5", "md5"), ("MD5", "md5"))  # older commands, one per algorithm
+HASH_SECONDS: float = 3600.0  # the server reads the whole file before it answers
+STOP_STEP_SECONDS: float = 0.2  # a checksum looks this often whether it is to stop
+OTHER_HASH_TEXT: str = "This server computed a {used} checksum instead of {wanted}."
+ODD_HASH_TEXT: str = "The server's answer was not a checksum: {reply}"
 FTP_ERRORS: tuple[type[BaseException], ...] = (ftplib.Error, OSError, EOFError, ValueError)
 LOST_ERRORS: tuple[type[BaseException], ...] = (EOFError, ConnectionError, TimeoutError)
 
@@ -210,6 +220,41 @@ def entry_from(name: str, facts: dict[str, str]) -> RemoteEntry | None:
     return RemoteEntry(name, kind == "dir", size, _time_of(facts.get("modify", "")), permissions, facts.get("unix.owner", ""), facts.get("unix.group", ""), is_link, size_known=size_known, special=special)
 
 
+def hash_algorithms(features: list[str]) -> dict[str, str]:
+    """The algorithms of FEAT's HASH line (" HASH SHA-256*;SHA-1;MD5", the * marks the one chosen now), by our names, to the names the
+    server uses; a name we don't know is left out (OR-15)."""
+    found: dict[str, str] = {}
+    for line in features:
+        command, _space, rest = line.partition(" ")
+        if command.upper() != "HASH":
+            continue
+        for name in rest.split(";"):
+            server_name = name.strip().rstrip("*").strip()
+            ours = HASH_NAMES.get(server_name.upper())
+            if ours is not None and ours not in found:
+                found[ours] = server_name
+    return found
+
+
+def checksum_of_reply(reply: str, algorithm: str, by_hash: bool) -> str:
+    """The checksum in the last line of a reply. HASH: "213 SHA-256 0-49 <hex> name", or without the range in older servers; the
+    older commands: the hex alone, or after a quoted name. Anything else is refused, never taken for a checksum (OR-15)."""
+    lines = [line for line in reply.splitlines() if line.strip()]
+    words = lines[-1].split() if lines else []
+    if by_hash and len(words) >= 3:
+        used = HASH_NAMES.get(words[1].upper())
+        if used is not None and used != algorithm:
+            raise RemoteActionFailed(OTHER_HASH_TEXT.format(used=words[1], wanted=algorithm))
+        candidates = words[2:4]
+    else:
+        candidates = list(reversed(words[1:]))
+    for word in candidates:
+        found = checksum_from(word, algorithm)
+        if found is not None:
+            return found
+    raise RemoteActionFailed(ODD_HASH_TEXT.format(reply=(lines[-1] if lines else reply)[:200]))
+
+
 def _rights_only(mode: str) -> str:
     """The rights of a unix.mode, as a server that gives the rights alone writes them: 0100644 (with the kind) is 0644. A mode that holds
     only rights, or is no number, stays as the server wrote it."""
@@ -249,6 +294,9 @@ class FtpConnection(RemoteConnection):
         self._listings: dict[str, dict[str, RemoteEntry]] | None = None  # a transfer's folders (by name), each read once and kept up with its own changes
         self._features: frozenset[str] = frozenset()  # what FEAT named, for the server information and AVBL (FP-03)
         self._site: tuple[str, ...] = ()  # the SITE commands SITE HELP named
+        self._hashes: dict[str, str] = {}  # our name of each algorithm HASH offers, to the name the server uses (FE-01)
+        self._checksum_commands: dict[str, str] = {}  # an older checksum command per algorithm, where FEAT names one
+        self._hash_chosen: str = ""  # the algorithm OPTS HASH chose on this control connection
         self.log = sessionlog.log_for(connection.name)
         self.log.hide(password)  # never written, whatever the level (OR-19)
 
@@ -347,9 +395,16 @@ class FtpConnection(RemoteConnection):
     def _abilities(self, session: ftplib.FTP) -> Capabilities:
         """What this server offers for a transfer, as it says itself: nothing is assumed (D-016). A refusal of a question means no."""
         try:
-            features = {line.strip().split(" ")[0].upper() for line in session.sendcmd("FEAT").splitlines()[1:-1] if line.strip()}
+            lines = [line.strip() for line in session.sendcmd("FEAT").splitlines()[1:-1] if line.strip()]
         except ftplib.Error:
-            features = set[str]()
+            lines = list[str]()
+        features = {line.split(" ")[0].upper() for line in lines}
+        self._hashes = hash_algorithms(lines)
+        self._checksum_commands = {}
+        for command, algorithm in CHECKSUM_COMMANDS:
+            if command in features and algorithm not in self._checksum_commands:
+                self._checksum_commands[algorithm] = command
+        self._hash_chosen = ""
         try:
             site = session.sendcmd("SITE HELP").upper()
         except ftplib.Error:
@@ -357,7 +412,8 @@ class FtpConnection(RemoteConnection):
         offered = site.split()
         self._features = frozenset(features)
         self._site = tuple(sorted({word for word in offered if word.isalpha() and word != "HELP"} & SITE_COMMANDS))
-        return Capabilities(resume="REST" in features, timestamps="MFMT" in features, rights="CHMOD" in offered, server_copy="CPFR" in offered and "CPTO" in offered)
+        checksums = frozenset(self._hashes) | frozenset(self._checksum_commands)
+        return Capabilities(resume="REST" in features, timestamps="MFMT" in features, rights="CHMOD" in offered, server_copy="CPFR" in offered and "CPTO" in offered, checksums=checksums)
 
     @override
     def close(self) -> None:
@@ -924,6 +980,70 @@ class FtpConnection(RemoteConnection):
         protocol = "FTP over TLS" if isinstance(sock, ssl.SSLSocket) else "FTP, not encrypted"
         offers = tuple(sorted(self._features)) + tuple(f"SITE {command}" for command in self._site)
         return ServerInfo(protocol, software, tuple(encryption), tuple(identity), offers)
+
+    @override
+    def checksum(self, path: str, algorithm: str, keep_going: KeepGoing = lambda: True) -> str | None:
+        """HASH where FEAT offers the algorithm, chosen first with OPTS HASH; else the older command FEAT names for it. The name is
+        quoted where it holds a space, as servers that take more after it need (FE-01). The server reads the whole file before it
+        answers, so a watcher ends the control connection as soon as keep_going says stop: FTP has no other way to end a command,
+        and the next request logs in again, as after a broken-off transfer."""
+        by_hash = algorithm in self._hashes
+        command = "HASH" if by_hash else self._checksum_commands.get(algorithm, "")
+        if not command:
+            raise RemoteActionFailed(NO_CHECKSUM_TEXT)
+        name = f'"{path}"' if " " in path else path
+        with self._lock:
+            session = self._session()
+            answered = threading.Event()
+            stopped = threading.Event()
+
+            def watch() -> None:
+                while not answered.wait(STOP_STEP_SECONDS):
+                    if not keep_going():
+                        stopped.set()
+                        sock = session.sock
+                        if sock is not None:
+                            try:
+                                sock.shutdown(socket.SHUT_RDWR)  # wakes the reading thread; closing alone would not
+                            except OSError:
+                                pass  # gone already
+                        return
+
+            watcher = threading.Thread(target=watch, daemon=True)
+            watcher.start()
+            try:
+                if by_hash and self._hash_chosen != algorithm:
+                    session.sendcmd(f"OPTS HASH {self._hashes[algorithm]}")
+                    self._hash_chosen = algorithm
+                sock = session.sock
+                if sock is not None:
+                    sock.settimeout(HASH_SECONDS)
+                try:
+                    reply = session.sendcmd(f"{command} {name}")
+                finally:
+                    if sock is not None and not stopped.is_set():
+                        sock.settimeout(SECONDS)
+            except FTP_ERRORS as error:
+                if stopped.is_set():
+                    self._drop()
+                    self._afresh = True  # the next request logs in again
+                    return None
+                if isinstance(error, LOST_ERRORS):
+                    raise ConnectionLost(LOST_TEXT) from error
+                raise RemoteActionFailed(_refusal(error, "The server refused to compute this checksum.")) from error
+            finally:
+                answered.set()
+                watcher.join()
+            if stopped.is_set():
+                self._drop()  # the answer came in the moment of the stop: the connection is shut all the same
+                self._afresh = True
+                return None
+        return checksum_of_reply(reply, algorithm, by_hash)
+
+    @override
+    def login_of_its_own(self) -> "FtpConnection":
+        """FTP does one thing at a time: a checksum that takes the server long gets a login of its own, so the tab never waits."""
+        return self.for_a_transfer()
 
     @override
     def free_space(self, path: str) -> FreeSpace | None:

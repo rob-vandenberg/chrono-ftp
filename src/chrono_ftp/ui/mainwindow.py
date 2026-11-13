@@ -36,14 +36,17 @@ from chrono_ftp.ui.windowproperties import NO_FILE_MANAGER_TEXT, PropertiesPart
 from chrono_ftp.ui.windowprogram import ProgramPart
 from chrono_ftp.ui.windowselection import SelectionPart
 from chrono_ftp.ui.windowserver import ServerPart
+from chrono_ftp.ui.windowsizes import SizesPart
 from chrono_ftp.ui.windowtabs import TabsPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.41"
+__version__ = "mainwindow.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Block FE, hashes and sizes (windowsizes.py): Shift+Space counts the folder sizes, greyed with its reason; closing stops the
+#          counting and the calculations of Properties and Compare
 # v0.0.41: Block FD, masks: the button next to the path of each side clears its filter
 # v0.0.40: Block FG, selection and keys (windowselection.py); Shift+F6 moves on the server
 # v0.0.39: Block FQ, looks: the file colours, the thumbnail view of each side and the toolbar menu (windowlooks.py); closing stops the
@@ -79,7 +82,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart, SizesPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -201,6 +204,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self._build_program()  # a double-click on a file, the automatic refresh and the windows of block FP
         self._build_looks()  # file colours, thumbnails and the toolbar menu (block FQ)
         self._build_selection()  # the selection, the keys and the menus of block FG
+        self._build_sizes()  # the folder sizes and the calculations of Properties (block FE)
         self.settings = saved_settings.load()
         self._apply_settings()
         self._restore_sizes()
@@ -316,6 +320,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
             self.local_worker.stop()
         if self.thumbnail_worker is not None:
             self.thumbnail_worker.stop()
+        self._end_size_threads()
         self._save_sizes()
         if self.countdown is not None:
             self.countdown.reject()
@@ -387,3 +392,4 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
                 action.setToolTip(reasons[name] if reasons[name] and not enabled[name] else action.text().removesuffix("…"))  # greyed with its reason (OR-20)
         self.update_queue_actions()
         self._update_selection_actions()
+        self._update_size_actions()

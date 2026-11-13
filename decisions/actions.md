@@ -12,3 +12,5 @@
 10. [[D-061]] Links and copies on the server
 11. [[D-062]] My key and my password on the server
 12. [[D-063]] New file, the file manager and the terminal's folder
+13. [[D-088]] Checksums without a shell
+14. [[D-089]] The Size and Checksum tabs of Properties

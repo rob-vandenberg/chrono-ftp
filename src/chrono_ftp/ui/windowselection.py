@@ -32,9 +32,10 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowselection.py 0.0.41"
+__version__ = "windowselection.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Calculate Folder Sizes (Shift+Space) in the right-click menu of a list (FE-03)
 # v0.0.41: Select by Mask (Num+) and Unselect by Mask (Num−) on the list with the focus, also in the Select submenu, with the masks
 #          typed before (FD-05); a greyed Num+ or Num− does nothing and the status bar says why
 # v0.0.40: Initial: block FG: the selection keys and their menu (FG-02), the two-pane selection mode (FG-03), the key set with F6,
@@ -275,6 +276,7 @@ class SelectionPart(WindowBase):
         """Move to the other side, This File Only, Select and Copy to Clipboard, after the actions of the side."""
         menu.setToolTipsVisible(True)
         menu.addAction(self.list_actions[f"{side_name}_move_across"])
+        menu.addAction(self.list_actions[f"{side_name}_folder_sizes"])
         menu.addSeparator()
         only = menu.addMenu(ONLY_MENU_TEXT)
         only.setToolTipsVisible(True)

@@ -1,5 +1,6 @@
 """The base of the main window's parts: the shared widgets, state and numbers, and the methods the parts call in each other (D-041)."""
 
+import threading
 from collections.abc import Callable
 
 from PySide6.QtCore import QFileSystemWatcher, QTimer
@@ -20,6 +21,7 @@ from chrono_ftp.ui.connectionlist import ConnectionList
 from chrono_ftp.ui.localside import LocalSide
 from chrono_ftp.ui.queueview import QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
+from chrono_ftp.ui.propertiesdialog import Calculator
 from chrono_ftp.ui.session import EditedFile, Session
 from chrono_ftp.ui.thumbnails import ThumbnailSide
 from chrono_ftp.ui.toolbars import Toolbars
@@ -27,9 +29,11 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.41"
+__version__ = "windowbase.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Block FE: what the Size and Checksum tabs of Properties ask, on each side, is made by the sizes part; the counts of a tab
+#          are stopped by the tabs part
 # v0.0.41: Block FD: a mask that was used is remembered for every mask field (remember_mask)
 # v0.0.40: Block FG: the actions of each list (list_actions); the settings, the greyed state and the menu items of block FG; a transfer can be a move
 # v0.0.39: Block FQ: the thumbnails of each side and their thread on this computer, the toolbars; the looks applied, and entered per tab
@@ -318,4 +322,16 @@ class WindowBase(QMainWindow):
         raise NotImplementedError
 
     def tab_refresh_items(self, menu: QMenu, session: Session) -> None:
+        raise NotImplementedError
+
+    def remote_calculator(self, session: Session, folder: str, chosen: list[RemoteEntry]) -> Calculator | None:
+        raise NotImplementedError
+
+    def local_calculator(self, folder: str, chosen: list[RemoteEntry]) -> Calculator:
+        raise NotImplementedError
+
+    def _stop_counts(self, which: Callable[[Session | None], bool]) -> None:
+        raise NotImplementedError
+
+    def run_alone(self, work: Callable[[], object], done: Callable[[object], None], failed: Callable[[Exception], None], stop: threading.Event) -> None:
         raise NotImplementedError

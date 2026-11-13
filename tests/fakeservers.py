@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import re
 import shutil
@@ -12,7 +13,10 @@ from pathlib import Path
 from typing import cast, override
 
 import asyncssh
+import asyncssh.sftp
 import pytest
+from asyncssh.constants import FXP_EXTENDED_REPLY
+from asyncssh.packet import SSHPacket, String
 from chrono_ftp.connections import trust
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.filesystems import AbstractedFS
@@ -20,9 +24,13 @@ from pyftpdlib.handlers import DTPHandler, FTPHandler, TLS_FTPHandler
 from pyftpdlib.servers import FTPServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeservers.py 0.0.37"
+__version__ = "fakeservers.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: An SFTP server that names check-file in its hello and computes checksums with it, or answers with another algorithm than
+#          the one asked for; an FTP server that offers HASH and the older checksum commands, or answers them with no checksum (FE-01);
+#          review round 1: both can take long over a checksum, as with a large file; review round 2: the path of a checksum command as
+#          it came
 # v0.0.37: An SSH server whose commands a test answers itself, so nothing runs on this computer: a stand-in for passwd that asks as
 #          the real one does (FM-10), or never says it is done, or drops the line after the new password; an FTP server that copies a file itself with SITE CPFR and CPTO (FM-06),
 #          or stops halfway
@@ -83,11 +91,81 @@ ENDING: list[Callable[[], None]] = []  # the ends of fake SSH servers that still
 Commands = Callable[[asyncssh.SSHServerProcess[str]], Coroutine[object, object, None]]
 
 
+SLOW_HASHING: threading.Event = threading.Event()  # set when a slow check-file has started on the server
+CHECK_FILE_ALGORITHMS: tuple[str, ...] = ("md5", "sha1", "sha224", "sha256", "sha384", "sha512")
+
+
+class _ExtendedReply:
+    """What the fake SFTP server sends back to check-file-name: asyncssh sends what encode gives."""
+
+    def __init__(self, data: bytes) -> None:
+        self.data: bytes = data
+
+    def encode(self, _version: int) -> bytes:
+        return self.data
+
+
+def _check_file_handler(answer: str) -> Callable[[object, SSHPacket], Coroutine[object, object, _ExtendedReply]]:
+    """check-file-name as the draft says: the first algorithm of the list the server knows, the hash of the whole file. answer
+    "other": always md5, whatever was asked, as a server that knows only that; "slow": the answer comes after a minute, as for a very
+    large file."""
+
+    async def check_file_name(handler: object, packet: SSHPacket) -> _ExtendedReply:
+        path = packet.get_string()
+        wanted = packet.get_string().decode("ascii")
+        packet.get_uint64()
+        packet.get_uint64()
+        packet.get_uint32()
+        packet.check_end()
+        server = cast(asyncssh.SFTPServer, getattr(handler, "_server"))
+        local = server.map_path(path)
+        algorithm = "md5" if answer == "other" else next((name for name in wanted.split(",") if name in CHECK_FILE_ALGORITHMS), "")
+        if not algorithm:
+            raise asyncssh.SFTPOpUnsupported("No such algorithm")
+        if not os.path.isfile(local):
+            raise asyncssh.SFTPNoSuchFile("No such file")
+        if answer == "slow":
+            SLOW_HASHING.set()  # a test waits for this, never for time
+            await asyncio.sleep(60)
+        digest = hashlib.new(algorithm, Path(os.fsdecode(local)).read_bytes()).digest()
+        return _ExtendedReply(String(algorithm) + digest)
+
+    return check_file_name
+
+
 @contextmanager
-def ssh_server(root: Path, shell: bool = True, commands: Commands | None = None) -> Generator[SshServer]:
+def _offering_check_file(answer: str) -> Generator[None]:
+    """For one block, every fake SFTP server names check-file in its hello and answers check-file-name; asyncssh has no hook for an
+    extension of its own, so its server class gets it for that block and loses it after."""
+    handler_class = asyncssh.sftp.SFTPServerHandler
+    names = ("_extensions", "_packet_handlers", "_return_types")
+    before = {name: handler_class.__dict__.get(name) for name in names}
+    handlers = cast(dict[object, object], getattr(handler_class, "_packet_handlers"))
+    returns = cast(dict[object, object], getattr(handler_class, "_return_types"))
+    extensions = cast(list[tuple[bytes, bytes]], getattr(handler_class, "_extensions"))
+    setattr(handler_class, "_extensions", [*extensions, (b"check-file", b"")])
+    setattr(handler_class, "_packet_handlers", {**handlers, b"check-file-name": _check_file_handler(answer)})
+    setattr(handler_class, "_return_types", {**returns, b"check-file-name": FXP_EXTENDED_REPLY})
+    try:
+        yield
+    finally:
+        for name, value in before.items():
+            if value is None:
+                delattr(handler_class, name)
+            else:
+                setattr(handler_class, name, value)
+
+
+@contextmanager
+def ssh_server(root: Path, shell: bool = True, commands: Commands | None = None, check_file: bool | str = False) -> Generator[SshServer]:
     """Real SSH and SFTP on a free local port; every SFTP path is inside root. commands: the test answers every command itself, and
-    nothing runs on this computer (the plain shell runs its commands here, on real paths). At the end of its block it takes no new connection; once
+    nothing runs on this computer (the plain shell runs its commands here, on real paths). check_file: it names check-file in its hello
+    and computes checksums with it; "other": it answers with md5 whatever was asked. At the end of its block it takes no new connection; once
     none is open any more (else at the end of the test, end_the_servers) it closes its event loop and its thread: nothing stays behind."""
+    if check_file:
+        with _offering_check_file(str(check_file)), ssh_server(root, shell, commands) as server:
+            yield server
+        return
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
@@ -214,7 +292,7 @@ NOT_AS_ROOT: pytest.MarkDecorator = pytest.mark.skipif(AS_ROOT, reason="as root 
 
 
 @contextmanager
-def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False, without: tuple[str, ...] = (), size_reply: str = "", drops_at_feat: bool = False, refuses_restart: bool = False, drops_data_after: int = 0, write_only: tuple[str, ...] = (), refuses_store: tuple[tuple[str, str], ...] = (), sizes_anywhere: bool = False, links_as_links: bool = False, full_modes: bool = False, noop_heard: Callable[[], None] | None = None, drops_at_noop: bool = False, command_heard: Callable[[str], None] | None = None, most_logins: int = 0, early_end_reply: str = "", copies: bool | str = False) -> Generator[int]:
+def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None, rights: str = "elradfmwMT", refuses_listing_options: bool = False, without: tuple[str, ...] = (), size_reply: str = "", drops_at_feat: bool = False, refuses_restart: bool = False, drops_data_after: int = 0, write_only: tuple[str, ...] = (), refuses_store: tuple[tuple[str, str], ...] = (), sizes_anywhere: bool = False, links_as_links: bool = False, full_modes: bool = False, noop_heard: Callable[[], None] | None = None, drops_at_noop: bool = False, command_heard: Callable[[str], None] | None = None, most_logins: int = 0, early_end_reply: str = "", copies: bool | str = False, hashes: str = "", checksum_commands: tuple[str, ...] = (), hash_reply: str = "", hash_seconds: float = 0.0, hash_heard: Callable[[str], None] | None = None) -> Generator[int]:
     """Real FTP on a free local port; with a certificate it offers TLS. trusted: the person already said yes to plain FTP on this port.
     without: commands this server does not know, so it does not offer them in FEAT or SITE HELP either. size_reply: what it answers to
     SIZE instead of the size. drops_at_feat: the line drops when the client asks what the server can do. refuses_restart: it offers
@@ -227,7 +305,10 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
     connections at once than this (0: any number); one more is answered with 421 and closed, as servers that limit them do.
     early_end_reply: what it answers when the client ends a download's data connection before the end (instead of 426). copies: it
     copies a file itself with SITE CPFR and CPTO, and says so in SITE HELP; "halfway": each copy stops after its first byte, as on a full
-    disk, and leaves that much behind."""
+    disk, and leaves that much behind. hashes: the HASH line of FEAT ("SHA-256*;SHA-1;MD5"), with OPTS HASH and HASH answered as the
+    draft says; checksum_commands: older commands it offers in FEAT and answers ("XSHA256", "XMD5"); hash_reply: what it answers to
+    every one of them instead of the checksum; hash_seconds: each answer comes this much later, as for a large file, while the
+    server goes on serving its other connections; hash_heard: called with the path of every checksum command as it came."""
     authorizer = DummyAuthorizer()
     authorizer.add_user(USER, PASSWORD, str(root), perm=rights)
     for folder in write_only:
@@ -358,14 +439,60 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
             if drops_at_feat:
                 self.close()
             else:
+                self._extra_feats = [*([f"HASH {hashes}"] if hashes else []), *checksum_commands]
                 super().ftp_FEAT(line)
 
         @override
         def ftp_OPTS(self, line: str) -> None:
             if refuses_listing_options and line.upper().startswith("MLST"):
                 self.respond("500 Don't know this option")  # some servers offer MLSD and have no such option
+            elif hashes and line.upper().startswith("HASH "):
+                wanted = line[5:].strip().upper()
+                if wanted not in [name.rstrip("*") for name in hashes.split(";")]:
+                    self.respond("501 Unknown algorithm")
+                    return
+                self.hash_chosen = wanted
+                self.respond(f"200 {wanted}")
             else:
                 super().ftp_OPTS(line)
+
+        def _digest(self, path: str, algorithm: str) -> tuple[str, int, str] | None:
+            if hash_heard is not None:
+                hash_heard(path)
+            real = cast(AbstractedFS, self.fs).ftp2fs(path.strip('"'))
+            if not os.path.isfile(real):
+                self.respond("550 No such file")
+                return None
+            data = Path(real).read_bytes()
+            return hashlib.new(algorithm, data).hexdigest(), len(data), Path(real).name
+
+        def ftp_HASH(self, path: str) -> None:
+            chosen = getattr(self, "hash_chosen", next(name.rstrip("*") for name in hashes.split(";") if name.endswith("*")))
+            found = self._digest(path, chosen.replace("-", "").lower())
+            if found is not None:
+                self._answer_later(hash_reply or f"213 {chosen} 0-{found[1]} {found[0]} {found[2]}")
+
+        def _answer_later(self, reply: str) -> None:
+            if not hash_seconds:
+                self.respond(reply)
+                return
+
+            def answer() -> None:
+                if not self._closed:
+                    self.respond(reply)
+
+            self.ioloop.call_later(hash_seconds, answer)
+
+        def _older(self, path: str, algorithm: str) -> None:
+            found = self._digest(path, algorithm)
+            if found is not None:
+                self._answer_later(hash_reply or f"250 {found[0]}")
+
+        def ftp_XSHA256(self, path: str) -> None:
+            self._older(path, "sha256")
+
+        def ftp_XMD5(self, path: str) -> None:
+            self._older(path, "md5")
 
     class TlsHandler(TLS_FTPHandler):
         pass
@@ -379,6 +506,8 @@ def ftp_server(root: Path, trusted: bool = True, certificate: Path | None = None
     handler.proto_cmds = {name: ({**details, "perm": None} if sizes_anywhere and name == "SIZE" else details) for name, details in known.items() if name not in without}
     if copies:
         handler.proto_cmds = {**handler.proto_cmds, **{name: {"perm": None, "auth": True, "arg": True, "help": f"Syntax: {name} <SP> path"} for name in ("SITE CPFR", "SITE CPTO")}}
+    if hashes or checksum_commands:
+        handler.proto_cmds = {**handler.proto_cmds, **{name: {"perm": None, "auth": True, "arg": True, "help": f"Syntax: {name} <SP> path"} for name in ("HASH", *checksum_commands)}}
     if links_as_links:
         handler.abstracted_fs = LinksAsLinks
     if full_modes:

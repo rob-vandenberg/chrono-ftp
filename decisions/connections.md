@@ -12,3 +12,4 @@
 10. [[D-062]] My key and my password on the server
 11. [[D-065]] The session log
 12. [[D-066]] Server information
+13. [[D-088]] Checksums without a shell

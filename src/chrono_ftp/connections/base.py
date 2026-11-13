@@ -8,13 +8,18 @@ from typing import BinaryIO, cast
 
 from chrono_ftp.connections.passwordchange import PasswordAnswer
 from chrono_ftp.connections.sessionlog import QUIET, SessionLog
+from chrono_ftp.core.hashes import CHECKSUM_ALGORITHMS as CHECKSUM_ALGORITHMS
+from chrono_ftp.core.hashes import CHECKSUM_HEX_LENGTHS
 from chrono_ftp.core.logrules import DETAILED
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, LocalActionFailed, LocalReadFailed, LocalWriteFailed, NameTaken, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "base.py 0.0.39"
+__version__ = "base.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: The checksums a connection's protocol computes on the server without a shell, and the checksum of one file there (FE-01);
+#          a command that stops as soon as it is told to, for long counts and checksums on the server; review round 1: the checksum
+#          of one file stops when told to, and a connection that does one thing at a time gives long requests a login of their own
 # v0.0.39: A small file read into memory, never onto the disk, that stops as soon as it is told to: the thumbnails (FQ-02)
 # v0.0.38: Every connection has its session log, a quiet one unless it makes its own (FP-02); what a connection tells about itself for
 #          the server information window, and the free space of a folder where the server tells it (FP-03)
@@ -59,6 +64,8 @@ NO_ATOMIC_TEXT: str = "This server can't replace a name in one step."
 NO_PASSWORD_TEXT: str = "The password can be changed only on an SFTP connection with a shell."
 NO_READ_TEXT: str = "This connection can't read a file into memory."
 TOO_LARGE_TEXT: str = "This file is larger than {most} bytes, so it was not read."
+NO_CHECKSUM_TEXT: str = "This server computes no checksums over this connection."
+FIND_PRINTF: str = "find-printf"  # the tool name of a find that prints the size of each file (GNU), detected with the tools (FE-02)
 KeepGoing = Callable[[], bool]  # asked before every block: False stops the work at once
 Progress = Callable[[int], None]  # bytes done since the last call; it may raise to stop the transfer
 Limit = int | Callable[[], int]  # KB per second, 0 for none; a function is asked again for every block, so a change takes effect at once
@@ -134,6 +141,7 @@ class Capabilities:
     symlinks: bool = False  # a symbolic link can be made through the protocol (FM-05)
     hardlinks: bool = False  # a hard link can be made through the protocol (SFTP's hardlink@openssh.com or version 6)
     atomic_rename: bool = False  # a rename replaces its target in one step (SFTP's posix-rename@openssh.com)
+    checksums: frozenset[str] = field(default_factory=frozenset[str])  # what the protocol hashes on the server without a shell (FE-01)
 
     def has(self, tool: str) -> bool:
         return self.shell and tool in self.tools
@@ -165,6 +173,15 @@ class FreeSpace:
     available: int | None
     total: int | None
     how: str  # how it was found: "statvfs@openssh.com", "df", "AVBL"
+
+
+def checksum_from(text: str, algorithm: str) -> str | None:
+    """A checksum a server sent is input (OR-15): only hex digits of the length the algorithm gives are one; it is kept in lower case."""
+    found = text.strip().lower()
+    length = CHECKSUM_HEX_LENGTHS.get(algorithm)
+    if length is None or len(found) != length or any(character not in "0123456789abcdef" for character in found):
+        return None
+    return found
 
 
 def size_from(value: object) -> int | None:
@@ -345,6 +362,11 @@ class RemoteConnection(ABC):
     def run(self, command: str) -> CommandResult:
         raise NotImplementedError
 
+    def run_stoppable(self, command: str, keep_going: KeepGoing) -> CommandResult | None:
+        """A command that may run long (a count or checksums of a large tree): None when keep_going said stop before it ended, and the
+        command is then ended on the server where the connection can. Where a connection can't end a command early, it is run."""
+        return self.run(command)
+
     def run_briefly(self, command: str, seconds: float) -> CommandResult:
         """A command that should answer at once (a list of names); one that takes longer than seconds is ended and refused
         (RemoteActionFailed), while the connection itself goes on. Where a connection can't end a command early, it is run."""
@@ -495,6 +517,18 @@ class RemoteConnection(ABC):
         """A small file read into memory, never onto the disk (FQ-02): its bytes, or None when keep_going said stop before the end. A file
         larger than most bytes is refused (RemoteActionFailed) once that many have come, whatever the listing said of its size."""
         raise RemoteActionFailed(NO_READ_TEXT)
+
+    def checksum(self, path: str, algorithm: str, keep_going: KeepGoing = lambda: True) -> str | None:
+        """The checksum of one file, computed by the server itself through the protocol, without a shell (FE-01), as lower-case hex;
+        None when keep_going said stop before the server answered, which ends the request at once. Only for an algorithm in
+        capabilities.checksums; a refusal, or an answer that is no checksum, is raised (RemoteActionFailed)."""
+        raise RemoteActionFailed(NO_CHECKSUM_TEXT)
+
+    def login_of_its_own(self) -> "RemoteConnection | None":
+        """A login of its own for long requests (checksums), where this connection does one thing at a time, so the tab never waits for
+        them; the caller closes it. None where long requests can run beside the others on this login. Raises ConnectionFailed
+        (NoMoreLogins where the server takes no further login now)."""
+        return None
 
     def server_info(self) -> ServerInfo:
         """What the connection tells about itself (FP-03); a connection that knows nothing of it tells nothing."""
