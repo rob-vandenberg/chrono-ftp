@@ -13,9 +13,11 @@ from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, 
 from chrono_ftp.ui.pathbar import FilterMark, PathBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "localside.py 0.0.41"
+__version__ = "localside.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: The folder tree is sorted by name; it showed folders in the order the file system handed them over, which was not always by
+#          name and left the tree jumbled
 # v0.0.41: The active filter shows next to the path; a click changes it, its button clears it (FD-06)
 # v0.0.40: The status line shows the selection totals, or what was typed to find a name, with the hidden and filtered counts (FG-01,
 #          FG-09, FG-13); Back and Forward go several steps from their drop-down, which leaves out folders removed since (FG-10); a folder
@@ -73,6 +75,8 @@ class LocalSide(QWidget):
         self.tree_model.setRootPath(QDir.rootPath())
         self.tree = QTreeView()
         self.tree.setModel(self.tree_model)
+        self.tree.setSortingEnabled(True)  # without this the tree shows folders in the order the file system hands them over, which is not always by name
+        self.tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)  # by name, the order a person expects and the order the file list uses
         self.tree.setRootIndex(self.tree_model.index(QDir.rootPath()))
         self.tree.setHeaderHidden(True)
         for column in range(1, self.tree_model.columnCount()):
