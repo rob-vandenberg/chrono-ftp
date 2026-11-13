@@ -23,13 +23,14 @@ from chrono_ftp.ui.transferdialog import NOT_WRITABLE_HERE_TEXT, TransferDialog
 from chrono_ftp.ui.transferoptionsform import TransferOptionsDialog, summary_text
 from tests.fakeservers import NOT_AS_ROOT, ftp_server, ssh_server
 from tests.test_engine import Scripted
-from tests.ui.test_ui_sessions import connected, names_on_the_right, select, ssh_settings, transfers_ended, trust_server, window
+from tests.ui.test_ui_sessions import both_ways, connected, names_on_the_right, select, ssh_settings, synchronize_window, transfers_ended, trust_server, window
 from tests.ui.test_ui_transfers import OLD_TIME, ftp_settings, settled, upload_one, write_at
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_transfer_choices.py 0.0.12"
+__version__ = "test_ui_transfer_choices.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Synchronize through its checklist window and Apply (block FF)
 # v0.0.12: Initial: an Edit save and Synchronize carry only what the connection can do; Transfer settings from the transfer window
 #          reach the summary and the job; Synchronize's downloads ask nothing and use the options; a drop on the way up on the right;
 #          the size done of a job without a counted total; a drop on the right from a lost tab; OK without rights to set; Count first in
@@ -72,11 +73,9 @@ def test_synchronize_on_a_server_without_dates_and_rights_carries_only_what_it_c
     with ftp_server(root, without=LIMITED) as port:
         connected(qtbot, window, ftp_settings(port))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 1)
-        dialog.copy_button.click()
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 1)
+        dialog.apply_button.click()
         qtbot.waitUntil(lambda: transfers_ended(window))
         settled(qtbot, window)
     [job] = window.queue.jobs
@@ -133,11 +132,9 @@ def test_synchronize_fetches_a_ticked_file_over_the_one_here_without_a_question_
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 1)
-        dialog.copy_button.click()
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 1)
+        dialog.apply_button.click()
         qtbot.waitUntil(lambda: transfers_ended(window))
         settled(qtbot, window)
     [job] = window.queue.jobs

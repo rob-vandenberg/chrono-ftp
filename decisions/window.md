@@ -48,3 +48,4 @@
 46. [[D-086]] The filter window
 47. [[D-089]] The Size and Checksum tabs of Properties
 48. [[D-090]] Folder sizes in the file list
+49. [[D-096]] Moved files, and two folders on this computer

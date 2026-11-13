@@ -29,12 +29,13 @@ from chrono_ftp.ui.windowsizes import COUNT_STOPPED_TEXT, FOLDER_SIZES_KEY, NO_F
 from tests.fakeservers import NOT_AS_ROOT, SLOW_HASHING, USER, ftp_server, ssh_server
 from tests.ui.test_ui_properties import pick_local
 from tests.ui.test_ui_selection import with_settings
-from tests.ui.test_ui_sessions import connected, names_on_the_right, select, ssh_settings, trust_server, window
+from tests.ui.test_ui_sessions import both_ways, connected, names_on_the_right, select, ssh_settings, synchronize_window, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_hashes.py 0.0.42"
+__version__ = "test_ui_hashes.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Synchronize now opens on the direction of the side with the focus, and its rows are the plan (block FF)
 # v0.0.42: Initial: block FE, hashes and sizes without a shell (FE-01 to FE-03); review round 1: calculations that never wait for
 #          each other, counts that stop with their tab, Shift+Space typing a space into a name being searched; review round 2: a
 #          stopped Compare Contents says so
@@ -329,16 +330,14 @@ def test_compare_contents_without_a_shell_leaves_out_what_has_the_same_content(q
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 2)
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 2)
         qtbot.waitUntil(dialog.contents_button.isEnabled)
         dialog.contents_button.click()
         qtbot.waitUntil(lambda: dialog.table.rowCount() == 1 and dialog.contents_button.text() == CONTENTS_TEXT)
-        name, difference = dialog.table.item(0, 0), dialog.table.item(0, 1)
+        name, difference = dialog.table.item(0, 0), dialog.table.item(0, 6)
         assert name is not None and difference is not None
-        assert (name.text(), difference.text()) == ("other.txt", "Other content, newer on the server")
+        assert (name.text(), difference.text()) == ("other.txt", "Newer on the server")
         assert name.checkState() == Qt.CheckState.Checked
         dialog.close()
 
@@ -353,10 +352,8 @@ def test_compare_contents_on_ftp_without_a_hash_is_greyed_with_its_reason(qtbot:
     with ftp_server(root) as port:
         connected(qtbot, window, ftp_settings(port))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 1)
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 1)
         assert not dialog.contents_button.isEnabled() and dialog.contents_button.toolTip() == checksums.NO_WAY_ON_FTP_TEXT
         dialog.close()
 
@@ -465,9 +462,8 @@ def test_a_stopped_compare_contents_says_so_and_keeps_its_rows(qtbot: QtBot, win
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 1)
         qtbot.waitUntil(dialog.contents_button.isEnabled)
         dialog.contents_button.click()
         assert SLOW_HASHING.wait(10)

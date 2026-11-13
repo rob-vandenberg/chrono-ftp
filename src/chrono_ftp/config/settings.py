@@ -8,13 +8,15 @@ from chrono_ftp.core.hashes import CHECKSUM_ALGORITHMS, STANDARD_ALGORITHM
 from chrono_ftp.core.filecolours import MOST_RULES, ColourRule, colour_valid
 from chrono_ftp.core.logrules import KEPT, OFF, SIZE_MEGABYTES, kept_valid, level_valid, size_valid
 from chrono_ftp.core.masks import LONGEST_MASK, problem
+from chrono_ftp.core.synchronizing import Criterion, Direction, Mode, Options as SyncOptions, MOST_SCAN_COUNTS, LONGEST_PAIR, MOST_FILES_COUNTED
 from chrono_ftp.core.presets import LONGEST_NAME, MOST_PRESETS, STANDARD_NAME, Preset, PresetRules
 from chrono_ftp.core.transferoptions import NAME_CASES, RESUME_MODES, TRANSFER_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.42"
+__version__ = "settings.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: The choices of the Synchronize window and the file count of the last scan of each folder pair, each checked on load (FF-11, FF-13)
 # v0.0.42: The checksum algorithm last chosen in Properties (FE-02), checked on load
 # v0.0.41: Masks (block FD): the file mask, hidden files, empty folders, the transfer mode with its text mask and BOM, and the names of
 #          the transfer options (FD-01 to FD-03); the transfer presets with their rules (FD-04); the history of masks typed (FD-05,
@@ -116,6 +118,8 @@ class Settings:
     presets: tuple[Preset, ...] = ()  # named sets of transfer options with their rules (FD-04); the standard set is transfer_options
     mask_history: tuple[str, ...] = ()  # the masks typed last, the newest first
     checksum_algorithm: str = STANDARD_ALGORITHM  # the last one chosen in Properties (FE-02)
+    synchronize: SyncOptions = field(default_factory=SyncOptions)  # every choice of the Synchronize window, kept for next time (FF-11)
+    scan_counts: tuple[tuple[str, int], ...] = ()  # per folder pair, how many names its last scan looked at (FF-13)
 
 
 def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
@@ -124,6 +128,45 @@ def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
     if not cleaned or len(cleaned) > LONGEST_MASK:
         return history
     return (cleaned, *(item for item in history if item != cleaned))[:MOST_MASKS_KEPT]
+
+
+def _synchronize(data: object) -> SyncOptions:
+    """Each choice on its own: a bad one gives its standard value, the others stay (OR-15)."""
+    standard = SyncOptions()
+    found = cast(dict[str, object], data) if isinstance(data, dict) else {}
+
+    def flag(name: str, default: bool) -> bool:
+        value = found.get(name)
+        return value if isinstance(value, bool) else default
+
+    def named(name: str, kind: type[Direction] | type[Mode] | type[Criterion], default: object) -> object:
+        value = found.get(name)
+        return kind[value] if isinstance(value, str) and value in kind.__members__ else default
+
+    mask = found.get("mask")
+    direction, mode, criterion = named("direction", Direction, standard.direction), named("mode", Mode, standard.mode), named("criterion", Criterion, standard.criterion)
+    return SyncOptions(
+        direction=direction if isinstance(direction, Direction) else standard.direction,
+        mode=mode if isinstance(mode, Mode) else standard.mode,
+        criterion=criterion if isinstance(criterion, Criterion) else standard.criterion,
+        case_matters=flag("case_matters", standard.case_matters),
+        delete_other_side=flag("delete_other_side", standard.delete_other_side),
+        existing_only=flag("existing_only", standard.existing_only),
+        no_subfolders=flag("no_subfolders", standard.no_subfolders),
+        selected_only=flag("selected_only", standard.selected_only),
+        mask=mask if isinstance(mask, str) and len(mask) <= LONGEST_MASK and not problem(mask) else standard.mask,
+        skip_empty_folders=flag("skip_empty_folders", standard.skip_empty_folders),
+    )
+
+
+def _scan_counts(data: object) -> tuple[tuple[str, int], ...]:
+    """The file count of the last scan of each folder pair; a damaged one is left out (OR-15, FF-13)."""
+    found: list[tuple[str, int]] = []
+    for item in cast(list[object], data)[:MOST_SCAN_COUNTS] if isinstance(data, list) else []:
+        pair = cast(list[object], item) if isinstance(item, list) else []
+        if len(pair) == 2 and isinstance(pair[0], str) and 0 < len(pair[0]) <= LONGEST_PAIR and isinstance(pair[1], int) and not isinstance(pair[1], bool) and 0 <= pair[1] <= MOST_FILES_COUNTED:
+            found.append((pair[0], pair[1]))
+    return tuple(found)
 
 
 def keep_done_valid(value: object) -> bool:
@@ -310,11 +353,19 @@ def load() -> Settings:
         presets=_presets(data.get("presets")),
         mask_history=_mask_history(data.get("mask_history")),
         checksum_algorithm=choice("checksum_algorithm", CHECKSUM_ALGORITHMS, STANDARD_ALGORITHM),
+        synchronize=_synchronize(data.get("synchronize")),
+        scan_counts=_scan_counts(data.get("scan_counts")),
     )
 
 
 def save(settings: Settings) -> None:
     data = asdict(settings)
+    chosen = data.get("synchronize")
+    if isinstance(chosen, dict):
+        for name in ("direction", "mode", "criterion"):  # an enum is kept by its name, so an unknown one falls back on load (OR-15)
+            value = cast(dict[str, object], chosen).get(name)
+            if isinstance(value, (Direction, Mode, Criterion)):
+                cast(dict[str, object], chosen)[name] = value.name
     options = data["transfer_options"]
     if isinstance(options, dict):
         options.pop("delete_source", None)  # a move is chosen for one transfer, never kept

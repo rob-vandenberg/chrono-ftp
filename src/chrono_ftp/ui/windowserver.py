@@ -1,4 +1,4 @@
-"""The actions of the main window on the server: rename, move, delete, find, synchronize and the terminal."""
+"""The actions of the main window on the server: rename, move, delete, find and the terminal."""
 
 import os
 import subprocess
@@ -11,22 +11,19 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from chrono_ftp.connections.base import joined, parent_of, RemoteConnection, RemoteEntry, safe_name, shown_name
-from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.errors import RemoteActionFailed
-from chrono_ftp.core.transferoptions import plain
-from chrono_ftp.engine import checksums, commands
-from chrono_ftp.engine.compare import Contents, compare_contents, compare_folders, Found
+from chrono_ftp.engine import commands
 from chrono_ftp.engine.terminal import terminal_arguments
-from chrono_ftp.ui.comparedialog import CompareDialog, uploads
 from chrono_ftp.ui.searchdialog import SearchDialog
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WindowBase
 from chrono_ftp.ui.plaintext import box_text, fitting
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowserver.py 0.0.42"
+__version__ = "windowserver.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Synchronize moved to windowsynchronize.py, where it became the checklist window of block FF (FF-04, D-041)
 # v0.0.42: Compare Contents in Synchronize: the checksum step through the best way the connection offers, also without a shell where
 #          the server computes checksums, on a thread of its own and stoppable (FE-01, D-027); review round 1: each run on a thread
 #          of its own, stopped when the main window closes; a note on the way shows in the window
@@ -41,7 +38,7 @@ __version__ = "windowserver.py 0.0.42"
 
 
 class ServerPart(WindowBase):
-    """The actions of the main window on the server: rename, move, delete, find, synchronize and the terminal."""
+    """The actions of the main window on the server: rename, move, delete, find and the terminal."""
 
     def rename(self) -> None:
         screen = self._on_screen()
@@ -134,76 +131,6 @@ class ServerPart(WindowBase):
 
         dialog.search_requested.connect(find)
         dialog.result_opened.connect(opened)
-        dialog.show()
-
-    def compare(self) -> None:
-        screen = self._on_screen()
-        if screen is None:
-            return
-        session, folder, _chosen = screen
-        local_folder = self.local_side.folder
-        remote = session.remote
-        if remote is None:
-            return
-        algorithm = checksums.preferred_algorithm(session.capabilities)
-        dialog = CompareDialog(local_folder, folder, self, checksums.why_no_checksum(session.capabilities, session.connection.protocol == FTP))
-        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)  # it belongs to this tab: no other tab can come up meanwhile
-        connection: RemoteConnection = remote
-        runs: list[threading.Event] = []  # each run of the checksum step has its own stop: a stopped one never answers for the next
-
-        def show(found: list[Found]) -> None:
-            dialog.show_found(found)
-
-        def failed(error: Exception) -> None:
-            dialog.show_failure(shown_name(str(error)))
-
-        def copy(rows: list[Found]) -> None:
-            # The ticked rows are the decision: no overwrite question and no "only newer"; dates, rights and resume as in Settings.
-            if session not in self.sessions or not session.alive or session.remote is not remote:
-                self._lost_meanwhile(session)  # nothing is queued: the tab is grey, and Reconnect brings it back
-                return
-            options = replace(plain(self.settings.transfer_options), ask_before_replacing=False, only_newer=False)  # exactly the rows ticked, byte for byte
-            for row in rows:
-                here = os.path.join(local_folder, row.folder) if row.folder else local_folder
-                there = joined(folder, row.folder) if row.folder else folder
-                if uploads(row):
-                    self._add_job(session, os.path.join(here, row.name), there, True, row.name, options)
-                else:
-                    self._add_job(session, here, joined(there, row.name), False, row.name, options)
-
-        def contents() -> None:
-            """The checksum step (D-020, D-027) on a thread of its own: the tab's own thread stays free for browsing."""
-            stop = threading.Event()
-            runs.append(stop)
-            dialog.contents_started(algorithm)
-            rows = list(dialog.found)
-
-            def ended(result: Contents | None) -> None:
-                if stop is not runs[-1]:
-                    return  # an earlier run that was stopped
-                dialog.contents_ended(result.found if result is not None else None, *((result.same, result.unknown) if result is not None else (0, 0)))
-
-            def refused(error: Exception) -> None:
-                if stop is runs[-1]:
-                    dialog.contents_ended(None)
-                    dialog.show_failure(shown_name(str(error)))
-
-            def told(text: str) -> None:
-                self.bridge.deliver(lambda: dialog.show_failure(text) if stop is runs[-1] and not stop.is_set() else None)
-
-            def answered(result: object) -> None:
-                ended(result if isinstance(result, Contents) else None)
-
-            self.run_alone(lambda: compare_contents(connection, local_folder, folder, rows, algorithm, lambda: not stop.is_set(), told), answered, refused, stop)
-
-        def stopped() -> None:
-            if runs:
-                runs[-1].set()
-
-        dialog.copy_requested.connect(copy)
-        dialog.contents_requested.connect(contents)
-        dialog.contents_stopped.connect(stopped)
-        session.worker.submit(lambda: compare_folders(remote, local_folder, folder), show, failed)
         dialog.show()
 
     def open_terminal(self) -> None:

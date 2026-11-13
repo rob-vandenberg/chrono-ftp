@@ -29,9 +29,11 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.42"
+__version__ = "windowbase.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Block FF: the synchronize part builds its own list actions and greys them, and owns Synchronize, the window for two
+#          folders on this computer and Mark Differences
 # v0.0.42: Block FE: what the Size and Checksum tabs of Properties ask, on each side, is made by the sizes part; the counts of a tab
 #          are stopped by the tabs part
 # v0.0.41: Block FD: a mask that was used is remembered for every mask field (remember_mask)
@@ -334,4 +336,22 @@ class WindowBase(QMainWindow):
         raise NotImplementedError
 
     def run_alone(self, work: Callable[[], object], done: Callable[[object], None], failed: Callable[[Exception], None], stop: threading.Event) -> None:
+        raise NotImplementedError
+
+    def _build_synchronize(self) -> None:
+        raise NotImplementedError
+
+    def _update_synchronize_actions(self) -> None:
+        raise NotImplementedError
+
+    def compare(self) -> None:
+        raise NotImplementedError
+
+    def synchronize(self) -> None:
+        raise NotImplementedError
+
+    def synchronize_two_local_folders(self) -> None:
+        raise NotImplementedError
+
+    def mark_differences(self, side_name: str) -> None:
         raise NotImplementedError

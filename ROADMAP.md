@@ -62,8 +62,8 @@ One milestone per block of the private `FEATURES.md` (D-001, OR-13), in the orde
 12. FG, selection and keys, large: done in 0.0.40. Type-ahead, selection keys, a keyboard-driven two-pane mode, the full key set, size format, column menu, natural sort, path in the title, clipboard copies, and selection totals (D-072 to D-080).
 13. FD, masks, large: done in 0.0.41. One filter engine for include and exclude by name, path, size and date; text mode with line-ending conversion; file name conversion; transfer presets; selecting by mask; a filter window with history (D-081 to D-087).
 14. FE, hashes and sizes without a shell, small: done in 0.0.42. Checksums through the shell, SFTP's check-file or FTP's HASH, and Compare Contents with them; size and checksum tabs in Properties; folder sizes in the file list (Shift+Space).
-15. FF, synchronize, huge: next. The full synchronize: directions, mirror, criteria, a checklist before applying, moved files, deletes, masks, through the queue, remembered settings, and two local folders.
-16. FI, tabs and workspaces, medium: open. Tab extras, workspaces, and copy and paste between tabs.
+15. FF, synchronize, huge: done in 0.0.43. Directions and modes, the criteria with the reported date precision, a checklist of every planned action before Apply, moved files, deletes that are named and asked for, masks, Apply through the queue, remembered choices, Mark Differences in both lists, and two folders on this computer (D-038 changed, D-091 to D-096).
+16. FI, tabs and workspaces, medium: next. Tab extras, workspaces, and copy and paste between tabs.
 17. FJ, the connection list, medium: open. Folders in the list, notes, type-to-find, import of the SSH config, and opening or generating a URL.
 18. FK, SSH options, large: open. Server command such as sudo, timeout and IP version, proxy, jump host, agent and certificates, an expired password, and algorithm order.
 19. FL, FTP and server details, medium: open. Implicit TLS, active or passive mode, keepalives, automatic reconnect, time zone, encoding, and link options.

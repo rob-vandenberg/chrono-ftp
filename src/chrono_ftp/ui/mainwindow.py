@@ -37,14 +37,17 @@ from chrono_ftp.ui.windowprogram import ProgramPart
 from chrono_ftp.ui.windowselection import SelectionPart
 from chrono_ftp.ui.windowserver import ServerPart
 from chrono_ftp.ui.windowsizes import SizesPart
+from chrono_ftp.ui.windowsynchronize import SynchronizePart
 from chrono_ftp.ui.windowtabs import TabsPart
 from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.42"
+__version__ = "mainwindow.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Block FF, synchronize (windowsynchronize.py): the Synchronize window with its choices and its checklist, Mark Differences
+#          in both lists and Synchronize with another folder on this computer on the left (FF-12, FF-14)
 # v0.0.42: Block FE, hashes and sizes (windowsizes.py): Shift+Space counts the folder sizes, greyed with its reason; closing stops the
 #          counting and the calculations of Properties and Compare
 # v0.0.41: Block FD, masks: the button next to the path of each side clears its filter
@@ -82,7 +85,7 @@ LIMIT_TIP: str = "The highest speed of all transfers together: the running items
 UNFINISHED_TEXTS: tuple[str, str] = ("1 transfer is not finished.", "{count} transfers are not finished.")
 
 
-class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart, SizesPart):
+class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPart, ServerPart, SynchronizePart, PropertiesPart, TransfersPart, NavigationPart, ProgramPart, LooksPart, SelectionPart, SizesPart):
     """The window: this computer on the left, the server on the right (OR-1), built from one part per group of actions (D-041)."""
 
     def __init__(self) -> None:
@@ -205,6 +208,7 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self._build_looks()  # file colours, thumbnails and the toolbar menu (block FQ)
         self._build_selection()  # the selection, the keys and the menus of block FG
         self._build_sizes()  # the folder sizes and the calculations of Properties (block FE)
+        self._build_synchronize()  # Mark Differences in both lists and the second folder on this computer (block FF)
         self.settings = saved_settings.load()
         self._apply_settings()
         self._restore_sizes()
@@ -393,3 +397,4 @@ class MainWindow(LayoutPart, TabsPart, FoldersPart, EditPart, QueuePart, LocalPa
         self.update_queue_actions()
         self._update_selection_actions()
         self._update_size_actions()
+        self._update_synchronize_actions()

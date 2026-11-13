@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.42; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.43; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -208,3 +208,18 @@ The modules of block FE, one line each:
 8. `ui/propertiesdialog.py`: the Size and Checksum tabs and the `Calculator` they ask (D-089); `ui/comparedialog.py`: Compare Contents (D-088).
 9. `ui/filelist.py`: the folder sizes in the Size column, "at least" where something could not be read, and Shift+Space never typed nor marking (D-090).
 10. `ui/windowsizes.py`: the part of the main window that ties them together: a worker per side for the folder sizes, each tied to its tab, and a thread of its own for each calculation of Properties and Compare (`run_alone`), on the server over the tab's own connection, so the person's own requests never wait behind them (D-019, D-090); `ui/windowserver.py` runs Compare Contents through it.
+
+## 16. Synchronize (block FF, version 0.0.43)
+
+The modules of block FF, one line each:
+
+1. `core/synchronizing.py`: the choices of the Synchronize window as pure data: the direction, the mode, the criterion, the case choice, the deletes, the scope and the masks; the key of a folder pair and the file count of its last scan (D-091 to D-093).
+2. `engine/synchronize.py`: the whole plan without a screen: the scan of both sides through a reader (so a server, a fake server and a second folder on this computer are all the same to it), the date precision the listing reports, what counts as a difference per criterion, the rows with their actions and ticks, the moves, a row reversed, and the count and size per action (D-038, D-091 to D-094, D-096).
+3. `transfers/sidework.py`: a queue item that is no transfer: the deletes, the moves on one side, the dates to set and the copies between two folders on this computer; one step that is refused never stops the rest (D-095).
+4. `transfers/queue.py`, `transfers/job.py`: a job may carry side work instead of a transfer; the queue runs it like any other item, with its progress counting the steps done (D-095).
+5. `config/settings.py`: every choice of the window and the file count per folder pair, each checked when read (D-091 to D-093, OR-15).
+6. `ui/synchronizeoptions.py`: the choices as the person sets them, with what this connection can't do greyed and its reason as hover text (OR-7, OR-20).
+7. `ui/comparedialog.py`: the Synchronize window: the choices on top, the checklist below with the size and date of both sides, sorting by any column, Select by action, Reverse, the counts per action, the progress bar of a scan, and Compare Contents of block FE (D-038, D-088).
+8. `ui/filelist.py`: `select_names`, which marks exactly what Mark Differences found (FF-12).
+9. `ui/windowsynchronize.py`: the part of the main window that ties them together: the scan on the tab's own thread, the counting of a one-sided folder and the checksum step on threads of their own, Apply through the queue, the question before a delete, Mark Differences, and the same window for two folders on this computer (D-019, D-094 to D-096).
+

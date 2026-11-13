@@ -12,9 +12,10 @@ from chrono_ftp.core.transferoptions import TransferOptions
 from chrono_ftp.transfers.options import Action, Answer, Answers, Conflict
 
 # --- Version ------------------------------------------------------------
-__version__ = "job.py 0.0.41"
+__version__ = "job.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: A job can be side work instead of a transfer: a delete, a move, a date set or a copy on this computer (FF-10)
 # v0.0.41: The size a converted text has at the target, for a later run of the job (FD-02)
 # v0.0.13: Queue control (FC-02, FC-03): a job can be paused and knows when it continues a pause, keeps the answers given about its
 #          files for a resume or a retry, has a speed limit of its own, can be deleted while it runs, and knows when it was done; what
@@ -86,6 +87,8 @@ class Job:
     # rsync sent before a pause, a stop or a failure: their size and date as read; they are removed (each checked again) when it goes on
     held: str = ""  # why it still waits while it could otherwise run (schedule.HELD_PLACE, schedule.HELD_ROOM); empty: only its turn
     speed: float | None = None  # bytes per second of late, while it runs; None while unknown
+    side: object | None = None  # a transfers.sidework.SideJob: this item deletes, moves, sets dates or copies on this computer
+    # instead of transferring (FF-10). The queue runs it as any other item; nothing else looks at it.
 
     @property
     def continue_later(self) -> bool:

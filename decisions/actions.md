@@ -14,3 +14,9 @@
 12. [[D-063]] New file, the file manager and the terminal's folder
 13. [[D-088]] Checksums without a shell
 14. [[D-089]] The Size and Checksum tabs of Properties
+15. [[D-091]] The directions and modes of Synchronize
+16. [[D-092]] What two files are compared by
+17. [[D-093]] The scope of a scan and its masks
+18. [[D-094]] Synchronize may delete, and says so first
+19. [[D-095]] Apply goes through the queue
+20. [[D-096]] Moved files, and two folders on this computer

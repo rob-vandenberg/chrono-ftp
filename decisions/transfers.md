@@ -15,3 +15,4 @@
 13. [[D-083]] File name conversion
 14. [[D-084]] Transfer presets
 15. [[D-087]] Masks in transfers
+16. [[D-095]] Apply goes through the queue

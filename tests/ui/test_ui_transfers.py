@@ -44,12 +44,13 @@ from chrono_ftp.ui.windowtransfers import A_FOLDER, CANT_LOOK_HERE_TEXT, IS_A_FI
 from chrono_ftp.ui.transferoptionsform import RIGHTS_INCOMPLETE_TEXT, TransferOptionsDialog, TransferOptionsForm
 from tests.fakeservers import AS_ROOT, NOT_AS_ROOT, PASSWORD, USER, ftp_server, ssh_server
 from tests.test_engine import Scripted
-from tests.ui.test_ui_sessions import MAGENTA, connected, names_on_the_right, pick_local, select, ssh_settings, transfers_ended, trust_server, window
+from tests.ui.test_ui_sessions import MAGENTA, both_ways, connected, names_on_the_right, pick_local, select, ssh_settings, synchronize_window, transfers_ended, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_transfers.py 0.0.34"
+__version__ = "test_ui_transfers.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Synchronize through its checklist window and Apply (block FF)
 # v0.0.34: The test of two tabs on one login opens two differently named connections, as one connection opens one tab only (D-051)
 # v0.0.12: Initial: the transfer window, Transfer settings greyed by the server, the overwrite question, the rights field, Settings; the
 #          window starts from what the server can do, ~ and relative folders, Browse both ways, the folder picker without a connection,
@@ -867,14 +868,12 @@ def test_synchronize_does_exactly_the_ticked_rows_without_a_question_or_only_new
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 1)
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 1)
         row = dialog.table.item(0, 0)
         assert row is not None
         row.setCheckState(Qt.CheckState.Checked)  # the person ticks it: that is the decision, no question follows
-        dialog.copy_button.click()
+        dialog.apply_button.click()
         settled(qtbot, window)
     assert (root / "a.txt").read_text(encoding="utf-8") == "the longer one"
     assert (root / "a.txt").stat().st_mtime == OLD_TIME  # the dates of Settings still hold
@@ -1517,10 +1516,8 @@ def test_synchronize_queues_nothing_once_its_connection_was_lost(qtbot: QtBot, w
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 1)
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 1)
         row = dialog.table.item(0, 0)
         assert row is not None
         row.setCheckState(Qt.CheckState.Checked)
@@ -1536,7 +1533,7 @@ def test_synchronize_queues_nothing_once_its_connection_was_lost(qtbot: QtBot, w
 
         monkeypatch.setattr(window.status, "showMessage", show)
         monkeypatch.setattr(QMessageBox, "information", box)
-        dialog.copy_button.click()
+        dialog.apply_button.click()
     assert window.queue.jobs == [] and not (root / "a.txt").exists()
     assert shown == boxes == [f"Shop: {LOST_MEANWHILE_TEXT}"]
 

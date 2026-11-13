@@ -19,12 +19,15 @@ from chrono_ftp.transfers.job import PART_SUFFIX, Job, Meter, State, Stopped
 from chrono_ftp.transfers.options import BATCH_CHOICES, Action, Answer, Choice, Conflict, resumable
 from chrono_ftp.transfers.conversion import chooses_items
 from chrono_ftp.transfers.rsyncway import PARTIAL_FOLDER, drop_own_partials, is_partial_folder, partial_folder_of, remove_arrived_sources, rsync_possible, with_rsync
+from chrono_ftp.transfers.sidework import SideJob, run_side_job
 from chrono_ftp.transfers.schedule import AT_ONCE, FEWEST_AT_ONCE, HELD_NEXT, HELD_PLACE, HELD_ROOM, MOST_AT_ONCE, Server, in_the_way, server_of, share
 
 # --- Version ------------------------------------------------------------
-__version__ = "queue.py 0.0.41"
+__version__ = "queue.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: An item can be side work instead of a transfer: the deletes, moves, dates and local copies of Apply in the Synchronize
+#          window run through the queue like any other item (FF-10)
 # v0.0.41: Masks (block FD): a job with a file mask, hidden files or empty folders left out, text files or changed names is looked
 #          over first, so rsync gets the exact list of what passes, and what it can't send goes file by file; what was left out is told
 # v0.0.13: Queue control (FC-02 to FC-04): close() waits for the thread, and no call reaches the window once it returned; pause and
@@ -922,7 +925,10 @@ class TransferQueue:
         state, message = State.DONE, ""
         no_room = False  # the server took no login for it: it waits for its turn again, as if it never ran
         try:
-            self._transfer(job)
+            if isinstance(job.side, SideJob):
+                self._side_work(job, job.side)  # a delete, a move, a date set or a copy on this computer (FF-10)
+            else:
+                self._transfer(job)
         except Stopped:
             state = State.STOPPED
         except NoRoom:
@@ -1053,6 +1059,21 @@ class TransferQueue:
                 # together with others only: one at a time
                 self._room[server] = min(room, self._room.get(server, room))
         raise NoRoom
+
+    def _side_work(self, job: Job, side: SideJob) -> None:
+        """An item that deletes, moves, sets dates or copies on this computer (FF-10): its progress counts the steps done, so the
+        person sees it move like any other item."""
+        job.done, job.total, job.percent, job.seconds_left = 0, side.count, 0, None
+        job.way = side.work.value
+        meter = Meter(job, self._report)
+        meter.set_total(side.count)
+        counted = [0]
+
+        def told(done: int) -> None:
+            meter.add(done - counted[0])
+            counted[0] = done
+
+        run_side_job(job, side, told)
 
     def _transfer(self, job: Job) -> None:
         job.done, job.total, job.percent, job.seconds_left = 0, 0, 0, None  # every run counts from nothing: what a resume continues from,

@@ -17,9 +17,10 @@ from chrono_ftp.engine.listing import summary_text as summary_text
 from chrono_ftp.ui.menus import open_menu
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.42"
+__version__ = "filelist.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: select_names marks exactly the names Mark Differences found (FF-12)
 # v0.0.42: The Size column shows the size of a folder once it was counted, "at least …" where it could not be read in full, kept while
 #          the same folder shows; Shift+Space never types a space nor marks, it belongs to counting the folder sizes (FE-03); review
 #          round 1: while a name is being typed, Shift+Space types a space into it
@@ -637,6 +638,10 @@ class FileList(QTreeView):
     def set_name_mask(self, mask: str) -> None:
         self.name_mask = mask
         self._fill({entry.name for entry in self.selected_entries()}, None)
+
+    def select_names(self, names: set[str]) -> None:
+        """Exactly these entries are marked and nothing else (FF-12): Mark Differences hands the names the scan found."""
+        self._apply(self.rows_selection(row for row, entry in enumerate(self.files.rows) if entry is not None and entry.name in names), QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
     def select_by_mask(self, mask: Mask, select: bool, folders_too: bool = False) -> None:
         """Num+ and Num−: the files a pattern of the mask names are marked, or unmarked; the rest of the selection stays. A pattern ending

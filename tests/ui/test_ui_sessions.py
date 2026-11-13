@@ -40,9 +40,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.38"
+__version__ = "test_ui_sessions.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: The Synchronize window of a tab and its both-ways direction, as the helpers every window test uses (block FF)
 # v0.0.38: The name of the edit folders comes from engine/cleanup.py
 # v0.0.37: Owner and permissions are changed in the Properties window, its rights as a chmod that sets exactly the shown boxes, for
 #          everything inside through find, files first and folders deepest first, only the touched boxes; a
@@ -125,6 +126,24 @@ def connected(qtbot: QtBot, window: MainWindow, connection: Connection) -> None:
     window.open_connection(connection)
     session = window.sessions[-1]
     qtbot.waitUntil(lambda: session.alive and session.remote_folder != "")
+
+
+def synchronize_window(qtbot: QtBot, window: MainWindow) -> CompareDialog:
+    """The Synchronize window of the current tab, with its first scan done."""
+    window.actions_by_name["compare"].trigger()
+    found = [child for child in window.findChildren(CompareDialog) if child.isVisible()]
+    assert found
+    dialog = found[-1]  # the one just opened, never an earlier one that is still being deleted
+    qtbot.waitUntil(lambda: not dialog.scanning)
+    return dialog
+
+
+def both_ways(qtbot: QtBot, dialog: CompareDialog, rows: int) -> None:
+    """The window opens on the direction of the side with the focus (FF-11); these tests want both directions."""
+    qtbot.waitUntil(lambda: not dialog.scanning)
+    dialog.choices.both.setChecked(True)
+    dialog.again_button.click()
+    qtbot.waitUntil(lambda: not dialog.scanning and dialog.table.rowCount() == rows)
 
 
 def names_on_the_right(window: MainWindow) -> list[str]:
@@ -960,11 +979,9 @@ def test_synchronize_copies_only_what_is_ticked_and_deletes_nothing(qtbot: QtBot
         trust_server(server)
         connected(qtbot, window, ssh_settings(server))
         window.local_side.go_to(str(here))
-        window.actions_by_name["compare"].trigger()
-        dialog = window.findChild(CompareDialog)
-        assert dialog is not None
-        qtbot.waitUntil(lambda: dialog.table.rowCount() == 3)
-        dialog.copy_button.click()
+        dialog = synchronize_window(qtbot, window)
+        both_ways(qtbot, dialog, 3)
+        dialog.apply_button.click()
         qtbot.waitUntil(lambda: (root / "mine.txt").exists() and (here / "theirs.txt").exists() and (root / "shared" / "deep.txt").exists())
         qtbot.waitUntil(lambda: all(job.state == State.DONE for job in window.queue.jobs))
         assert (root / "theirs.txt").exists() and (here / "mine.txt").exists()

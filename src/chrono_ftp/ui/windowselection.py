@@ -32,9 +32,10 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowselection.py 0.0.42"
+__version__ = "windowselection.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: The menu of each list also holds Mark Differences, and the left one Synchronize with another folder on this computer (FF-12, FF-14)
 # v0.0.42: Calculate Folder Sizes (Shift+Space) in the right-click menu of a list (FE-03)
 # v0.0.41: Select by Mask (Num+) and Unselect by Mask (Num−) on the list with the focus, also in the Select submenu, with the masks
 #          typed before (FD-05); a greyed Num+ or Num− does nothing and the status bar says why
@@ -277,6 +278,9 @@ class SelectionPart(WindowBase):
         menu.setToolTipsVisible(True)
         menu.addAction(self.list_actions[f"{side_name}_move_across"])
         menu.addAction(self.list_actions[f"{side_name}_folder_sizes"])
+        menu.addAction(self.list_actions[f"{side_name}_mark_differences"])  # block FF: what differs from the other side (FF-12)
+        if side_name == LOCAL:
+            menu.addAction(self.list_actions[f"{LOCAL}_sync_folder"])  # block FF: the same window for two folders here (FF-14)
         menu.addSeparator()
         only = menu.addMenu(ONLY_MENU_TEXT)
         only.setToolTipsVisible(True)
