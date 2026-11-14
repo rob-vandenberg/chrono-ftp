@@ -4,7 +4,7 @@ from typing import cast
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QColor, QPalette, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QSplitter, QStyle, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QHBoxLayout, QSplitter, QStyle, QTreeView, QVBoxLayout, QWidget
 
 from chrono_ftp.config.settings import TREE_ABOVE, TREE_HIDDEN
 from chrono_ftp.connections.base import RemoteEntry, joined, parent_of, shown_name
@@ -15,9 +15,10 @@ from chrono_ftp.ui.filelist import COLUMNS, FROM_LOCAL, FROM_OUTSIDE, FROM_REMOT
 from chrono_ftp.ui.pathbar import FilterMark, PathBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "remoteside.py 0.0.41"
+__version__ = "remoteside.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The right side takes the program's palette of the moment, so a change of look reaches every colour it does not set itself (FQ-04)
 # v0.0.41: The active filter shows next to the path; a click changes it, its button clears it (FD-06)
 # v0.0.40: The status line shows the selection totals, or what was typed to find a name, with the hidden and filtered counts (FG-01,
 #          FG-09, FG-13); Back and Forward go several steps from their drop-down (FG-10); the folders the tree read can be forgotten (FG-15)
@@ -155,8 +156,8 @@ class RemoteSide(QWidget):
         self.file_list.setAlternatingRowColors(colour == "")  # as on the left side
         self.file_list.set_file_colours(self.file_list.files.colour_rules, colour is not None)  # file colours only on a live connection (OR-3)
         for view in (self.tree, self.file_list):
-            palette = QPalette(view.palette())
-            palette.setColor(QPalette.ColorRole.Base, QColor(background))
+            palette = QPalette(QApplication.palette())  # the program's own palette of this moment, never a copy of the view's older
+            palette.setColor(QPalette.ColorRole.Base, QColor(background))  # one: a change of look reaches every other colour too (FQ-04)
             palette.setColor(QPalette.ColorRole.Text, QColor(text))
             palette.setColor(QPalette.ColorRole.Highlight, QColor(selected))
             palette.setColor(QPalette.ColorRole.HighlightedText, QColor(on_selected))

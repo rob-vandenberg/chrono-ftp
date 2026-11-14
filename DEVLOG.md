@@ -361,3 +361,30 @@ Ubuntu 22.04 and a bare Fedora 43 and started as a normal user, which also prove
 runs the whole way and puts nothing on the GitHub release page unless given `--upload` (D-104, `packaging/PACKAGING.md`).
 
 Open: the owner has not installed either package by hand yet, and nothing is on the release page (OR-29).
+
+## 0.0.49 (2026-11-14): the look, dark or light
+
+A **Look** choice on the General page of Settings: The same as my desktop, Dark, or Light. `src/chrono_ftp/core/colours.py` now holds
+both looks as two complete sets of the same names, with `use()` putting one in use, so the rest of the program still reads one colour
+and nothing comes from the platform (OR-9). Reading the desktop brings in one word, light or dark, through Qt's `colorScheme`, and the
+signal beside it is listened to while the program runs, so Follow the desktop follows it, not only at start; a desktop that answers
+`Unknown` counts as dark. A change of look is shown at once: `theme.apply` puts the look in use and sets the palette, the menu style is
+built each time a menu opens instead of once at startup, and the right side, which keeps a palette of its own, is told again. The icons were the real obstacle: they were tinted when they were made, so every icon already on a toolbar would have kept the
+old colour. Instead of putting them all back, an icon now has an engine of its own and draws itself in the colour of the text of the
+moment, and what it draws is kept per size and look, so a toolbar draws from memory and never from the file. The colours a person chose
+stay exactly as they chose them on both looks; only what is offered first for a new file rule follows the look (D-105, FQ-04).
+
+Six review rounds, each with two fresh reviewers; the last found nothing real. First round: the right side froze the dark look in a palette of its own, so the light
+look would have drawn dark rows under dark text; an icon was drawn at too few pixels on a doubled screen; a selected row's icon lost
+the tint Qt used to make; and two pictures made once, the lock in the status bar and the colour blocks of the connection list, kept
+the old look. Second round: on the light look a live tab without a colour and a dropped tab were nearly the same grey; greyed text was
+weaker than in the dark look; and a file rule with only a background took the look's text colour, which could be unreadable. Third round: the Colours page drew such a rule the old way, so it disagreed with the file list, and three
+tests could not fail if what they guard were removed; that work also showed the tab loop was dead, because the tab bar works out its
+greys while it paints. Fourth round: on the light look the tab of the connection you are on, without a colour of its own, was almost
+the window colour, and the background offered for a new file rule was nearly white. Fifth round: dimming only ever darkened, which on
+a light window made the tabs you are not on louder than the one you are on, so it now steps towards the window of the look in use; and
+three tests were measuring the light look against the dark look's values, a standard the owner never set (OR-33). Sixth round: nothing
+real; dimming on the light look now steps towards the window colour itself rather than towards white, so a tab colour paler than the
+window steps back instead of forward. Every fix has a test.
+
+Open: the light look has not been seen by a human, and nothing of 0.0.34 onwards has been used by hand on the owner's desktop.

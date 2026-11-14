@@ -7,6 +7,7 @@ from chrono_ftp.config.settings import BYTES, CLASSIC_KEYS, FILE_MANAGER_KEYS, K
 from chrono_ftp.config.settings import DOUBLE_CLICKS, FEWEST_AT_ONCE, FEWEST_REFRESH_SECONDS, FEWEST_THUMBNAIL_MEGABYTES, MOST_AT_ONCE, MOST_KEEP_DONE_SECONDS, MOST_REFRESH_SECONDS, MOST_THUMBNAIL_MEGABYTES, OPEN, TRANSFER, TREE_ABOVE, TREE_HIDDEN, TREE_LEFT, Settings
 from chrono_ftp.connections.base import shown_name
 from chrono_ftp.connections.sessionlog import log_folder
+from chrono_ftp.core.colours import DARK, FOLLOW_DESKTOP, LIGHT
 from chrono_ftp.core.masks import LONGEST_MASK
 from chrono_ftp.core.logrules import DEBUG, DETAILED, LEAST_SIZE_MEGABYTES, MOST_KEPT, MOST_SIZE_MEGABYTES, NORMAL, OFF
 from chrono_ftp.ui.colourrules import ColourRulesEditor
@@ -15,9 +16,10 @@ from chrono_ftp.ui.presetseditor import PresetsEditor
 from chrono_ftp.ui.transferoptionsform import TransferOptionsForm
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.41"
+__version__ = "settingsdialog.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The Look choice on the General page: the same as the desktop, dark or light (FQ-04)
 # v0.0.41: Masks (block FD): the Transfers page has the file mask, text and names tabs (FD-01 to FD-03); a Presets page with the named
 #          sets of transfer settings and their rules (FD-04); the history of masks stays as it is
 # v0.0.40: Selection and keys (block FG): the key set and the path in the title bar on the General page; the two-pane selection mode,
@@ -69,6 +71,8 @@ NATURAL_TIP: str = "Folders always come first, ordered by their names."
 DRAG_MOVE_TEXT: str = "Offer Move Here after dragging with the right mouse button"
 DRAG_MOVE_TIP: str = "Dragging with the right mouse button ends with a small menu: Copy Here, Move Here or Cancel. Dragging with the left button is not changed."
 THUMBNAIL_MASK_TIP: str = "The names that get a thumbnail in the Thumbnails view; other files keep their normal icon. Empty: no thumbnails."
+LOOK_LABELS: dict[str, str] = {FOLLOW_DESKTOP: "The same as my desktop", DARK: "Dark", LIGHT: "Light"}
+LOOK_TIP: str = "The colours of the window. The same as my desktop: Chrono FTP turns light or dark along with your desktop, while it is open; where your desktop says nothing about it, Chrono FTP stays dark. The colours you gave a connection, and the colours of your file rules, stay as you chose them."
 
 
 class SettingsDialog(QDialog):
@@ -87,6 +91,11 @@ class SettingsDialog(QDialog):
         self.page_list.currentRowChanged.connect(self.pages.setCurrentIndex)
 
         # General
+        self.look = QComboBox()
+        for look, label in LOOK_LABELS.items():
+            self.look.addItem(label, look)
+        self.look.setCurrentIndex(self.look.findData(settings.look))
+        self.look.setToolTip(LOOK_TIP)
         self.tree_place = QComboBox()
         for place, label in TREE_LABELS.items():
             self.tree_place.addItem(label, place)
@@ -106,6 +115,7 @@ class SettingsDialog(QDialog):
         self.title_path.setCurrentIndex(self.title_path.findData(settings.title_path))
         self.title_path.setToolTip(TITLE_TIP)
         general = QFormLayout()
+        general.addRow("Look", self.look)
         general.addRow("Folder tree", self.tree_place)
         general.addRow("Keys", self.key_set)
         general.addRow("Title bar", self.title_path)
@@ -310,4 +320,5 @@ class SettingsDialog(QDialog):
             drag_move=self.drag_move.isChecked(),
             presets=self.presets.chosen(),
             mask_history=self.mask_history,
+            look=look if isinstance(look := self.look.currentData(), str) else FOLLOW_DESKTOP,
         )

@@ -1,6 +1,6 @@
 import pytest
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from chrono_ftp.core import colours
@@ -8,9 +8,10 @@ from chrono_ftp.ui import icons
 from chrono_ftp.ui.sidebar import ICON_SIZE as SIDE_ICON_SIZE, NavigationBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 0.0.23"
+__version__ = "test_ui_icons.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: An icon drawn on a doubled screen is drawn at that screen's pixels (FQ-04)
 # v0.0.23: The side bars show their icons at 24 pixels, drawn at that size
 # v0.0.14: The program icon loads, with its blue square and orange clock
 # v0.0.4: Initial: every icon of D-028 is there, loads and takes the colour of the text
@@ -68,3 +69,24 @@ def test_the_side_bars_show_their_icons_at_24_pixels_drawn_at_that_size(qapp: QA
     assert QSize(24, 24) in icons.icon("go-home").availableSizes()
     bar = NavigationBar()
     assert bar.iconSize() == QSize(24, 24)
+
+
+def test_an_icon_drawn_on_a_doubled_screen_is_drawn_at_the_pixels_that_screen_has(qapp: QApplication) -> None:
+    """A screen that doubles everything gets twice the pixels, or the icon looks soft (FQ-04)."""
+    asked: list[int] = []
+    drawn = icons._pixmap
+
+    def noted(name: str, size: QSize, mode: QIcon.Mode) -> QPixmap:
+        asked.append(size.width())
+        return drawn(name, size, mode)
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(icons, "_pixmap", noted)
+        for ratio in (1.0, 2.0):
+            target = QPixmap(QSize(round(18 * ratio), round(18 * ratio)))
+            target.setDevicePixelRatio(ratio)
+            target.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(target)
+            icons.icon("go-home").paint(painter, QRect(0, 0, 18, 18))
+            painter.end()
+    assert asked == [18, 36]

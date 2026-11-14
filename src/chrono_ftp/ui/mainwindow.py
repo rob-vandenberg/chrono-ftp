@@ -46,9 +46,10 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.47"
+__version__ = "mainwindow.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The lock in the status bar is drawn by name, and again after a change of look (FQ-04)
 # v0.0.47: Add Bookmark on the server side is greyed with its reason on a tab opened from an address, which keeps nothing on this
 #          computer (FJ-11, OR-20)
 # v0.0.45: Block FI, tabs and workspaces: the workspaces part (windowworkspaces.py) and the paste part (windowpaste.py); the All Tabs
@@ -342,7 +343,7 @@ class MainWindow(LayoutPart, TabsPart, WorkspacesPart, FoldersPart, EditPart, Qu
         self.limit.valueChanged.connect(self._limit_changed)
         self.protocol_label = QLabel()
         self.lock_label = QLabel()
-        self.lock_label.setPixmap(icons.icon("object-locked").pixmap(LOCK_SIZE, LOCK_SIZE))
+        self.draw_the_lock()  # and again whenever the look changes (FQ-04)
         self.lock_label.setToolTip("This connection is encrypted")
         self.lock_label.hide()
         self.time_label = QLabel()

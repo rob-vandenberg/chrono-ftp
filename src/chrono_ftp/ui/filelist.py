@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QMenu, QStyle, QT
 
 from chrono_ftp.config.settings import SHORT
 from chrono_ftp.connections.base import RemoteEntry, shown_name
+from chrono_ftp.core import colours
 from chrono_ftp.core.filecolours import ColourRule, rule_for
 from chrono_ftp.core.masks import EVERYTHING, Mask, MaskError, fits, named, parse
 from chrono_ftp.engine.listing import extension_of, natural_key, plain_key, same_extension, type_ahead
@@ -17,9 +18,11 @@ from chrono_ftp.engine.listing import summary_text as summary_text
 from chrono_ftp.ui.menus import open_menu
 
 # --- Version ------------------------------------------------------------
-__version__ = "filelist.py 0.0.45"
+__version__ = "filelist.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: A file rule that gives only a background gets black or white text by that background's brightness, so it stays readable
+#          on both looks (FQ-04, D-007)
 # v0.0.45: Ctrl+V that reaches the list means pasting is greyed: it says so instead of doing nothing (FI-03)
 # v0.0.43: select_names marks exactly the names Mark Differences found (FF-12)
 # v0.0.42: The Size column shows the size of a folder once it was counted, "at least …" where it could not be read in full, kept while
@@ -198,8 +201,13 @@ class FileModel(QAbstractTableModel):
             rule = self.rule_of(entry)
             if rule is None:
                 return None
-            colour = rule.text if role == Qt.ItemDataRole.ForegroundRole else rule.background
-            return QBrush(QColor(colour)) if colour else None  # selected, a row shows the selection's colours over this (FQ-01)
+            if role == Qt.ItemDataRole.BackgroundRole:
+                return QBrush(QColor(rule.background)) if rule.background else None  # selected, a row shows the selection's colours over this (FQ-01)
+            if rule.text:
+                return QBrush(QColor(rule.text))
+            # A rule that gives only a background: the text is black or white by the brightness of that background, as everywhere else
+            # (D-007). The look's own text colour can be unreadable on a background the person chose under the other look (FQ-04).
+            return QBrush(QColor(colours.readable_text(rule.background))) if rule.background else None
         return None
 
     def rule_of(self, entry: RemoteEntry) -> ColourRule | None:

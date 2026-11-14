@@ -4,22 +4,26 @@ from dataclasses import replace
 from typing import override
 
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtWidgets import QApplication
 
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.config.settings import ToolbarChoices
+from chrono_ftp.core import colours
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.engine.thumbnails import MEGABYTE, reader_for
 from chrono_ftp.transfers.queue import State
-from chrono_ftp.ui import queueview, sidebar
+from chrono_ftp.ui import icons, queueview, sidebar, theme
 from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.thumbnails import Source, ThumbnailSide
 from chrono_ftp.ui.toolbars import Toolbars
-from chrono_ftp.ui.windowbase import GENERAL_ICON_SIZE, SETTINGS_NOT_KEPT_TEXT, WindowBase
+from chrono_ftp.ui.windowbase import GENERAL_ICON_SIZE, LOCK_SIZE, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlooks.py 0.0.39"
+__version__ = "windowlooks.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The look, dark, light or the desktop's: it is put in use at once, the desktop is listened to while the program runs, and the
+#          tabs and the right side, which keep a colour of their own, are told again (FQ-04)
 # v0.0.39: Review: a lost connection found by a thumbnail greys the tab whose fetch found it; pictures of the right side are decoded on
 #          the thread of the thumbnails, not on the tab's own
 # v0.0.39: Initial: block FQ: the file colours on both sides (FQ-01), the thumbnail view of each side, per tab, fetched in the
@@ -46,6 +50,7 @@ class LooksPart(WindowBase):
     """The looks of the main window (block FQ)."""
 
     def _build_looks(self) -> None:
+        self._build_look()
         self.thumbnail_worker = None
         self.local_thumbnails = ThumbnailSide(self.local_side.file_list, self)
         self.remote_thumbnails = ThumbnailSide(self.remote_side.file_list, self)
@@ -69,9 +74,48 @@ class LooksPart(WindowBase):
         self.top_row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # with every toolbar hidden, the menu is still here
         self.top_row.customContextMenuRequested.connect(self._top_row_menu_wanted)
 
+    # --- the look: dark, light or the desktop's (FQ-04) ---------------------------
+
+    def _build_look(self) -> None:
+        """The desktop is listened to from the start, so Follow the desktop means follow it while the program runs, not only at start."""
+        application = QApplication.instance()
+        if isinstance(application, QApplication):
+            application.styleHints().colorSchemeChanged.connect(self._desktop_look_changed)
+
+    def _desktop_look_changed(self) -> None:
+        if self.settings.look == colours.FOLLOW_DESKTOP:
+            self._apply_look()
+
+    def _apply_look(self) -> None:
+        """Puts the chosen look in use and shows it at once: the palette, the menus, the icons, the tabs and the right side (FQ-04)."""
+        application = QApplication.instance()
+        if not isinstance(application, QApplication):
+            return
+        look = theme.look_wanted(self.settings.look, application)
+        if look == colours.in_use():
+            return
+        theme.apply(application, look)
+        self._colour_the_right_side()
+        self.tab_bar.update()  # the tab bar works out its greys from the look while it paints, so it only has to paint again
+        self.draw_the_lock()
+        if self.connection_list is not None:
+            self.connection_list.draw_the_colour_blocks()  # its window may stand open while the look changes
+        self.update()
+
+    def draw_the_lock(self) -> None:
+        """The lock in the status bar is a picture in a label, not a button with an icon, so it is drawn again by name (FQ-04)."""
+        self.lock_label.setPixmap(icons.icon("object-locked").pixmap(LOCK_SIZE, LOCK_SIZE))
+
+    def _colour_the_right_side(self) -> None:
+        """The right side keeps a palette of its own for the connection's colour, so it is told again after a change of look; a live
+        connection keeps the person's own colour, a dropped one is grey (OR-2, OR-3)."""
+        shown = self.current()
+        self.remote_side.set_colour(shown.connection.colour if shown is not None and shown.alive else None)
+
     @override
     def _apply_looks(self) -> None:
         settings = self.settings
+        self._apply_look()
         for side in (self.local_side, self.remote_side):
             side.file_list.set_file_colours(settings.file_colours, side.file_list.files.colours_shown)  # the right side shows them only while live
         for thumbnails in (self.local_thumbnails, self.remote_thumbnails):

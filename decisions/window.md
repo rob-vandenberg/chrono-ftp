@@ -56,3 +56,4 @@
 54. [[D-101]] Folders in the connection list
 55. [[D-102]] Reading the SSH settings of this computer
 56. [[D-103]] Addresses
+57. [[D-105]] The look: dark, light or the desktop's

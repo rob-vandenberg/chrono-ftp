@@ -12,9 +12,10 @@ from chrono_ftp.core.filecolours import MOST_RULES, ColourRule
 from chrono_ftp.core.masks import LONGEST_MASK
 
 # --- Version ------------------------------------------------------------
-__version__ = "colourrules.py 0.0.39"
+__version__ = "colourrules.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: A rule with a background and no text is shown with the text the file list gives it, black or white by that background (FQ-04)
 # v0.0.39: Initial: the list of rules with New, Delete, Move Up and Move Down, and the mask and colours of the selected rule (FQ-01, D-069)
 
 HINT_TEXT: str = (
@@ -112,7 +113,8 @@ class ColourRulesEditor(QWidget):
     def _paint(item: QListWidgetItem, rule: ColourRule) -> None:
         """The rule in its own colours: what a row it fits looks like."""
         item.setText(rule.mask or NEW_RULE_TEXT)
-        item.setData(Qt.ItemDataRole.ForegroundRole, QColor(rule.text) if rule.text else None)
+        ink = rule.text or (colours.readable_text(rule.background) if rule.background else "")  # as the file list draws it (D-007, FQ-04)
+        item.setData(Qt.ItemDataRole.ForegroundRole, QColor(ink) if ink else None)
         item.setData(Qt.ItemDataRole.BackgroundRole, QColor(rule.background) if rule.background else None)
 
     def _current(self) -> int:

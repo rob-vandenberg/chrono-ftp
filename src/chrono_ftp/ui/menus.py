@@ -7,9 +7,10 @@ from PySide6.QtWidgets import QMenu
 from chrono_ftp.ui import theme
 
 # --- Version ------------------------------------------------------------
-__version__ = "menus.py 0.0.40"
+__version__ = "menus.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The menu style comes from the look in use, each time a menu opens (FQ-04)
 # v0.0.40: A drop-down menu of a button (Back and Forward, FG-10; the folders above a path, FG-16) gets the same style and lets go of the keyboard
 # v0.0.30: Every menu gets the menu style here, not from the whole program
 # v0.0.29: Initial: a menu lets go of the keyboard once it is open (the trial on the tab menu, now for every menu)
@@ -23,13 +24,14 @@ def let_go_of_the_keyboard(menu: QMenu) -> None:
 
 
 def as_drop_down(menu: QMenu) -> None:
-    """A menu Qt opens itself, as the drop-down of a button: the menu style, and it lets go of the keyboard as every menu does (D-052)."""
-    menu.setStyleSheet(theme.MENU_STYLE)
+    """A menu Qt opens itself, as the drop-down of a button: the menu style, and it lets go of the keyboard as every menu does (D-052).
+    The style is set each time it opens, because such a menu is made once and the look can change while it lives (FQ-04)."""
+    menu.aboutToShow.connect(lambda: menu.setStyleSheet(theme.menu_style()))
     menu.aboutToShow.connect(lambda: QTimer.singleShot(0, lambda: let_go_of_the_keyboard(menu)))
 
 
 def open_menu(menu: QMenu, place: QPoint) -> None:
     """Opens the menu at this place on the screen, in the menu style, and waits until it closes."""
-    menu.setStyleSheet(theme.MENU_STYLE)
+    menu.setStyleSheet(theme.menu_style())
     menu.aboutToShow.connect(lambda: QTimer.singleShot(0, lambda: let_go_of_the_keyboard(menu)))  # once Qt has made the grab
     menu.exec(place)

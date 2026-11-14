@@ -3,29 +3,36 @@ each side, per tab and giving way to the person (FQ-02), and the toolbar menu wi
 kept for next time (FQ-03)."""
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QImage, QImageWriter, QPalette
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, QSize, Qt
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QImageWriter, QPalette, QStyleHints
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QColorDialog, QMenu, QToolButton, QWidget
+from PySide6.QtWidgets import QApplication, QColorDialog, QLabel, QMenu, QToolButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import settings as saved_settings
 from chrono_ftp.config.settings import LARGE, MEDIUM, SMALL, ToolbarChoices
 from chrono_ftp.connections.base import RemoteEntry
+from chrono_ftp.core.connection import Connection
 from chrono_ftp.core import colours
 from chrono_ftp.core.filecolours import ColourRule
 from chrono_ftp.core.errors import ConnectionLost, RefusedForNow, RemoteActionFailed, TransferInterrupted
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.engine.thumbnails import MEGABYTE
-from chrono_ftp.ui import thumbnails, toolbars
+from chrono_ftp.ui import icons, theme, thumbnails, toolbars
 from chrono_ftp.ui.actiondialogs import NewFolderDialog
 from chrono_ftp.ui.bridge import Bridge
+from chrono_ftp.ui.connectionlist import colour_block
+from chrono_ftp.ui.colourrules import ColourRulesEditor
+from chrono_ftp.ui.connectionlist import ConnectionList
+from chrono_ftp.ui.connectiontree import ConnectionTree
 from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_REMOTE, LOCAL_COLUMN_COUNT, THUMBNAIL_PIXELS, FileList
 from chrono_ftp.ui.mainwindow import MainWindow
+from chrono_ftp.ui.menus import as_drop_down
 from chrono_ftp.ui.remoteside import RemoteSide
 from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.thumbnails import Source, ThumbnailSide
@@ -34,9 +41,11 @@ from tests.fakeservers import ssh_server
 from tests.ui.test_ui_sessions import connected, ssh_settings, trust_server, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_looks.py 0.0.39"
+__version__ = "test_ui_looks.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The look (FQ-04): light chosen in the settings shows at once in the window, the menus and the icons; the desktop is
+#          followed while the program runs; a desktop that says nothing gives dark; a change of look leaves the person's own colours
 # v0.0.39: Review: a picture refused for now comes later, a lasting refusal is not asked again; a lost connection greys the tab of
 #          its fetch; a picture is decoded off the thread that reads it
 # v0.0.39: Initial: block FQ in the window (FQ-01 to FQ-03)
@@ -433,3 +442,248 @@ def test_the_top_row_has_the_menu_when_every_toolbar_is_hidden(qtbot: QtBot, win
     assert len(opened) == 1
     entry(opened[0], "Top Bar").trigger()
     assert window.general_bar.isVisibleTo(window)
+
+
+# --- the look: dark, light or the desktop's (FQ-04) ---------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def the_dark_look_again(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """The look is one thing for the whole program. Every test here starts in the dark look on a desktop that says nothing, whatever
+    desktop it is really run on, and leaves the dark look behind it."""
+    monkeypatch.setattr(QStyleHints, "colorScheme", says_nothing)
+    theme.apply(qapp, colours.DARK)
+    yield
+    theme.apply(qapp, colours.DARK)
+
+
+def chose_in_settings(window: MainWindow, monkeypatch: pytest.MonkeyPatch, settings: saved_settings.Settings) -> None:
+    """OK in the settings window with these settings, as a person pressing OK."""
+    def accepted(_self: SettingsDialog) -> int:
+        return SettingsDialog.DialogCode.Accepted.value
+
+    def given(_self: SettingsDialog) -> saved_settings.Settings:
+        return settings
+
+    monkeypatch.setattr(SettingsDialog, "exec", accepted)
+    monkeypatch.setattr(SettingsDialog, "chosen", given)
+    window.open_settings()
+
+
+def says_light(_self: QStyleHints) -> Qt.ColorScheme:
+    return Qt.ColorScheme.Light
+
+
+def says_dark(_self: QStyleHints) -> Qt.ColorScheme:
+    return Qt.ColorScheme.Dark
+
+
+def says_nothing(_self: QStyleHints) -> Qt.ColorScheme:
+    """A desktop that gives no answer: not every desktop tells a program whether it is light or dark."""
+    return Qt.ColorScheme.Unknown
+
+
+def icon_colours(name: str) -> set[str]:
+    image = icons.icon(name).pixmap(QSize(44, 44)).toImage()
+    return {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
+
+
+def test_the_light_look_chosen_in_settings_shows_at_once_in_the_window_the_menus_and_the_icons(
+    qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert colours.in_use() == colours.DARK
+    chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.LIGHT))
+    assert colours.in_use() == colours.LIGHT
+    assert qapp.palette().color(QPalette.ColorRole.Window).name() == colours.LIGHT_LOOK.window
+    assert qapp.palette().color(QPalette.ColorRole.WindowText).name() == colours.LIGHT_LOOK.text
+    assert colours.LIGHT_LOOK.menu_background in theme.menu_style()
+    assert colours.LIGHT_LOOK.text in icon_colours("tab-new")  # an icon follows the look without being put back
+    assert window.remote_side.file_list.palette().color(QPalette.ColorRole.Base).name() == colours.LIGHT_LOOK.not_connected  # no connection: plain grey (OR-3)
+    assert saved_settings.load().look == colours.LIGHT
+    chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.DARK))
+    assert qapp.palette().color(QPalette.ColorRole.Window).name() == colours.DARK_LOOK.window
+    assert colours.DARK_LOOK.text in icon_colours("tab-new")
+
+
+def test_following_the_desktop_turns_the_window_light_when_the_desktop_turns_light(
+    qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window.settings = replace(window.settings, look=colours.FOLLOW_DESKTOP)
+    monkeypatch.setattr(QStyleHints, "colorScheme", says_light)
+    qapp.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Light)  # as the desktop turning light while Chrono FTP is open
+    assert colours.in_use() == colours.LIGHT
+    assert qapp.palette().color(QPalette.ColorRole.Window).name() == colours.LIGHT_LOOK.window
+    monkeypatch.setattr(QStyleHints, "colorScheme", says_dark)
+    qapp.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Dark)
+    assert colours.in_use() == colours.DARK
+
+
+def test_a_desktop_the_program_does_not_follow_leaves_the_look_alone(
+    qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window.settings = replace(window.settings, look=colours.DARK)
+    monkeypatch.setattr(QStyleHints, "colorScheme", says_light)
+    qapp.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Light)
+    assert colours.in_use() == colours.DARK  # the person chose dark: the desktop does not override it
+
+
+def test_a_desktop_that_says_nothing_gives_the_dark_look(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(QStyleHints, "colorScheme", says_nothing)
+    assert theme.desktop_look(qapp) == colours.DARK
+    assert theme.look_wanted(colours.FOLLOW_DESKTOP, qapp) == colours.DARK
+    assert theme.look_wanted("a look from a damaged settings file", qapp) == colours.DARK  # OR-15
+
+
+def test_a_change_of_look_keeps_the_colour_of_a_live_connection_and_the_file_rules(
+    qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "server"
+    root.mkdir()
+    (root / "server.log").write_text("x", encoding="utf-8")
+    with ssh_server(root, shell=False) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server, "Shop", CONNECTION_COLOUR))
+        window.remote_side.file_list.set_file_colours((LOG_RULE,))
+        view = window.remote_side.file_list
+        row = view.index_of("server.log").row()
+        chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.LIGHT, file_colours=(LOG_RULE,)))
+        assert view.palette().color(QPalette.ColorRole.Base).name() == CONNECTION_COLOUR  # the person's own colour, untouched (OR-2)
+        assert window.tab_bar.background_of(0) == CONNECTION_COLOUR
+        assert view.files.index(row, 0).data(Qt.ItemDataRole.BackgroundRole).color().name() == LOG_RULE.background
+        assert view.files.index(row, 0).data(Qt.ItemDataRole.ForegroundRole).color().name() == LOG_RULE.text
+
+
+def test_the_right_side_follows_the_look_in_every_colour_it_does_not_set_itself(qtbot: QtBot, qapp: QApplication, the_dark_look_again: None) -> None:
+    """The right side keeps a palette of its own for the connection's colour; the rest must still be the look of the moment."""
+    theme.apply(qapp, colours.DARK)
+    side = RemoteSide()
+    qtbot.addWidget(side)
+    side.set_colour(None)
+    theme.apply(qapp, colours.LIGHT)
+    side.set_colour("")  # a live connection without a colour of its own, as the window does after a change of look
+    for view in (side.tree, side.file_list):
+        for role in (QPalette.ColorRole.AlternateBase, QPalette.ColorRole.Window, QPalette.ColorRole.Button, QPalette.ColorRole.Mid):
+            assert view.palette().color(role).name() == qapp.palette().color(role).name()
+        assert view.palette().color(QPalette.ColorRole.Base).name() == colours.LIGHT_LOOK.panel
+    side.set_colour(CONNECTION_COLOUR)
+    assert side.file_list.palette().color(QPalette.ColorRole.Base).name() == CONNECTION_COLOUR  # the person's own colour wins (OR-2)
+
+
+def test_the_lock_in_the_status_bar_follows_the_look(qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    def ink_of(label: QWidget) -> set[str]:
+        assert isinstance(label, QLabel)
+        image = label.pixmap().toImage()
+        return {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
+
+    assert colours.DARK_LOOK.text in ink_of(window.lock_label)
+    chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.LIGHT))
+    assert colours.LIGHT_LOOK.text in ink_of(window.lock_label)
+    assert colours.DARK_LOOK.text not in ink_of(window.lock_label)
+
+
+def test_an_icon_on_a_selected_row_is_drawn_in_the_colour_that_reads_on_the_selection(qapp: QApplication, the_dark_look_again: None) -> None:
+    image = icons.icon("folder-open").pixmap(QSize(44, 44), QIcon.Mode.Selected).toImage()
+    seen = {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
+    assert colours.ON_SELECTION in seen and colours.TEXT not in seen
+
+
+def test_the_colour_blocks_of_the_connection_list_follow_the_look(qtbot: QtBot, qapp: QApplication, the_dark_look_again: None) -> None:
+    tree = ConnectionTree()
+    qtbot.addWidget(tree)
+    tree.fill([Connection(name="Shop", host="h", colour=CONNECTION_COLOUR), Connection(name="Plain", host="h")], (), colour_block)
+
+    def block_of(name: str) -> str:
+        found = tree.item_of(name)
+        assert found is not None
+        return found.icon(0).pixmap(QSize(16, 16)).toImage().pixelColor(8, 8).name()
+
+    assert block_of("Plain") == colours.DARK_LOOK.no_colour_tab
+    colours.use(colours.LIGHT)
+    tree.draw_the_colour_blocks(lambda name: CONNECTION_COLOUR if name == "Shop" else "", colour_block)
+    assert block_of("Plain") == colours.LIGHT_LOOK.no_colour_tab
+    assert block_of("Shop") == CONNECTION_COLOUR  # the person's own colour, untouched by the look (OR-2)
+
+
+def test_a_rule_that_gives_only_a_background_keeps_readable_text_on_both_looks(qtbot: QtBot, qapp: QApplication, the_dark_look_again: None) -> None:
+    """The person's colour is untouched; the half they left empty is black or white by that colour's brightness (D-007, FQ-04)."""
+    made_in_the_dark_look = ColourRule("*.log", "", colours.DARK_LOOK.first_file_background)
+    made_in_the_light_look = ColourRule("*.txt", "", colours.LIGHT_LOOK.first_file_background)
+    view = FileList(LOCAL_COLUMN_COUNT, FROM_LOCAL, frozenset({FROM_REMOTE}))
+    qtbot.addWidget(view)
+    view.set_file_colours((made_in_the_dark_look, made_in_the_light_look))
+    view.show_entries(entries(), False, False)
+    for look in (colours.DARK, colours.LIGHT):
+        theme.apply(qapp, look)
+        for rule, name in ((made_in_the_dark_look, "server.log"), (made_in_the_light_look, "notes.txt")):
+            row = view.index_of(name).row()
+            assert view.files.index(row, 0).data(Qt.ItemDataRole.BackgroundRole).color().name() == rule.background  # theirs, untouched
+            assert view.files.index(row, 0).data(Qt.ItemDataRole.ForegroundRole).color().name() == colours.readable_text(rule.background)
+
+
+def test_the_colours_page_shows_a_rule_the_way_the_file_list_draws_it(qtbot: QtBot, qapp: QApplication, the_dark_look_again: None) -> None:
+    """What the Colours page shows is what a row will look like, also for a rule that gives only a background (FQ-01, FQ-04)."""
+    background_only = ColourRule("*.log", "", colours.DARK_LOOK.first_file_background)
+    both = ColourRule("*.txt", "#ff8800", "#202830")
+    editor = ColourRulesEditor((background_only, both))
+    qtbot.addWidget(editor)
+    for rule, row in ((background_only, 0), (both, 1)):
+        item = editor.list.item(row)
+        assert item is not None
+        assert item.data(Qt.ItemDataRole.BackgroundRole).name() == rule.background
+        assert item.data(Qt.ItemDataRole.ForegroundRole).name() == (rule.text or colours.readable_text(rule.background))
+
+
+def test_the_tabs_follow_the_look_both_live_without_a_colour_and_dropped(
+    qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tab of a live connection without a colour of its own, and one whose connection dropped, are drawn in the look's greys (OR-3)."""
+    root = tmp_path / "server"
+    root.mkdir()
+    with ssh_server(root, shell=False) as server:
+        trust_server(server)
+        connected(qtbot, window, ssh_settings(server, "Shop", ""))  # live, and no colour of its own
+        assert window.tab_bar.background_of(0) == colours.DARK_LOOK.no_colour_tab
+        chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.LIGHT))
+        assert window.tab_bar.background_of(0) == colours.LIGHT_LOOK.no_colour_tab
+        session = window.sessions[0]
+        session.alive = False
+        window._set_tab(session)  # as a connection that drops
+        assert window.tab_bar.background_of(0) == colours.LIGHT_LOOK.not_connected_tab
+        chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.DARK))
+        assert window.tab_bar.background_of(0) == colours.DARK_LOOK.not_connected_tab
+
+
+def test_a_menu_opened_after_a_change_of_look_is_drawn_in_the_new_look(qtbot: QtBot, qapp: QApplication, the_dark_look_again: None) -> None:
+    """A drop-down menu is made once and lives on, so it takes its colours each time it opens (D-052, FQ-04)."""
+    menu = QMenu()
+    qtbot.addWidget(menu)
+    menu.addAction("Edit settings…")
+    as_drop_down(menu)
+    menu.aboutToShow.emit()
+    assert colours.DARK_LOOK.menu_background in menu.styleSheet()
+    theme.apply(qapp, colours.LIGHT)
+    menu.aboutToShow.emit()  # as Qt does the moment it opens
+    assert colours.LIGHT_LOOK.menu_background in menu.styleSheet()
+    assert colours.DARK_LOOK.menu_background not in menu.styleSheet()
+
+
+def test_the_connection_list_window_follows_the_look_while_it_stands_open(
+    qtbot: QtBot, qapp: QApplication, the_dark_look_again: None, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its colour blocks are pictures made once, and its window can stand open while the look changes (FQ-04)."""
+    window.show_connection_list()
+    opened = window.connection_list
+    assert isinstance(opened, ConnectionList)
+    listing: ConnectionList = opened
+    qtbot.addWidget(listing)
+    listing.connections = [Connection(name="Plain", host="h")]
+    listing._fill_list()
+
+    def block_of(name: str) -> str:
+        found = listing.tree.item_of(name)
+        assert found is not None
+        return found.icon(0).pixmap(QSize(16, 16)).toImage().pixelColor(8, 8).name()
+
+    assert block_of("Plain") == colours.DARK_LOOK.no_colour_tab
+    chose_in_settings(window, monkeypatch, saved_settings.Settings(look=colours.LIGHT))
+    assert block_of("Plain") == colours.LIGHT_LOOK.no_colour_tab

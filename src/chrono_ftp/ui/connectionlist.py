@@ -44,9 +44,10 @@ from chrono_ftp.ui.plaintext import box_text, counted, plain_label, told, was
 from chrono_ftp.ui.sshimportdialog import SshImportDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectionlist.py 0.0.47"
+__version__ = "connectionlist.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The colour blocks drawn again after a change of look (FQ-04)
 # v0.0.47: Block FJ: the list is a tree with folders, a connection dragged into a folder or out of one keeps its password, bookmarks and
 #          location profiles, and the open folders are kept for next time (FJ-01 to FJ-03); Open Every Connection in This Folder
 #          (FJ-04); a note of its own (FJ-05); the settings a new connection starts with (FJ-06); typing jumps to a connection, and
@@ -377,6 +378,11 @@ class ConnectionList(QDialog):
     def _fill_list(self) -> None:
         """The tree afresh: every connection in the folder its name names, the folders that stood open open again (FJ-01, FJ-03)."""
         self.tree.fill(self.connections, self.open_folders, colour_block)
+
+    def draw_the_colour_blocks(self) -> None:
+        """The blocks beside the connections drawn again after a change of look, without rebuilding the tree (FQ-04)."""
+        colours_by_name = {connection.name: connection.colour for connection in self.connections}
+        self.tree.draw_the_colour_blocks(lambda name: colours_by_name.get(name, ""), colour_block)
 
     def _folders_changed(self) -> None:
         """A folder was opened or closed: which ones stand open is kept for next time (FJ-03)."""

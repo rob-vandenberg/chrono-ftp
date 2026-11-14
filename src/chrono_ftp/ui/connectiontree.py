@@ -7,7 +7,7 @@ from typing import override
 
 from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QTreeWidget, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QTreeWidget, QTreeWidgetItem, QTreeWidgetItemIterator, QWidget
 
 from chrono_ftp.core import colours
 from chrono_ftp.core.connection import FOLDER_SEPARATOR, Connection, folder_of, folders_in, own_name
@@ -15,9 +15,10 @@ from chrono_ftp.engine.listing import type_ahead
 from chrono_ftp.ui import icons
 
 # --- Version ------------------------------------------------------------
-__version__ = "connectiontree.py 0.0.47"
+__version__ = "connectiontree.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The colour blocks drawn again after a change of look, the tree untouched (FQ-04)
 # v0.0.47: Review round 2: a space belongs to the name being typed, as it does in the file list, so "Mail server" can be found whole (FJ-07)
 # v0.0.47: Initial: the connection list as a tree with folders, a connection dragged into a folder or out of one, the folders that
 #          stand open kept for next time, and typing that jumps to a connection (FJ-01, FJ-02, FJ-03, FJ-07)
@@ -96,6 +97,15 @@ class ConnectionTree(QTreeWidget):
         for folder, item in folders.items():
             item.setExpanded(folder in wanted)
         self.blockSignals(False)
+
+    def draw_the_colour_blocks(self, colour_of: Callable[[str], str], blocks: Callable[[str], QIcon]) -> None:
+        """The colour block of every connection drawn again, the tree itself untouched: a change of look changes the grey of a
+        connection without a colour of its own, and the person's selection and half-filled fields must not move (FQ-04)."""
+        walk = QTreeWidgetItemIterator(self)
+        while (item := walk.value()) is not None:
+            if item.data(0, KIND) == CONNECTION and isinstance(name := item.data(0, NAME), str):
+                item.setIcon(0, blocks(colour_of(name) or colours.NO_COLOUR_TAB))
+            walk += 1
 
     def open_folders(self) -> tuple[str, ...]:
         """The folders that stand open now, so they stand open again next time (FJ-03)."""

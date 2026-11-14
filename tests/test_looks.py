@@ -13,6 +13,7 @@ from chrono_ftp.config.connections import config_folder
 from chrono_ftp.config.settings import LARGE, MEDIUM, THUMBNAIL_MASK, ToolbarChoices
 from chrono_ftp.connections.base import RemoteConnection, RemoteEntry
 from chrono_ftp.connections.ftp import FtpConnection
+from chrono_ftp.core import colours
 from chrono_ftp.core.connection import FTP, Connection
 from chrono_ftp.core.errors import LocalReadFailed, RemoteActionFailed
 from chrono_ftp.core.filecolours import ColourRule, rule_for
@@ -23,9 +24,10 @@ from tests.fakeservers import PASSWORD, USER, ftp_server, ssh_server
 from tests.test_connections import trusted_ssh
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_looks.py 0.0.39"
+__version__ = "test_looks.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The look is kept and read back; a damaged one and a file from before the look follow the desktop (FQ-04)
 # v0.0.39: Initial: block FQ without a screen (FQ-01 to FQ-03)
 
 
@@ -195,6 +197,16 @@ def test_the_looks_are_kept_and_read_back() -> None:
     )
     saved_settings.save(chosen)
     assert saved_settings.load() == chosen
+
+
+def test_the_look_is_kept_and_read_back_and_a_damaged_one_follows_the_desktop() -> None:
+    for chosen in (colours.DARK, colours.LIGHT, colours.FOLLOW_DESKTOP):
+        saved_settings.save(saved_settings.Settings(look=chosen))
+        assert saved_settings.load().look == chosen  # the choice is still there after a restart (FQ-04)
+    write_settings({"look": "aubergine"})
+    assert saved_settings.load().look == colours.FOLLOW_DESKTOP  # a damaged value gives its standard (OR-15)
+    write_settings({"show_hidden": False})
+    assert saved_settings.load().look == colours.FOLLOW_DESKTOP  # a settings file from before the look follows the desktop
 
 
 def test_an_older_settings_file_gives_the_standard_looks() -> None:

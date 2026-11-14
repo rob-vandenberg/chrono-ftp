@@ -11,9 +11,10 @@ from chrono_ftp.ui.mainwindow import MainWindow
 from chrono_ftp.ui.remoteside import RemoteSide
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_menus.py 0.0.47"
+__version__ = "test_ui_menus.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The menu style is asked for each time, because it follows the look in use (FQ-04)
 # v0.0.47: The connections window is a tree (FJ-01)
 # v0.0.30: The menu style is given to each menu; the right side shows the connection colour with the program's look
 # v0.0.29: Initial: a menu lets go of the keyboard once open, every menu opens that way, and menus have a border and roomy items
@@ -80,11 +81,11 @@ def test_the_menu_of_the_connections_window_opens_through_open_menu(qtbot: QtBot
 
 
 def test_a_menu_has_a_border_and_roomy_items(qapp: QApplication) -> None:
-    assert "border: 1px solid" in theme.MENU_STYLE
+    assert "border: 1px solid" in theme.menu_style()
     plain = QMenu()
     plain.addAction("Edit settings…")
     styled = QMenu()
-    styled.setStyleSheet(theme.MENU_STYLE)
+    styled.setStyleSheet(theme.menu_style())
     styled.addAction("Edit settings…")
     assert styled.sizeHint().height() > plain.sizeHint().height()
     assert styled.sizeHint().width() > plain.sizeHint().width()
@@ -100,7 +101,7 @@ def test_open_menu_gives_the_menu_the_menu_style(qtbot: QtBot, monkeypatch: pyte
     menu.addAction("Edit settings…")
     QTimer.singleShot(5000, menu.close)  # never waits for good
     menus.open_menu(menu, QPoint(10, 10))
-    assert menu.styleSheet() == theme.MENU_STYLE
+    assert menu.styleSheet() == theme.menu_style()
 
 
 def test_the_right_side_shows_the_connection_colour_with_the_look_of_the_program(qtbot: QtBot, qapp: QApplication) -> None:

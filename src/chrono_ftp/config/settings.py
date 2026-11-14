@@ -6,6 +6,7 @@ from typing import cast
 
 from chrono_ftp.config.connections import config_folder, write_whole
 from chrono_ftp.core.hashes import CHECKSUM_ALGORITHMS, STANDARD_ALGORITHM
+from chrono_ftp.core.colours import FOLLOW_DESKTOP, LOOK_CHOICES
 from chrono_ftp.core.filecolours import MOST_RULES, ColourRule, colour_valid
 from chrono_ftp.core.logrules import KEPT, OFF, SIZE_MEGABYTES, kept_valid, level_valid, size_valid
 from chrono_ftp.core.masks import LONGEST_MASK, problem
@@ -14,9 +15,10 @@ from chrono_ftp.core.presets import LONGEST_NAME, MOST_PRESETS, STANDARD_NAME, P
 from chrono_ftp.core.transferoptions import NAME_CASES, RESUME_MODES, TRANSFER_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.47"
+__version__ = "settings.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: The look: dark, light or the desktop's, checked on load; a new installation follows the desktop (FQ-04)
 # v0.0.47: settings_path, so the window can say which file could not be written (FJ-02)
 # v0.0.47: Which folders of the connection list stand open, and the connection a new one starts with, each checked on load (FJ-03, FJ-06)
 # v0.0.45: The order the tabs were dragged into, by connection name, checked on load (FI-01)
@@ -130,6 +132,7 @@ class Settings:
     tab_order: tuple[str, ...] = ()  # the connection names in the order the tabs were dragged into, so a tab opens again in its place (FI-01)
     open_connection_folders: tuple[str, ...] = ()  # the folders of the connection list that stand open, so the window looks as it was left (FJ-03)
     new_connection_from: str = ""  # the connection a new one starts with; empty: a new connection starts with empty fields (FJ-06)
+    look: str = FOLLOW_DESKTOP  # dark, light, or the look of the desktop, which is where a new installation starts (FQ-04)
 
 
 def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
@@ -387,6 +390,7 @@ def load() -> Settings:
         tab_order=_tab_order(data.get("tab_order")),
         open_connection_folders=_connection_names(data.get("open_connection_folders"), MOST_OPEN_FOLDERS),
         new_connection_from=from_name if isinstance(from_name := data.get("new_connection_from"), str) and len(from_name) <= LONGEST_CONNECTION_NAME else "",
+        look=choice("look", LOOK_CHOICES, FOLLOW_DESKTOP),
     )
 
 
