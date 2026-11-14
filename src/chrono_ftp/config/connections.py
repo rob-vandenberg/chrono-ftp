@@ -5,12 +5,17 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import cast
 
-from chrono_ftp.core.connection import DEFAULT_PORTS, HIGHEST_PORT, LOWEST_PORT, PROTOCOLS, SFTP, Connection
+from chrono_ftp.core.connection import DEFAULT_PORTS, HIGHEST_PORT, LONGEST_NOTE, LOWEST_PORT, PROTOCOLS, SFTP, Connection
 
 # --- Version ------------------------------------------------------------
-__version__ = "connections.py 0.0.45"
+__version__ = "connections.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: The mark of a connection that is in no list is never written to the file (FJ-11)
+# v0.0.47: can_write: whether a settings file can be written, asked before a connection is renamed; it writes as many bytes as the
+#          file holds and flushes them to the disk, so a disk with no room left is caught before anything is renamed (FJ-02)
+# v0.0.47: The note a person writes with a connection; an older file without it still loads, and a note longer than LONGEST_NOTE is cut
+#          (FJ-05)
 # v0.0.45: The name a tab of this connection was given, kept with the connection; an older file without it still loads (FI-01)
 # v0.0.34: A local starting folder and "Remember the last folders"; an older file without them still loads (FH-06); set_aside_copy is
 #          shared with the bookmarks file; written escaped, so a folder whose name is not valid UTF-8 comes back exactly, and no
@@ -22,6 +27,7 @@ __version__ = "connections.py 0.0.45"
 
 FILE_NAME: str = "connections.json"
 SET_ASIDE_SUFFIX: str = ".damaged"
+PROBE_BYTES: int = 4096  # what can_write writes at least: one block of the disk, so a disk with no room left says so
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,7 @@ def _connection_from(entry: object) -> Connection | None:
     if not isinstance(port, int) or isinstance(port, bool) or not LOWEST_PORT <= port <= HIGHEST_PORT:
         return None
     texts: dict[str, str] = {}
-    for field in ("user", "key_file", "colour", "start_folder", "local_start_folder", "tab_name"):
+    for field in ("user", "key_file", "colour", "start_folder", "local_start_folder", "tab_name", "note"):
         value = values.get(field, "")
         if not isinstance(value, str):
             return None
@@ -72,6 +78,7 @@ def _connection_from(entry: object) -> Connection | None:
         local_start_folder=texts["local_start_folder"],
         remember_folders=remember,
         tab_name=texts["tab_name"],
+        note=texts["note"][:LONGEST_NOTE],  # the file is input (OR-15): a note longer than a person writes is kept to its length
     )
 
 
@@ -185,6 +192,33 @@ def write_whole(path: Path, data: object, private: bool = True) -> None:
         raise
 
 
+def can_write(path: Path) -> str:
+    """Empty when a settings file of this name can be written now; else the reason it can't, as the system gives it. It makes the same
+    kind of temporary file write_whole makes and writes as many bytes as the file itself holds, flushed to the disk, so a disk with no
+    room left is caught here and not halfway through a rename; then it removes it again. Used before a connection is renamed, when
+    several files have to follow that name (FJ-02)."""
+    temporary = path.with_name(path.name + ".probe")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        room = max(path.stat().st_size if path.exists() else 0, PROBE_BYTES)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as file:
+                file.write(b"\0" * room)
+                file.flush()
+                os.fsync(file.fileno())  # the bytes really on the disk: a disk with no room left says so here
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError as error:
+        return error.strerror or str(error)
+    return ""
+
+
 def save(connections: Sequence[Connection]) -> None:
     """The whole list, written as write_whole writes: a crash leaves the old list whole."""
-    write_whole(list_path(), {"connections": [asdict(connection) for connection in connections]})
+    kept: list[object] = []
+    for connection in connections:
+        values: dict[str, object] = dict(asdict(connection))
+        values.pop("not_saved", None)  # everything in this file is saved, so the mark of a connection that is in no list has no place here
+        kept.append(values)
+    write_whole(list_path(), {"connections": kept})

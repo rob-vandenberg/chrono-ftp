@@ -23,14 +23,18 @@ from chrono_ftp.ui import icons
 from chrono_ftp.ui.bookmarksdialog import BookmarksDialog, key_usable
 from chrono_ftp.ui.menus import open_menu
 from chrono_ftp.ui.openfolder import LOCAL_TITLE, REMOTE_TITLE, OpenFolderDialog
-from chrono_ftp.ui.session import Session
+from chrono_ftp.ui.session import MAY_NOT_KEEP_TEXT, Session, may_keep
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windownavigation.py 0.0.45"
+__version__ = "windownavigation.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Review round 2: every action that would write something under a tab's name asks the one question of ui/session.py and is
+#          greyed with its reason on a tab opened from an address: Add Bookmark, Add the Current Folders…, Organize Bookmarks and
+#          Organize Location Profiles; the path typed in Open Folder… is not kept for such a tab either (FJ-11, OR-20)
+# v0.0.47: A connection saved under a new name, or moved into a folder, is told to every part that keeps something by its name (FJ-02)
 # v0.0.45: _go_remote is declared in the base, so the paste part can send a pasted path to the server side (FI-03)
 # v0.0.42: Shift+Space, Calculate Folder Sizes, is a key of the program: a bookmark can't take it (block FE)
 # v0.0.40: The keys of block FG are keys of the program: a bookmark can't take them
@@ -218,19 +222,44 @@ class NavigationPart(WindowBase):
 
     @override
     def _connection_deleted(self, name: str) -> None:
-        """A deleted connection's own bookmarks, profiles and typed paths go with it, so a new connection of that name starts clean."""
+        """A deleted connection's own bookmarks, profiles and typed paths go with it, so a new connection of that name starts clean, and
+        so does its place in the row of tabs (FJ-02)."""
         self._keep_places(saved_places.without_connection(self.places, name))
+        self.connection_gone(name)
+
+    @override
+    def places_renamed(self, old: str, new: str) -> tuple[str, Callable[[], str]]:
+        """The bookmarks, location profiles and typed paths of this connection under its new name, written at once. The reason they
+        could not follow, empty when they did, and the way back: it writes exactly what stood there before, never a rename the other
+        way, which would drag along whatever already sat under the new name (FJ-02)."""
+        before = self.places
+        places = saved_places.with_connection_renamed(before, old, new)
+
+        def back() -> str:
+            return self._places_written(before)
+
+        return self._places_written(places), back
+
+    def _places_written(self, places: Places) -> str:
+        """These bookmarks, profiles and typed paths on the disk; the reason they could not be written, empty when they were."""
+        try:
+            if not self.places_writable:
+                raise OSError("the bookmarks can't be read in full, so they are left as they are")
+            saved_places.save(places)
+        except OSError as error:
+            return error.strerror or str(error)
+        self.places = places
+        self._set_bookmark_keys()
+        return ""
 
     @override
     def _connection_saved(self, old: str, connection: Connection) -> None:
-        """A connection was saved in the connections window, maybe under a new name. Its bookmarks, location profiles and typed paths go
-        with the name. Its open tabs take the new record at once, without logging in again: the name, colour and folders; what the login
-        uses stays as the tab logged in, so Connect still sees a changed login and logs in again (D-051)."""
-        if old != connection.name:
-            self._keep_places(saved_places.with_connection_renamed(self.places, old, connection.name))
+        """A connection was saved in the connections window, maybe under a new name. What is kept by its name followed it already, in
+        the window's own order (FJ-02). Its open tabs take the new record at once, without logging in again: the name, colour and
+        folders; what the login uses stays as the tab logged in, so Connect still sees a changed login and logs in again (D-051)."""
         for index, session in enumerate(self.sessions):
-            if session.connection.name != old:
-                continue
+            if session.connection.name != old or not may_keep(session):
+                continue  # a tab opened from an address is no tab of this connection, whatever its made-up name is (FJ-11)
             login = session.connection
             session.connection = replace(connection, host=login.host, port=login.port, user=login.user, protocol=login.protocol, key_file=login.key_file)
             self.tab_bar.setTabText(index, session.connection.name)  # as the tab was made
@@ -238,8 +267,10 @@ class NavigationPart(WindowBase):
         self._set_bookmark_keys()
 
     def _connection_name(self) -> str:
+        """The connection whose own bookmarks and location profiles the menus show. A tab opened from an address has none, so it shows
+        the ones every connection shows and never another connection's, whatever name that tab was given (FJ-11)."""
         session = self.current()
-        return session.connection.name if session is not None else ""
+        return session.connection.name if session is not None and may_keep(session) else ""
 
     # --- bookmarks (FH-02) ---------------------------------------------------
 
@@ -250,6 +281,7 @@ class NavigationPart(WindowBase):
             menu.addAction(self.actions_by_name[f"{side}_{name}"])
         organize = QAction(icons.icon("bookmarks"), ORGANIZE_TEXT, menu)
         organize.triggered.connect(lambda: self.organize_bookmarks(side))
+        self._only_when_kept(organize, True)  # the window writes bookmarks and profiles of this connection: an address tab has none
         menu.addAction(organize)
         menu.addSeparator()
         marks = saved_places.bookmarks_of(self.places, side, self._connection_name())
@@ -272,10 +304,23 @@ class NavigationPart(WindowBase):
             open_menu(menu, button.mapToGlobal(button.rect().bottomLeft()))
         menu.deleteLater()
 
+    def _keeps_places(self) -> bool:
+        """Whether a bookmark, a location profile or a typed path may be written for the tab shown. With no tab open there is no name
+        to write under, so the bookmarks of this computer stay within reach; a tab opened from an address answers no (FJ-11)."""
+        session = self.current()
+        return session is None or may_keep(session)
+
+    def _only_when_kept(self, action: QAction, enabled: bool) -> None:
+        """An action that would write something under this tab's name: greyed with its reason on a tab opened from an address, which
+        keeps nothing on this computer (FJ-11, OR-20)."""
+        kept = self._keeps_places()
+        action.setEnabled(enabled and kept)
+        action.setToolTip("" if kept else MAY_NOT_KEEP_TEXT)
+
     def add_bookmark(self, side: str) -> None:
         """The folder of this side becomes a bookmark at once, named after its last folder (Ctrl+B)."""
         session = self.current()
-        if side == REMOTE and (session is None or not session.alive or not self.remote_side.folder):
+        if side == REMOTE and (session is None or not session.alive or not self.remote_side.folder or not may_keep(session)):
             return
         path = self.local_side.folder if side == LOCAL else self.remote_side.folder
         connection = session.connection.name if side == REMOTE and session is not None else SHARED
@@ -288,6 +333,8 @@ class NavigationPart(WindowBase):
 
     def organize_bookmarks(self, start_tab: str) -> None:
         session = self.current()
+        if not self._keeps_places():
+            return  # the window writes bookmarks and profiles of the connection shown; a tab from an address has none (FJ-11)
         home = session.home_folder if session is not None and session.alive else ""
         dialog = BookmarksDialog(self.places, self._connection_name(), PROGRAM_KEYS, start_tab, self, self.local_side.folder, self.remote_side.folder, home)
         if dialog.exec() == BookmarksDialog.DialogCode.Accepted.value:
@@ -365,11 +412,11 @@ class NavigationPart(WindowBase):
     def open_folder(self, side: str) -> None:
         """The Open folder window (Ctrl+O): a typed path, one typed before, or a bookmark of the side."""
         session = self.current()
-        connection = session.connection.name if session is not None else ""
+        connection = self._connection_name()  # a tab opened from an address has no places of its own, whatever name it was given (FJ-11)
         if side == REMOTE and (session is None or not session.alive):
             return
         current = self.local_side.folder if side == LOCAL else self.remote_side.folder
-        title = LOCAL_TITLE if side == LOCAL else REMOTE_TITLE.format(name=connection)
+        title = LOCAL_TITLE if side == LOCAL else REMOTE_TITLE.format(name=session.connection.name if session is not None else "")
         marks = saved_places.bookmarks_of(self.places, side, connection)
         dialog = OpenFolderDialog(title, current, saved_places.typed_of(self.places, side, connection), marks, self)
         if dialog.exec() != OpenFolderDialog.DialogCode.Accepted.value:
@@ -377,14 +424,15 @@ class NavigationPart(WindowBase):
         chosen = dialog.chosen()
         if not chosen:
             return
+        keeps = self._keeps_places()  # a tab opened from an address keeps no typed path under its name (FJ-11)
         if side == LOCAL:
             path = typed_local_path(self.local_side.folder, chosen)
-            if self._go_local(path):
+            if self._go_local(path) and keeps:
                 self._keep_places(saved_places.with_typed(self.places, LOCAL, connection, path))
         elif session is not None:
             path = typed_remote_path(current, chosen, session.home_folder)
             # kept only once it opened, as on the left; by then the person may be on another tab: it belongs to this connection
-            self._go_remote(session, path, opened=lambda: self._keep_places(saved_places.with_typed(self.places, REMOTE, connection, path)))
+            self._go_remote(session, path, opened=(lambda: self._keep_places(saved_places.with_typed(self.places, REMOTE, connection, path))) if keeps else None)
 
     def same_folder_on_the_other_side(self, side: str) -> None:
         """The folder of this side opens on the other side (Ctrl+.); when it isn't there, a calm message and nothing moves."""
@@ -403,10 +451,11 @@ class NavigationPart(WindowBase):
         menu.setToolTipsVisible(True)
         add = QAction(icons.icon("bookmark-new"), ADD_PROFILE_TEXT, menu)
         add.triggered.connect(self.add_profile)
-        add.setEnabled(bool(self.remote_side.folder))
+        self._only_when_kept(add, bool(self.remote_side.folder))  # a profile belongs to a connection, so an address tab can't make one
         menu.addAction(add)
         organize = QAction(icons.icon("bookmarks"), ORGANIZE_PROFILES_TEXT, menu)
         organize.triggered.connect(lambda: self.organize_bookmarks("profiles"))
+        self._only_when_kept(organize, True)
         menu.addAction(organize)
         menu.addSeparator()
         profiles = saved_places.profiles_of(self.places, self._connection_name())
@@ -437,8 +486,8 @@ class NavigationPart(WindowBase):
 
     def add_profile(self) -> None:
         session = self.current()
-        if session is None or not self.remote_side.folder:
-            return
+        if session is None or not self.remote_side.folder or not may_keep(session):
+            return  # a location profile belongs to a connection; a tab opened from an address is in no list (FJ-11)
         local, remote = self.local_side.folder, self.remote_side.folder
         start = f"{saved_places.default_name(local, LOCAL)} - {saved_places.default_name(remote, REMOTE)}"
         name = self._ask_text("Location profile", "Name of the profile for these two folders", shown_name(start))
@@ -602,7 +651,10 @@ class NavigationPart(WindowBase):
 
     @override
     def _remember_folders(self, session: Session) -> None:
-        """When its connection remembers its last folders, the folders of this tab become its starting folders."""
+        """When its connection remembers its last folders, the folders of this tab become its starting folders. A tab opened from an
+        address keeps nothing on this computer, so nothing of it is written (FJ-11)."""
+        if not may_keep(session):
+            return
         try:
             local = "" if session.local_folder == session.local_fallback else session.local_folder  # empty: the starting folder stays
             remote = "" if session.remote_folder == session.remote_fallback else session.remote_folder

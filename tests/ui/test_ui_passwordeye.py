@@ -9,9 +9,10 @@ from chrono_ftp.ui.passwordeye import HIDE_TEXT, SHOW_TEXT
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_passwordeye.py 0.0.21"
+__version__ = "test_ui_passwordeye.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A connection of the tree is chosen by name (FJ-01)
 # v0.0.21: Initial: the eye shows only with typed text, shows and hides it, and an emptied field is hidden again
 
 
@@ -30,7 +31,7 @@ def test_an_empty_password_field_has_no_eye(qtbot: QtBot) -> None:
 def test_a_stored_password_shows_no_eye_and_is_never_in_the_field(qtbot: QtBot, memory_store: MemoryStore) -> None:
     window = connection_window(qtbot, Connection(name="Shop", host="shop.example.com"))
     memory_store.write("Shop", "very-secret")
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     assert window.password.text() == ""
     assert window.password.placeholderText() == "Stored"
     assert not window.password_eye.action.isVisible()
@@ -54,7 +55,7 @@ def test_choosing_another_connection_hides_the_password_again(qtbot: QtBot) -> N
     window = connection_window(qtbot, Connection(name="Shop", host="shop.example.com"))
     window.password.setText("typed")
     window.password_eye.action.trigger()
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     assert window.password.echoMode() == QLineEdit.EchoMode.Password
     assert not window.password_eye.action.isVisible()
     window.password.setText("again")

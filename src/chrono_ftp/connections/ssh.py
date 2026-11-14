@@ -25,9 +25,11 @@ from chrono_ftp.core.logrules import DEBUG, NORMAL
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LocalReadFailed, LocalWriteFailed, LoginRefused, NameTaken, RefusedForNow, RemoteActionFailed
 
 # --- Version ------------------------------------------------------------
-__version__ = "ssh.py 0.0.42"
+__version__ = "ssh.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A connection that is in no list logs under a name of its own, so a tab from a pasted address never writes into the log of a
+#          connection that carries the name that tab was given (FJ-11)
 # v0.0.42: The checksum of a file through SFTP's check-file extension, where the server names it in its hello; the checksum tools, awk
 #          and a find that prints sizes are detected with the other tools; a long command on the server is ended when told to stop
 #          (FE-01, FE-02, FE-03); review round 1: a check-file request stops as soon as it is told to; checksums run on an SFTP channel
@@ -294,7 +296,7 @@ class SshConnection(RemoteConnection):
         self.connection: Connection = connection
         self.password: str | None = password
         self.known_hosts: str = known_hosts or str(trust.known_hosts_path())
-        self.log = sessionlog.log_for(connection.name)
+        self.log = sessionlog.log_for(connection.name, connection.not_saved)
         self.log.hide(password)  # never written, whatever the level (OR-19)
         self.capabilities = Capabilities()
         self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()

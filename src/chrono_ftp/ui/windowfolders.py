@@ -10,14 +10,16 @@ from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost
 from chrono_ftp.transfers.queue import LINE, Owned, State, spared_partials, tidy
 from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.core.connection import Connection
-from chrono_ftp.ui.session import Session
+from chrono_ftp.ui.session import Session, may_keep
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowfolders.py 0.0.45"
+__version__ = "windowfolders.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Reconnect of a tab opened from an address logs in to that address again, never to a connection that happens to carry the
+#          name that tab was given (FJ-11)
 # v0.0.45: A folder that arrived tells the tab bar, so a tab names the folder it is in (FI-01)
 # v0.0.38: Marking a tab as lost is shared, so the automatic refresh can do it (FP-01)
 # v0.0.34: A folder that can't be opened can go back to the one who asked, for a calm message of its own; each folder that arrives
@@ -177,7 +179,7 @@ class FoldersPart(WindowBase):
         session = self.current()
         if session is None or session.alive:
             return
-        now = next((connection for connection in saved_connections.load().connections if connection.name == session.connection.name), None)
+        now = next((connection for connection in saved_connections.load().connections if may_keep(session) and connection.name == session.connection.name), None)
         if now is not None and now != session.connection:
             if login_changed(session.connection, now):
                 session.password = None  # read from the store again: the new login may have a new password

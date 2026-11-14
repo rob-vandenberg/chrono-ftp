@@ -1,38 +1,61 @@
 """The tabs of the main window: each is one connection, with its own local and remote folder (OR-4)."""
 
 import os
+from collections.abc import Callable
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QByteArray, QDir, QPoint
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMenu, QMessageBox
 
+from chrono_ftp.config import bookmarks as saved_places
 from chrono_ftp.config import connections as saved_connections
 from chrono_ftp.config import settings as saved_settings
+from chrono_ftp.config import workspaces as saved_workspaces
 from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import RemoteConnection, UnknownServer, shown_name
 from chrono_ftp.connections.factory import remote_connection
 from chrono_ftp.core import credentials
-from chrono_ftp.core.connection import FTP, LONGEST_TAB_NAME, Connection
+from chrono_ftp.core.addresses import free_name
+from chrono_ftp.core.connection import FTP, LONGEST_TAB_NAME, Connection, own_name
 from chrono_ftp.core.errors import ConnectionLost, CredentialError, LoginRefused, RemoteActionFailed
 from chrono_ftp.engine.browsing import local_start_folder
 from chrono_ftp.engine.jobs import Worker
 from chrono_ftp.transfers.queue import LINE, State
 from chrono_ftp.ui import icons
-from chrono_ftp.ui.connectionlist import ConnectionList
+from chrono_ftp.ui.connectionlist import BOOKMARKS_LEFT, NOT_SAVED_WHY, SETTINGS_LEFT, WORKSPACES_LEFT, ConnectionList, StoreProblem, StoresFollowed, both_said
 from chrono_ftp.ui.logindialog import LoginDialog
 from chrono_ftp.ui.menus import open_menu
-from chrono_ftp.ui.session import Session
+from chrono_ftp.ui.session import MAY_NOT_KEEP_TEXT, Session, may_keep, may_keep_connection
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, WINDOW_TITLE, WindowBase
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowtabs.py 0.0.45"
+__version__ = "windowtabs.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Review round 7: why a move stopped is said beside what is left behind, and every file that could not be saved is named; a
+#          deleted connection also leaves no connection the window starts on (FJ-02)
+# v0.0.47: Review round 6: the facts of what followed a new name and the way to put it back, in place of the paired sentences; a
+#          deleted connection leaves nothing in the order of the tabs, and a tab opened from an address takes no place from a
+#          connection that carries the name it was given (FJ-02, FJ-11)
+# v0.0.47: Review round 5: Edit in the menu of a tab, the tab name kept with a connection and the password read from the store all ask
+#          the one question first, so a tab opened from an address never acts on a connection that carries the name it was given (FJ-11)
+# v0.0.47: Review round 4: everything that is kept by a connection's name is written before the connection list and put back where one
+#          of them can't be written, so a move that can't be made whole moves nothing (FJ-02)
+# v0.0.47: Review round 2: a further tab of a tab that may not be kept may not be kept either, so Duplicate Tab of an address tab
+#          writes nothing under that name (FJ-11)
+# v0.0.47: Review round 1: a pasted address always opens a tab of its own, with a name free of the saved list and of every open tab,
+#          and never takes over the tab of another connection; such a tab is left out of the remembered tab order and of a saved
+#          workspace, and every writer asks the one question of ui/session.py; a connection saved under a new name takes the
+#          connection that was last live, the remembered tab order and the workspaces with it (FJ-01, FJ-11)
+# v0.0.47: Block FJ: Open Every Connection in This Folder opens a tab for each, in the order of the folder (FJ-04); an address the
+#          person pasted opens as a tab that is in no list, and neither its password nor its user is ever written (FJ-11); the open
+#          folders of the connection list and the connection a new one starts with are kept with the other settings (FJ-03, FJ-06)
 # v0.0.45: Review round 2: open_another_tab makes the further tabs of one connection (Duplicate Tab, and a workspace that holds
 #          more than one on it); a tab that can't take dropped files says why while they hang over it (OR-7)
 # v0.0.45: Review round 1: a tab name longer than LONGEST_TAB_NAME is refused when it is typed
@@ -103,6 +126,7 @@ NO_TAB_TEXT: str = "No tab is open."
 TAB_NOT_LIVE_TEXT: str = "{name} is not connected, so it can't take files."
 TAB_NO_FOLDER_TEXT: str = "{name} has no folder open on the server yet."
 DROP_HERE_TEXT: str = "Drop them on {name} to send them to {folder}."
+SETTINGS_NOT_KEPT_TEXT: str = "Your settings apply now, but could not be kept for next time ({reason})."
 ORDER_NOT_KEPT_TEXT: str = "The tabs are in this order now, but that could not be kept for next time."
 
 
@@ -116,7 +140,7 @@ class TabsPart(WindowBase):
 
     def show_connection_list(self) -> None:
         if self.connection_list is None:
-            self.connection_list = ConnectionList(self)
+            self.connection_list = ConnectionList(self, self.settings.open_connection_folders, self.settings.new_connection_from)
             saved_place = self.saved_sizes.get(CONNECTION_LIST_SIZE, "")
             saved_parts = self.saved_sizes.get(CONNECTION_LIST_PARTS, "")
             # nothing or a damaged value: the default stays
@@ -125,6 +149,11 @@ class TabsPart(WindowBase):
             self.connection_list.connect_requested.connect(self.open_connection)
             self.connection_list.saved.connect(self._connection_saved)
             self.connection_list.deleted.connect(self._connection_deleted)
+            self.connection_list.folder_connect_requested.connect(self.open_every_connection)
+            self.connection_list.address_requested.connect(self.open_an_address)
+            self.connection_list.rename_stores = self.rename_stores  # what follows a new name, written before the connection list (FJ-02)
+            self.connection_list.folders_kept.connect(self._keep_open_folders)
+            self.connection_list.new_from_kept.connect(self._keep_new_from)
         self.connection_list.show()
         self.connection_list.raise_()
 
@@ -134,8 +163,119 @@ class TabsPart(WindowBase):
         assert self.connection_list is not None
         self.connection_list.start_on(self.settings.last_connection)
 
+    def open_every_connection(self, connections: object) -> None:
+        """Open Every Connection in This Folder: one tab per connection, in the order the folder showed them (FJ-04). One that already
+        has a tab keeps the one it has, as Connect does ([[D-051]])."""
+        for connection in connections if isinstance(connections, list) else []:
+            if isinstance(connection, Connection):
+                self.open_connection(connection)
+
+    def open_an_address(self, connection: Connection, password: str) -> None:
+        """A tab for an address the person pasted: it is saved nowhere, and the password that came with it is used for this one login
+        and written nowhere (FJ-11, OR-19). Its name is free of the saved list and of every open tab, so an address always opens a tab
+        of its own and never takes over the tab of a connection that happens to carry that name."""
+        taken = {session.connection.name for session in self.sessions} | {other.name for other in saved_connections.load().connections}
+        self.open_connection(replace(connection, name=free_name(connection.name, taken), not_saved=True), password=password)
+
+    def _keep_open_folders(self, folders: object) -> None:
+        """The folders of the connection list that stand open, kept with the other settings (FJ-03)."""
+        if isinstance(folders, tuple):
+            self._keep_settings(replace(self.settings, open_connection_folders=tuple(str(name) for name in folders)))
+
+    @override
+    @override
+    def rename_stores(self, old: str, new: str) -> StoresFollowed:
+        """Everything that is kept by a connection's name, under its new name, written before the connection list itself: the bookmarks
+        and location profiles, the settings (the connection that was last live, the order of the tabs, the settings a new connection
+        starts with) and the workspaces. The answer carries the facts, never a sentence: why one of them could not follow, which ones
+        are left under the new name because putting them back failed too, and the way to put every one of them back exactly as it
+        stood, for when the connection list itself can't be saved afterwards (FJ-02, G-2)."""
+        done: list[tuple[str, Path, Callable[[], str]]] = []
+        for what, path, write in (
+            (BOOKMARKS_LEFT, saved_places.places_path(), lambda: self.places_renamed(old, new)),
+            (SETTINGS_LEFT, saved_settings.settings_path(), lambda: self._settings_renamed(old, new)),
+            (WORKSPACES_LEFT, saved_workspaces.workspaces_path(), lambda: self._workspaces_renamed(old, new)),
+        ):
+            reason, back = write()
+            if not reason:
+                done.append((what, path, back))
+                continue
+            stopped = NOT_SAVED_WHY.format(path=path, reason=reason)  # why it stopped, said first in every case
+            problem = self._put_back(done)  # the ones that did follow go back as they stood
+            return StoresFollowed(StoreProblem(both_said(stopped, problem.why), problem.left))
+        return StoresFollowed(StoreProblem(), lambda: self._put_back(done))
+
+    def _put_back(self, done: list[tuple[str, Path, Callable[[], str]]]) -> StoreProblem:
+        """Every store that followed the new name back exactly as it stood. What is left under the new name because its own file could
+        not be saved, and every such file with the system's reason (FJ-02)."""
+        left: list[str] = []
+        said: list[str] = []
+        for what, path, back in reversed(done):
+            reason = back()
+            if reason:
+                left.append(what)
+                said.append(NOT_SAVED_WHY.format(path=path, reason=reason))  # every file that could not be saved, not only the last
+        return StoreProblem(" ".join(reversed(said)), tuple(reversed(left)))
+
+    def _settings_renamed(self, old: str, new: str) -> tuple[str, Callable[[], str]]:
+        """The connection that was last live, the remembered order of the tabs and the connection a new one starts with, under the new
+        name, with no name twice in that order (FJ-02, FJ-06). The reason they could not follow, empty when they did, and the way back:
+        exactly the settings that stood there before, never a rename the other way."""
+        before = self.settings
+        settings = self.settings
+        if settings.last_connection == old:
+            settings = replace(settings, last_connection=new)
+        if old in settings.tab_order:
+            settings = replace(settings, tab_order=tuple(dict.fromkeys(new if name == old else name for name in settings.tab_order)))
+        if settings.new_connection_from == old:
+            settings = replace(settings, new_connection_from=new)
+
+        def back() -> str:
+            return self._settings_written(before)
+
+        return ("", back) if settings is self.settings else (self._settings_written(settings), back)
+
+    def _settings_written(self, settings: saved_settings.Settings) -> str:
+        """These settings on the disk; the reason they could not be written, empty when they were."""
+        try:
+            saved_settings.save(settings)
+        except OSError as error:
+            return error.strerror or str(error)
+        self.settings = settings
+        return ""
+
+    @override
+    def connection_gone(self, name: str) -> None:
+        """A deleted connection leaves nothing behind in the settings: not the connection the window starts on, not a place in the row
+        of tabs, and no settings a new connection would start from. Else a name that is gone could meet a new one and stand in its way
+        (FJ-02, FJ-06)."""
+        settings = self.settings
+        if settings.last_connection == name:
+            settings = replace(settings, last_connection="")  # never the connection the window starts on: that name is gone
+        if name in settings.tab_order:
+            settings = replace(settings, tab_order=tuple(other for other in settings.tab_order if other != name))
+        if settings.new_connection_from == name:
+            settings = replace(settings, new_connection_from="")
+        if settings is not self.settings:
+            self._keep_settings(settings)
+
+    def _keep_new_from(self, name: str) -> None:
+        """The connection a new one starts with, kept with the other settings (FJ-06)."""
+        self._keep_settings(replace(self.settings, new_connection_from=name))
+
+    def _keep_settings(self, settings: saved_settings.Settings) -> None:
+        """The settings as they are now. A write that fails is said in the status bar, never swallowed: what follows a connection's new
+        name must never go missing in silence (FJ-02)."""
+        self.settings = settings
+        try:
+            saved_settings.save(self.settings)
+        except OSError as error:
+            self.status.showMessage(SETTINGS_NOT_KEPT_TEXT.format(reason=error.strerror or str(error)))
+
     def _keep_as_last(self, session: Session) -> None:
         name = session.connection.name
+        if not may_keep(session):
+            return  # a pasted address is in no list, so the connections window could never start on it (FJ-11)
         if name == self.settings.last_connection:
             return
         self.settings = replace(self.settings, last_connection=name)
@@ -153,11 +293,11 @@ class TabsPart(WindowBase):
         menu = QMenu(self)
         menu.setMinimumWidth(menu.fontMetrics().averageCharWidth() * MENU_WIDTH_CHARACTERS)
         edit = QAction(icons.icon("document-properties"), EDIT_TEXT, menu)
-        if name in {connection.name for connection in saved_connections.load().connections}:
+        if may_keep(self.sessions[index]) and name in {connection.name for connection in saved_connections.load().connections}:
             edit.triggered.connect(lambda: self.edit_connection(name))
         else:
             edit.setEnabled(False)  # greyed with its reason, never hidden (OR-20)
-            edit.setToolTip(EDIT_GONE_TEXT)
+            edit.setToolTip(EDIT_GONE_TEXT if may_keep(self.sessions[index]) else MAY_NOT_KEEP_TEXT)
             menu.setToolTipsVisible(True)
         menu.addAction(edit)
         session = self.sessions[index]
@@ -244,14 +384,14 @@ class TabsPart(WindowBase):
         session.connection = replace(session.connection, tab_name=chosen)
         self.refresh_tab_label(session)
         for other in self.sessions:  # every other tab of the same connection carries the same name
-            if other is not session and other.connection.name == session.connection.name:
+            if other is not session and may_keep(other) == may_keep(session) and other.connection.name == session.connection.name:
                 other.connection = replace(other.connection, tab_name=chosen)
                 self.refresh_tab_label(other)
         try:
-            kept = saved_connections.remember_tab_name(session.connection.name, chosen)
+            kept = saved_connections.remember_tab_name(session.connection.name, chosen) if may_keep(session) else True
         except OSError:
-            kept = False
-        if self.connection_list is not None:
+            kept = False  # a tab of an address keeps its name while it is open, and nothing of it is written (FJ-11)
+        if self.connection_list is not None and may_keep(session):
             self.connection_list.tab_renamed(session.connection.name, chosen)  # an open connections window must not put the old name back
         if not kept:
             self.status.showMessage(RENAMED_NOT_KEPT_TEXT.format(name=shown_name(self.tab_label(session))))
@@ -262,6 +402,9 @@ class TabsPart(WindowBase):
         one tab on one connection come here; Connect never does, so it still switches to the tab there is (D-051, D-098)."""
         place = len(self.sessions) if index is None else index
         copy = Session(connection, Worker(self.bridge.deliver), local_folder or self.local_side.folder)
+        open_tab = next((other for other in self.sessions if may_keep(other) and other.connection.name == connection.name), None)
+        if open_tab is not None:
+            copy.password = open_tab.password  # a further tab of the same connection logs in as the one that is open
         copy.wanted_start = remote_folder
         self.sessions.insert(place, copy)
         self.tab_bar.insertTab(place, shown_name(connection.tab_name or connection.name))
@@ -276,7 +419,8 @@ class TabsPart(WindowBase):
         if session not in self.sessions:
             return
         index = self.sessions.index(session) + 1
-        copy = Session(session.connection, Worker(self.bridge.deliver), session.local_folder)
+        copy = Session(session.connection, Worker(self.bridge.deliver), session.local_folder)  # the connection carries the mark of a
+        copy.password = session.password  # tab that may not be kept, so the copy may not be kept either (FJ-11)
         copy.remote_folder = session.remote_folder
         copy.entries = session.entries  # the same folder on the same server: the duplicate shows it at once
         copy.home_folder = session.home_folder
@@ -329,8 +473,8 @@ class TabsPart(WindowBase):
     def _keep_tab_order(self) -> None:
         open_names: list[str] = []
         for session in self.sessions:
-            if session.connection.name not in open_names:
-                open_names.append(session.connection.name)
+            if may_keep(session) and session.connection.name not in open_names:
+                open_names.append(session.connection.name)  # a tab of a pasted address keeps no place: it is in no list (FJ-11)
         rest = [name for name in self.settings.tab_order if name not in open_names]
         self.settings = replace(self.settings, tab_order=(*open_names, *rest))
         try:
@@ -338,14 +482,16 @@ class TabsPart(WindowBase):
         except OSError:
             self.status.showMessage(ORDER_NOT_KEPT_TEXT)
 
-    def _place_for(self, name: str) -> int:
-        """Where a new tab for this connection goes: the place the person dragged it to last time, else the end (FI-01)."""
+    def _place_for(self, connection: Connection) -> int:
+        """Where a new tab for this connection goes: the place the person dragged it to last time, else the end (FI-01). A tab opened
+        from an address has no place of its own and takes none from a connection that carries the name it was given (FJ-11)."""
+        name = connection.name if may_keep_connection(connection) else ""
         order = self.settings.tab_order
         if self.opening_workspace or name not in order:  # a workspace opens its tabs in the order it saved (FI-02)
             return len(self.sessions)
         after = order.index(name)
         for index, session in enumerate(self.sessions):
-            other = session.connection.name
+            other = session.connection.name if may_keep(session) else ""
             if other in order and order.index(other) > after:
                 return index
         return len(self.sessions)
@@ -435,14 +581,17 @@ class TabsPart(WindowBase):
         self.activateWindow()
 
     @override
-    def open_connection(self, connection: Connection, local_folder: str = "", remote_folder: str = "") -> None:
+    def open_connection(self, connection: Connection, local_folder: str = "", remote_folder: str = "", password: str = "") -> Session | None:
         """local_folder and remote_folder: the folders a workspace saved for this tab; they win over the starting folders of the
-        connection, which is what the person saved (FI-02)."""
+        connection, which is what the person saved (FI-02). password: the one that came with a pasted address, used for this login only
+        (FJ-11). The Session of the new tab; None where the connection already had one."""
         for index, open_session in enumerate(self.sessions):
+            if connection.not_saved or not may_keep(open_session):
+                continue  # an address opens a tab of its own, and never takes over one that is already open (FJ-11)
             if open_session.connection.name == connection.name:
                 self.tab_bar.setCurrentIndex(index)  # already open: its tab, never a second one
                 self._open_again(index, open_session, connection)
-                return
+                return None
         wanted_local, local_gone = local_folder, False
         local_folder = self.local_side.folder
         if wanted_local and os.path.isdir(wanted_local):
@@ -456,9 +605,10 @@ class TabsPart(WindowBase):
                 local_folder = QDir.homePath()
         session = Session(connection, Worker(self.bridge.deliver), local_folder)
         session.wanted_start = remote_folder  # empty: the starting folder of the connection, as ever
+        session.password = password or None  # a password from a pasted address; it is never written anywhere (FJ-11, OR-19)
         if local_gone:
             session.local_fallback = local_folder  # not written back as the starting folder unless the person moves it (D-058)
-        index = self._place_for(connection.name)  # the place the person dragged this tab to last time (FI-01)
+        index = self._place_for(connection)  # the place the person dragged this tab to last time (FI-01)
         self.sessions.insert(index, session)
         self.tab_bar.insertTab(index, shown_name(connection.tab_name or connection.name))
         self.tab_bar.set_colour(index, None)  # grey until the connection is live
@@ -467,6 +617,7 @@ class TabsPart(WindowBase):
         self._connect(session)
         if local_gone:
             QMessageBox.information(self, WINDOW_TITLE, box_text(LOCAL_START_GONE_TEXT.format(path=shown_name(connection.local_start_folder), name=connection.name)))
+        return session
 
     def _ask_login(self, session: Session, password_needed: bool) -> bool:
         """False when the person cancelled: nothing about the connection has changed then."""
@@ -510,7 +661,7 @@ class TabsPart(WindowBase):
         def work() -> str:
             if old is not None:
                 old.close()
-            if not session.password:
+            if not session.password and may_keep(session):  # a tab from an address has no password of its own in the store (FJ-11)
                 try:
                     session.password = credentials.store.read(session.connection.name)
                 except CredentialError:
@@ -559,10 +710,10 @@ class TabsPart(WindowBase):
             self.remote_side.home_folder = session.home_folder
         self.status.showMessage(f"Connected to {session.connection.host}")
         self._keep_as_last(session)
-        if session.typed_password and session.password:
+        if session.typed_password and session.password and may_keep(session):
             self._store_password(session, session.password)
             session.typed_password = False
-        if session.typed_user:
+        if session.typed_user and may_keep(session):
             self._store_user(session)
             session.typed_user = False
         self._set_tab(session)

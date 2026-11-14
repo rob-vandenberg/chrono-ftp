@@ -19,6 +19,7 @@ from pathlib import Path
 from chrono_ftp.config import parts
 from chrono_ftp.connections import trust
 from chrono_ftp.connections.base import Limit, RemoteConnection, joined, limit_now, parent_of
+from chrono_ftp.core.addresses import login_text
 from chrono_ftp.core.connection import SFTP
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionLost, RemoteActionFailed
 from chrono_ftp.core.transferoptions import RESUME_OFF
@@ -27,9 +28,11 @@ from chrono_ftp.transfers.job import Job, Meter, Stopped
 from chrono_ftp.transfers.options import Action
 
 # --- Version ------------------------------------------------------------
-__version__ = "rsyncway.py 0.0.13"
+__version__ = "rsyncway.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A network address with colons in it goes between square brackets in the login, so a tab opened from such an address can
+#          send and fetch files too (FJ-11)
 # v0.0.13: A new speed limit takes effect at once: rsync ends and starts again with it, without the files it sent already (also in a
 #          run of all of it), and goes on from its unfinished copy (FC-02); the files rsync sent are remembered with the job, so a resume
 #          or a retry never asks about them again, and for a move that broke off their originals go when it goes on; rsync always keeps
@@ -131,7 +134,7 @@ def rsync_arguments(job: Job, limit: int, remote_shell: list[str] | None = None,
     ssh = ["ssh", "-p", str(settings.port), "-o", "BatchMode=yes", "-o", f"UserKnownHostsFile={trust.known_hosts_path()} {Path.home() / '.ssh' / 'known_hosts'}"]
     if settings.key_file:
         ssh += ["-i", settings.key_file]
-    login = f"{settings.user}@{settings.host}" if settings.user else settings.host
+    login = login_text(settings)  # one place knows how a server is written in a command: a network address goes between brackets
     arguments = ["rsync", "-a", "--protect-args", "--no-owner", "--no-group", "--info=progress2", f"--timeout={STALL_SECONDS}", "-e", shlex.join(remote_shell or ssh)]
     arguments.append("--no-perms")  # a new file gets the server's usual rights, a replaced one keeps its own
     arguments.append(f"--out-format={SENT_MARK.decode()}%n")  # which files it really sent: one it left is not ours, and none sent is nothing moved

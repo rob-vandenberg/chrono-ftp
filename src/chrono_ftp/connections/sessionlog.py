@@ -13,9 +13,11 @@ from pathlib import Path
 from chrono_ftp.core.logrules import DEBUG, DETAILED, MOST_KEPT, NORMAL, OFF, LogRules
 
 # --- Version ------------------------------------------------------------
-__version__ = "sessionlog.py 0.0.38"
+__version__ = "sessionlog.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A connection that is in no list (a tab from a pasted address) logs under a name of its own, so two such tabs and a saved
+#          connection of that name never write into one log (FJ-11)
 # v0.0.38: Initial: a log per connection in three levels, off by default, rotated by size and count, shown live; passwords, keys and
 #          the FTP PASS line are never written (FP-02, D-065); review: a watcher gets the lines of one write together, so a long
 #          listing is one call; work the program does by itself can be written as a summary, its details only at Debug
@@ -29,6 +31,7 @@ REQUEST: str = ">"
 ANSWER: str = "<"
 NOTE: str = "."
 PROBLEM: str = "!"
+APART_MARK: str = "(from an address)"  # in the name of the log of a connection that is in no list, so it stands apart (FJ-11)
 NOT_WRITTEN_TEXT: str = "The session log could not be written: {reason}. The connection goes on without it."
 NAME_CHARACTERS: re.Pattern[str] = re.compile(r"[^A-Za-z0-9._-]+")
 PASSWORD_COMMAND: re.Pattern[str] = re.compile(r"^(\s*(?:PASS|ACCT)\b)\s*.*$", re.IGNORECASE)  # FTP sends the password in plain text after it
@@ -72,14 +75,22 @@ def rotated(path: Path, number: int) -> Path:
     return path.with_name(f"{path.name}.{number}")
 
 
-def log_for(connection_name: str) -> "SessionLog":
-    """The one log of this connection, shared by every login of it (browsing, transfers, the parts of a split file)."""
+def log_for(connection_name: str, apart: bool = False) -> "SessionLog":
+    """The one log of this connection, shared by every login of it (browsing, transfers, the parts of a split file). apart: a connection
+    that is in no list (a tab from a pasted address) logs under a name of its own, so it never writes into the log of a connection that
+    carries the same name (FJ-11)."""
+    name = log_name(connection_name, apart)
     with _logs_lock:
-        found = _logs.get(connection_name)
+        found = _logs.get(name)
         if found is None:
-            found = SessionLog(connection_name)
-            _logs[connection_name] = found
+            found = SessionLog(name)
+            _logs[name] = found
         return found
+
+
+def log_name(connection_name: str, apart: bool) -> str:
+    """The name a log is kept under: the connection's own, and one of its own for a connection that is in no list (FJ-11)."""
+    return f"{connection_name} {APART_MARK}" if apart else connection_name
 
 
 def cleaned(line: str, secrets: tuple[str, ...]) -> str:

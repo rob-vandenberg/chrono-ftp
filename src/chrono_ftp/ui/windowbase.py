@@ -17,7 +17,7 @@ from chrono_ftp.transfers.options import Answers
 from chrono_ftp.transfers.queue import Job, TransferQueue
 from chrono_ftp.ui.afterqueue import Countdown, Power
 from chrono_ftp.ui.bridge import Bridge
-from chrono_ftp.ui.connectionlist import ConnectionList
+from chrono_ftp.ui.connectionlist import ConnectionList, StoresFollowed
 from chrono_ftp.ui.localside import LocalSide
 from chrono_ftp.ui.queueview import QueuePanel, QueueView
 from chrono_ftp.ui.remoteside import RemoteSide
@@ -29,9 +29,12 @@ from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.plaintext import box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowbase.py 0.0.45"
+__version__ = "windowbase.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Review round 4: the parts that keep something by a connection's name write it under the new name themselves and say
+#          what could not follow, so the window can put back what did and move nothing at all (FJ-02)
+# v0.0.47: open_connection also takes the password of a pasted address and whether the tab stands in no list, and hands back its tab (FJ-11)
 # v0.0.45: Review round 2: open_another_tab is shared with the workspaces part
 # v0.0.45: Review round 1: open_workspace says how many tabs it opened
 # v0.0.45: Block FI: the All Tabs button, the tab labels, what Ctrl+C copied and the copies on their way from one server to another,
@@ -201,6 +204,18 @@ class WindowBase(QMainWindow):
     def _connection_saved(self, old: str, connection: Connection) -> None:
         raise NotImplementedError
 
+    def rename_stores(self, old: str, new: str) -> StoresFollowed:
+        raise NotImplementedError
+
+    def places_renamed(self, old: str, new: str) -> tuple[str, Callable[[], str]]:
+        raise NotImplementedError
+
+    def connection_gone(self, name: str) -> None:
+        raise NotImplementedError
+
+    def _workspaces_renamed(self, old: str, new: str) -> tuple[str, Callable[[], str]]:
+        raise NotImplementedError
+
     def _sync_ends(self, session: Session) -> None:
         raise NotImplementedError
 
@@ -338,7 +353,7 @@ class WindowBase(QMainWindow):
     def refresh_tab_label(self, session: Session) -> None:
         raise NotImplementedError
 
-    def open_connection(self, connection: Connection, local_folder: str = "", remote_folder: str = "") -> None:
+    def open_connection(self, connection: Connection, local_folder: str = "", remote_folder: str = "", password: str = "") -> Session | None:
         raise NotImplementedError
 
     def copy_into(self, session: Session, folder: str, chosen: list[RemoteEntry], target: str) -> None:

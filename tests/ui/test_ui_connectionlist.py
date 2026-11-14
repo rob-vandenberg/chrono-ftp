@@ -3,20 +3,22 @@ from collections.abc import Callable
 import pytest
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QColorDialog, QLabel, QMessageBox
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_ftp.config import connections
 from chrono_ftp.core.connection import DEFAULT_PORTS, FTP, SFTP, Connection
-from chrono_ftp.ui.connectionlist import ConnectionList
+from chrono_ftp.ui.connectionlist import COPY_ADDRESS_TEXT, EMPTY_FOR_NEW_TEXT, USE_FOR_NEW_TEXT, ConnectionList
+from chrono_ftp.ui.connectiontree import NAME
 from tests.conftest import MemoryStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_connectionlist.py 0.0.32"
+__version__ = "test_ui_connectionlist.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: The list is a tree: a connection is chosen by name, and the right-click menu holds Copy the Address and the two items for a new connection; Open an Address… stands with the other buttons (FJ-01, FJ-06, FJ-11, FJ-12)
 # v0.0.32: Connect is the default button; Enter in the list, a field or on a focused button connects
 # v0.0.25: Connect with unsaved changes asks Save changes?: Save, Don't Save, Cancel; none without changes
 # v0.0.20: The labels of the fields are not against the splitter
@@ -53,6 +55,17 @@ def window_with(qtbot: QtBot, *saved: Connection) -> ConnectionList:
     return window
 
 
+def shown(window: ConnectionList) -> list[str]:
+    """The connections the tree shows, in its order (FJ-01)."""
+    return [str(item.data(0, NAME)) for item in window.tree.connection_items()]
+
+
+def place_of(window: ConnectionList, name: str) -> QPoint:
+    item = window.tree.item_of(name)
+    assert item is not None
+    return window.tree.visualItemRect(item).center()
+
+
 def fill(window: ConnectionList, name: str = "Shop", host: str = "shop.example.com") -> None:
     window.name.setText(name)
     window.host.setText(host)
@@ -77,7 +90,7 @@ def test_a_saved_connection_is_in_the_list_and_in_the_file(qtbot: QtBot) -> None
     window = window_with(qtbot)
     fill(window)
     window.save()
-    assert window.list.count() == 1
+    assert shown(window) == ["Shop"]
     assert connections.load().connections[0].host == "shop.example.com"
     assert window.delete_action.isEnabled()
 
@@ -94,7 +107,7 @@ def test_the_password_goes_to_the_store_and_never_into_the_file(qtbot: QtBot, me
 def test_a_stored_password_is_shown_as_stored_and_not_asked_again(qtbot: QtBot, memory_store: MemoryStore) -> None:
     memory_store.passwords["Shop"] = "very-secret"
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     assert window.password.text() == ""
     assert window.password.placeholderText() == "Stored"
     window.save()
@@ -104,7 +117,7 @@ def test_a_stored_password_is_shown_as_stored_and_not_asked_again(qtbot: QtBot, 
 def test_renaming_takes_the_password_along(qtbot: QtBot, memory_store: MemoryStore) -> None:
     memory_store.passwords["Shop"] = "very-secret"
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     window.name.setText("Store")
     window.save()
     assert memory_store.passwords == {"Store": "very-secret"}
@@ -149,20 +162,20 @@ def test_the_chosen_colour_is_saved(qtbot: QtBot, monkeypatch: pytest.MonkeyPatc
 def test_delete_asks_first_and_no_keeps_everything(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:
     memory_store.passwords["Shop"] = "very-secret"
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     monkeypatch.setattr(QMessageBox, "question", answer_no)
     window.delete()
-    assert window.list.count() == 1
+    assert shown(window) == ["Shop"]
     assert memory_store.passwords == {"Shop": "very-secret"}
 
 
 def test_delete_removes_the_connection_and_its_password(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, memory_store: MemoryStore) -> None:
     memory_store.passwords["Shop"] = "very-secret"
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     monkeypatch.setattr(QMessageBox, "question", answer_yes)
     window.delete()
-    assert window.list.count() == 0
+    assert shown(window) == []
     assert memory_store.passwords == {}
     assert connections.load().connections == ()
 
@@ -170,7 +183,7 @@ def test_delete_removes_the_connection_and_its_password(qtbot: QtBot, monkeypatc
 def test_connect_hands_over_the_selected_connection(qtbot: QtBot) -> None:
     chosen = Connection(name="Shop", host="shop.example.com")
     window = window_with(qtbot, chosen)
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     with qtbot.waitSignal(window.connect_requested) as signal:
         window.connect_button.click()
     assert signal.args == [chosen]
@@ -184,7 +197,7 @@ def test_a_damaged_list_is_told_calmly_and_the_window_opens(qtbot: QtBot, monkey
     monkeypatch.setattr(QMessageBox, "information", note_in(told))
     window = ConnectionList()
     qtbot.addWidget(window)
-    assert window.list.count() == 0
+    assert shown(window) == []
     assert len(told) == 1 and "kept" in told[0]
 
 
@@ -199,7 +212,7 @@ def test_a_new_connection_has_no_colour_and_its_button_is_greyed(qtbot: QtBot) -
 
 def test_the_tick_switches_the_colour_on_and_off_again(qtbot: QtBot) -> None:
     window = window_with(qtbot, Connection(name="Shop", host="h", colour="#aa3355"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     assert window.use_colour.isChecked() and window.colour_button.isEnabled()
     window.use_colour.setChecked(False)
     window.save()
@@ -208,16 +221,16 @@ def test_the_tick_switches_the_colour_on_and_off_again(qtbot: QtBot) -> None:
 
 def test_a_connection_with_a_colour_after_one_without_shows_its_own_state(qtbot: QtBot) -> None:
     window = window_with(qtbot, Connection(name="A", host="h"), Connection(name="B", host="h", colour="#aa3355"))
-    window.list.setCurrentRow(1)
+    window._select("B")
     assert window.use_colour.isChecked()
-    window.list.setCurrentRow(0)
+    window._select("A")
     assert not window.use_colour.isChecked() and not window.colour_button.isEnabled()
 
 
 def test_duplicate_saves_a_copy_with_its_password_ready_to_be_renamed(qtbot: QtBot, memory_store: MemoryStore) -> None:
     window = window_with(qtbot, Connection(name="example.nl", host="example.nl", user="admin", port=2222))
     memory_store.write("example.nl", "very-secret")
-    window.list.setCurrentRow(0)
+    window._select("example.nl")
     window.duplicate()
     copy = next(connection for connection in connections.load().connections if connection.name == "example.nl (copy)")
     assert (copy.host, copy.user, copy.port) == ("example.nl", "admin", 2222)
@@ -240,12 +253,11 @@ def test_a_second_duplicate_gets_a_name_of_its_own(qtbot: QtBot) -> None:
 def test_the_right_click_menu_holds_connect_duplicate_and_delete_only_on_a_connection(qtbot: QtBot) -> None:
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
     window.show()
-    first = window.list.visualItemRect(window.list.item(0)).center()
-    menu = window.menu_for(first)
+    menu = window.menu_for(place_of(window, "Shop"))
     assert menu is not None
-    assert [action.text() for action in menu.actions() if not action.isSeparator()] == ["Connect", "Duplicate", "Delete"]
+    assert [action.text() for action in menu.actions() if not action.isSeparator()] == ["Connect", "Duplicate", "Delete", COPY_ADDRESS_TEXT, USE_FOR_NEW_TEXT, EMPTY_FOR_NEW_TEXT]
     assert window.selected() is not None
-    assert window.menu_for(window.list.viewport().rect().bottomLeft()) is None
+    assert window.menu_for(window.tree.viewport().rect().bottomLeft()) is None
 
 
 def test_import_is_under_the_list_and_export_is_greyed_with_a_hover_text(qtbot: QtBot) -> None:
@@ -253,6 +265,8 @@ def test_import_is_under_the_list_and_export_is_greyed_with_a_hover_text(qtbot: 
     assert window.import_button.text() == "Import…"
     assert not window.export_button.isEnabled()
     assert window.export_button.toolTip()
+    for promise in (" yet", "later version", "a version", "coming"):  # it says what is true today and promises nothing (OR-23)
+        assert promise not in window.export_button.toolTip(), promise
     list_part = window.parts.widget(0)
     assert list_part is not None and list_part.isAncestorOf(window.import_button)
 
@@ -267,7 +281,7 @@ def test_the_buttons_under_the_list_and_under_the_fields_stand_on_one_line(qtbot
     window = window_with(qtbot)
     with qtbot.waitExposed(window):
         window.show()
-    bottoms = {button.mapTo(window, button.rect().bottomLeft()).y() for button in (window.import_button, window.export_button, window.new_button, window.save_button, window.connect_button)}
+    bottoms = {button.mapTo(window, button.rect().bottomLeft()).y() for button in (window.import_button, window.export_button, window.address_button, window.new_button, window.save_button, window.connect_button)}
     assert len(bottoms) == 1
 
 
@@ -299,7 +313,7 @@ def answering(button: QMessageBox.StandardButton, asked: list[str]) -> Callable[
 
 def edited_window(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, button: QMessageBox.StandardButton, asked: list[str]) -> tuple[ConnectionList, list[Connection]]:
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     window.host.setText("new.example.com")
     monkeypatch.setattr(QMessageBox, "question", answering(button, asked))
     handed: list[Connection] = []
@@ -336,14 +350,14 @@ def test_connect_with_changes_and_cancel_changes_nothing(qtbot: QtBot, monkeypat
 
 def test_a_typed_password_counts_as_a_change(qtbot: QtBot) -> None:
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     window.password.setText("typed")
     assert window.has_changes()
 
 
 def test_connect_without_changes_asks_nothing(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     asked: list[str] = []
     monkeypatch.setattr(QMessageBox, "question", answering(QMessageBox.StandardButton.Cancel, asked))
     handed: list[Connection] = []
@@ -362,7 +376,7 @@ def enter_connects_from(qtbot: QtBot, pick: Callable[[ConnectionList], QWidget])
     window = window_with(qtbot, Connection(name="Shop", host="shop.example.com"))
     with qtbot.waitExposed(window):
         window.show()
-    window.list.setCurrentRow(0)
+    window._select("Shop")
     handed: list[Connection] = []
     window.connect_requested.connect(handed.append)
     target = pick(window)
@@ -373,7 +387,7 @@ def enter_connects_from(qtbot: QtBot, pick: Callable[[ConnectionList], QWidget])
 
 
 def test_enter_in_the_list_connects_the_selected_connection(qtbot: QtBot) -> None:
-    assert [connection.name for connection in enter_connects_from(qtbot, lambda window: window.list)] == ["Shop"]
+    assert [connection.name for connection in enter_connects_from(qtbot, lambda window: window.tree)] == ["Shop"]
 
 
 def test_enter_in_a_field_connects_the_selected_connection(qtbot: QtBot) -> None:

@@ -18,9 +18,12 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from tests.fakeservers import NOT_AS_ROOT
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_mainwindow.py 0.0.34"
+__version__ = "test_ui_mainwindow.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: The walk with the arrow keys waits until the tree holds the folders it walks, in the order the view shows them, with no
+#          further batch on its way: it waited for a count of rows, which is reached while the model can still add and move rows, so
+#          the test failed about one run in a hundred (AGENTS.md 4.4.4.1)
 # v0.0.34: The path above each side is the path bar, with its field to type in
 # v0.0.33: Not connected, the right side is the darker row colour of the left side, with readable text
 # v0.0.24: The tabs and New Tab share one centre line; the row, not the hidden tab bar, has the height
@@ -43,6 +46,25 @@ def window_for(qtbot: QtBot) -> MainWindow:
 
 def names_in(side: LocalSide) -> set[str]:
     return set(side.file_list.names())
+
+
+def walk_below(side: LocalSide, start: Path, count: int) -> list[str]:
+    """The folders the tree shows below this one, in the order the view shows them: exactly what the Down key walks."""
+    found: list[str] = []
+    index = side.tree_model.index(str(start))
+    for _ in range(count):
+        index = side.tree.indexBelow(index)
+        found.append(side.tree_model.filePath(index))
+    return found
+
+
+def settled_tree(qtbot: QtBot, side: LocalSide, folder: Path, names: tuple[str, ...]) -> None:
+    """Waits until the tree holds the folders this test is going to walk, in the order the view shows them, and no further batch is on
+    its way. A QFileSystemModel fills a folder in batches and sorts after each one, so a count of rows alone is reached while rows can
+    still be added and moved; a key pressed then lands on another folder (AGENTS.md 4.4.4.1)."""
+    parent = side.tree_model.index(str(folder))
+    wanted = [str(folder / name) for name in names]
+    qtbot.waitUntil(lambda: not side.tree_model.canFetchMore(parent) and walk_below(side, folder, len(names)) == wanted)
 
 
 def test_the_left_side_is_local_and_the_right_side_is_remote(qtbot: QtBot) -> None:
@@ -212,7 +234,7 @@ def test_the_arrow_keys_pass_through_a_closed_folder_in_the_tree(qtbot: QtBot, t
             window.show()
         local.go_to(str(tmp_path))
         local.tree.expand(local.tree_model.index(str(tmp_path)))
-        qtbot.waitUntil(lambda: local.tree_model.rowCount(local.tree_model.index(str(tmp_path))) == 3)
+        settled_tree(qtbot, local, tmp_path, ("a", "b", "c"))
         local.tree.setCurrentIndex(local.tree_model.index(str(tmp_path / "a")))
         local.tree.setFocus()
         QTest.keyClick(local.tree, Qt.Key.Key_Down)

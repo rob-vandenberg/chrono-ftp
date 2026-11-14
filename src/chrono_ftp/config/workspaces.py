@@ -1,16 +1,19 @@
 """Workspaces (FI-02): a named set of open tabs, each with the folders it was in, kept in workspaces.json."""
 
 import json
+from pathlib import Path
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import cast
 
 from chrono_ftp.config.connections import config_folder, write_whole
 
 # --- Version ------------------------------------------------------------
-__version__ = "workspaces.py 0.0.45"
+__version__ = "workspaces.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: workspaces_path, so the window can say which file could not be written (FJ-02)
+# v0.0.47: A connection saved under a new name is that name in every workspace too (FJ-02)
 # v0.0.45: Initial: a workspace is a name and the tabs it holds, each with its connection and the folders of both sides; one workspace
 #          can open by itself at start; a damaged file gives no workspaces and a damaged entry is left out (OR-15, FI-02)
 
@@ -70,6 +73,11 @@ def _workspace_from(entry: object) -> Workspace | None:
     return Workspace(name.strip(), tuple(tab for tab in tabs if tab is not None))
 
 
+def workspaces_path() -> Path:
+    """The file the workspaces live in. Named so the window can say which file could not be written (FJ-02)."""
+    return config_folder() / FILE_NAME
+
+
 def load() -> Workspaces:
     """The workspaces as the file has them. A file that can't be read gives none; a damaged workspace is left out (OR-15)."""
     try:
@@ -120,6 +128,13 @@ def renamed(workspaces: Workspaces, old: str, new: str) -> Workspaces:
     items = tuple(Workspace(new, item.tabs) if item.name.casefold() == old.casefold() else item for item in workspaces.items)
     at_start = new if workspaces.at_start.casefold() == old.casefold() else workspaces.at_start
     return Workspaces(items, at_start)
+
+
+def connection_renamed(workspaces: Workspaces, old: str, new: str) -> Workspaces:
+    """Every tab of every workspace that holds the connection called old now holds it under the name new, so a workspace never reports
+    a connection as gone after it was renamed or moved into a folder (FJ-02)."""
+    items = tuple(Workspace(item.name, tuple(replace(tab, connection=new) if tab.connection == old else tab for tab in item.tabs)) for item in workspaces.items)
+    return Workspaces(items, workspaces.at_start)
 
 
 def with_start(workspaces: Workspaces, name: str) -> Workspaces:

@@ -23,9 +23,11 @@ from chrono_ftp.core.logrules import DEBUG
 from chrono_ftp.core.errors import ChronoFtpError, ConnectionFailed, ConnectionLost, ContinuationRefused, LocalActionFailed, LoginRefused, NameTaken, NoMoreLogins, RefusedForNow, RemoteActionFailed, TransferInterrupted
 
 # --- Version ------------------------------------------------------------
-__version__ = "ftp.py 0.0.42"
+__version__ = "ftp.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A connection that is in no list logs under a name of its own, so a tab from a pasted address never writes into the log of a
+#          connection that carries the name that tab was given (FJ-11)
 # v0.0.42: The checksum of a file computed by the server: HASH with the algorithms FEAT names, chosen with OPTS HASH, or XMD5, MD5,
 #          XSHA1, XSHA256 and XSHA512 where FEAT names them; an answer that is no checksum is refused (FE-01); review round 1: a stop
 #          ends a checksum at once by closing its control connection (the next request logs in again), and checksums get a login of
@@ -297,7 +299,7 @@ class FtpConnection(RemoteConnection):
         self._hashes: dict[str, str] = {}  # our name of each algorithm HASH offers, to the name the server uses (FE-01)
         self._checksum_commands: dict[str, str] = {}  # an older checksum command per algorithm, where FEAT names one
         self._hash_chosen: str = ""  # the algorithm OPTS HASH chose on this control connection
-        self.log = sessionlog.log_for(connection.name)
+        self.log = sessionlog.log_for(connection.name, connection.not_saved)
         self.log.hide(password)  # never written, whatever the level (OR-19)
 
     def _prefix(self) -> str:

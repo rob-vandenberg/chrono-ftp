@@ -23,6 +23,7 @@ from chrono_ftp.ui.localside import LocalSide
 from chrono_ftp.ui.queueview import STOP_ALL_TEXT, QueuePanel, QueueView
 from chrono_ftp.ui.queueview import HEIGHT as QUEUE_HEIGHT
 from chrono_ftp.ui.remoteside import RemoteSide
+from chrono_ftp.ui.session import MAY_NOT_KEEP_TEXT, may_keep
 from chrono_ftp.ui.tabbar import ConnectionTabBar
 from chrono_ftp.ui.windowbase import CENTRE_MARGIN, CHECK_MILLISECONDS, CLOCK_MILLISECONDS, EDIT_SETTLE_MILLISECONDS, EMPTY_TAB_BAR_LINES, GENERAL_ICON_SIZE, HIGHEST_LIMIT, LOCK_SIZE, QUEUE_LINGER_MILLISECONDS, SHELL_ACTIONS, START_HEIGHT, START_WIDTH, WINDOW_TITLE
 from chrono_ftp.ui.windowedit import EditPart
@@ -45,9 +46,11 @@ from chrono_ftp.ui.windowtransfers import TransfersPart
 from chrono_ftp.ui.plaintext import asked, box_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.45"
+__version__ = "mainwindow.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Add Bookmark on the server side is greyed with its reason on a tab opened from an address, which keeps nothing on this
+#          computer (FJ-11, OR-20)
 # v0.0.45: Block FI, tabs and workspaces: the workspaces part (windowworkspaces.py) and the paste part (windowpaste.py); the All Tabs
 #          button next to New Tab; Ctrl+Tab, Ctrl+Shift+Tab and Alt+1 to Alt+9; a tab dragged to another place, the middle mouse
 #          button closing a tab, and files dropped on a tab; closing lets go of the copies on their way between two servers
@@ -389,7 +392,14 @@ class MainWindow(LayoutPart, TabsPart, WorkspacesPart, FoldersPart, EditPart, Qu
         why_no_copy = commands.why_no_copy(capabilities, chosen, on_ftp) if alive else ""
         why_no_link = commands.why_no_link(capabilities, on_ftp) if alive else ""
         file_manager = localfiles.file_manager_available()
-        reasons = {"duplicate": why_no_copy, "copy_to": why_no_copy, "link": why_no_link, "local_explore": "" if file_manager else NO_FILE_MANAGER_TEXT}
+        may_be_kept = may_keep(session)  # a tab opened from an address keeps nothing on this computer, so a bookmark of it is refused (FJ-11)
+        reasons = {
+            "duplicate": why_no_copy,
+            "copy_to": why_no_copy,
+            "link": why_no_link,
+            "local_explore": "" if file_manager else NO_FILE_MANAGER_TEXT,
+            "remote_bookmark": "" if may_be_kept else MAY_NOT_KEEP_TEXT,
+        }
         enabled = {
             "upload": alive and bool(self.local_side.selected_paths()) and session is not None and bool(session.remote_folder),
             "download": alive and selected,
@@ -426,7 +436,7 @@ class MainWindow(LayoutPart, TabsPart, WorkspacesPart, FoldersPart, EditPart, Qu
             "local_other_side": alive,
             "local_type": True,
             "remote_open": alive and bool(self.remote_side.folder),
-            "remote_bookmark": alive and bool(self.remote_side.folder),
+            "remote_bookmark": alive and bool(self.remote_side.folder) and may_be_kept,
             "remote_other_side": alive and bool(self.remote_side.folder),
             "remote_type": alive and bool(self.remote_side.folder),
         }

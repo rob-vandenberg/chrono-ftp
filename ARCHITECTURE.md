@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-The design as it stands now (version 0.0.43; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
+The design as it stands now (version 0.0.47; sections 3 to 5 date from 0.0.5, with section 5 brought up to date in 0.0.37). The rules behind it, with their reasons, are in `DECISIONS.md` (the D-numbers below). 
 
 ## 1. Goals that shape the design
 
@@ -15,7 +15,7 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 
 | Module | Responsibility |
 |---|---|
-| `core` | Pure data model: Connection, remote file entry, capabilities, error types, colours (`core/colours.py`), the thin door to the credential store, the transfer options (`core/transferoptions.py`). No other I/O. |
+| `core` | Pure data model: Connection, remote file entry, capabilities, error types, colours (`core/colours.py`), the thin door to the credential store, the transfer options (`core/transferoptions.py`), addresses (`core/addresses.py`) and the SSH settings of this computer, which are only ever read (`core/sshsettings.py`). No other I/O. |
 | `config` | The connection list (`~/.config/chrono-ftp/connections.json`), the one-time import of a session list, the settings, the notes of part files, aside copies and appends (`config/parts.py`), the bookmarks, location profiles and typed paths (`config/bookmarks.py`, `~/.config/chrono-ftp/bookmarks.json`), and the workspaces (`config/workspaces.py`, `~/.config/chrono-ftp/workspaces.json`). |
 | `connections` | The common connection layer (`base.py`), its two implementations (`ssh.py`, `ftp.py`), capability detection, and the servers the person trusted (`trust.py`). |
 | `transfers` | The transfer queue (`queue.py`), which job may start (`schedule.py`), and its two ways: `rsync` (`rsyncway.py`) and file by file over SFTP or FTP (`filebyfile.py`), with a large file in parts (`split.py`); a job and its progress (`job.py`); the overwrite question's answers and what a connection can do (`options.py`). |
@@ -241,3 +241,22 @@ The modules of block FI, one line each:
 9. `engine/copyplan.py`: what a paste will do, on this computer and on a server alike, made before anything is copied: the free name of a copy next to its own file, what is already there, a file onto a folder or a folder onto a file, and what else can't be done with its reason (D-099, G-2); the copying itself is `transfers/sidework.py`'s here and `engine/commands.py`'s there.
 10. `ui/startabort.py`: the one Start/Abort button of [[D-097]] and the words a run on this computer says, shared by the Synchronize window and the paste; `ui/copydialog.py`: the window of a paste, used for both sides.
 11. `transfers/options.py`, `ui/overwritedialog.py`: the same overwrite question for a copy that stays on this computer, which says so and greys Append and Resume with that reason (FI-03).
+
+
+## 18. The connection list (block FJ, version 0.0.47)
+
+The modules of block FJ, one line each:
+
+1. `core/connection.py`: the note of a connection, the folder its name names (`folder_of`, `own_name`, `in_folder`, `moved_into`, `folders_in`) and the name as it is saved (`tidy_name`), so a folder of the list is pure name work (D-101).
+2. `core/addresses.py`: an address read from what a person pasted and an address made from a connection, both pure text work, with the check that only a plain server name or a server number in brackets is a server, and never a password in an address (D-103, OR-19).
+3. `core/sshsettings.py`: the SSH settings of this computer, `~/.ssh/config` and `~/.ssh/known_hosts`, read and never written: the servers found, what of each can't come over yet and why, and the tokens of a setting worked out (D-102, FJ-10).
+4. `config/connections.py`: the note, kept with the connection; the file is unchanged otherwise, because a folder is part of the name (D-101).
+5. `config/settings.py`: the folders of the list that stand open, and the connection a new one starts with (D-101).
+6. `config/workspaces.py`: `connection_renamed`, so a connection saved under a new name, or moved into a folder, keeps its place in every workspace (D-101).
+7. `ui/connectiontree.py`: the list as a tree: the folders, the dragging of a connection into one or out of one (which the window turns into the one rename), the folders that stand open, and the typing that jumps to a connection (D-101).
+8. `ui/connectionlist.py`: the connections window: the tree, the note, the settings a new connection starts with, the one place a connection is written (`_keep`, which carries the password first), and the two ways in of Import (D-101, D-102).
+9. `ui/sshimportdialog.py`: the window of the servers found, each with its tick, and every server that can't come over whole saying why, unticked (D-102, OR-20).
+10. `ui/addressdialog.py`: the window where an address is pasted, with what the program has read from it under the field while the person types, and the one that shows an address just put on the clipboard (D-103).
+11. `ui/session.py`: `may_keep`, the one question every writer asks before anything is written under a tab's name; a tab opened from an address answers no (D-103, OR-19).
+12. `ui/windowtabs.py`: a tab per connection of a folder, the tab of a pasted address, and the rename carried into the settings and the workspaces (D-101, D-103).
+13. `ui/windowselection.py`: Copy the Address of the file or folder under the cursor on the server (D-103).

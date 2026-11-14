@@ -13,12 +13,17 @@ from chrono_ftp.config.workspaces import LONGEST_NAME, Workspace, WorkspaceTab, 
 from chrono_ftp.connections.base import shown_name
 from chrono_ftp.ui import icons
 from chrono_ftp.ui.plaintext import asked
+from chrono_ftp.ui.session import may_keep
 from chrono_ftp.ui.windowbase import WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowworkspaces.py 0.0.45"
+__version__ = "windowworkspaces.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Review round 7: a tab opened from an address counts as no tab of a connection that carries the name it was given, so a
+#          workspace of that connection opens its own tabs (FJ-11)
+# v0.0.47: Block FJ, review round 1: a tab opened from an address is left out of a saved workspace, as it is in no connection list, and
+#          saving with only such tabs open says so; a connection saved under a new name keeps its place in every workspace (FJ-02, FJ-11)
 # v0.0.45: Review round 2: a workspace opens again exactly the tabs it saved, two tabs on one connection included (D-098, D-100)
 # v0.0.45: Review round 1: a name longer than the file keeps is refused when it is typed; a second tab of one connection is counted
 #          and said apart from a tab that was open before; a workspace at start that opens nothing falls back on the connections window
@@ -32,6 +37,7 @@ DELETE_MENU_TEXT: str = "Delete a Workspace"
 AT_START_MENU_TEXT: str = "Open at Start"
 NO_WORKSPACE_TEXT: str = "No Workspace"
 NO_TAB_TEXT: str = "No tab is open to save."
+ONLY_ADDRESSES_TEXT: str = "A workspace can hold only tabs of connections in your list, and every open tab was opened from an address."
 NONE_YET_TEXT: str = "You have no workspaces yet."
 SAVE_TITLE: str = "Save a Workspace"
 SAVE_LABEL: str = "Name for this workspace:"
@@ -103,6 +109,26 @@ class WorkspacesPart(WindowBase):
             action.triggered.connect(lambda _checked=False, name=name, handler=handler: handler(name))
             submenu.addAction(action)
 
+    @override
+    def _workspaces_renamed(self, old: str, new: str) -> tuple[str, Callable[[], str]]:
+        """A connection saved under a new name, or moved into a folder, keeps its place in every workspace. The reason they could not
+        follow, empty when they did, and the way back: it writes exactly what stood there before (FJ-02)."""
+        kept = saved_workspaces.load()
+        changed = saved_workspaces.connection_renamed(kept, old, new)
+
+        def back() -> str:
+            return self._workspaces_written(kept)
+
+        return ("", back) if changed == kept else (self._workspaces_written(changed), back)
+
+    def _workspaces_written(self, kept: Workspaces) -> str:
+        """These workspaces on the disk; the reason they could not be written, empty when they were."""
+        try:
+            saved_workspaces.save(kept)
+        except OSError as error:
+            return error.strerror or str(error)
+        return ""
+
     def _write(self, kept: Workspaces) -> bool:
         try:
             saved_workspaces.save(kept)
@@ -115,6 +141,9 @@ class WorkspacesPart(WindowBase):
         """Every open tab, with the folders both its sides are in, under a name the person gives (FI-02)."""
         if not self.sessions:
             return
+        if not any(may_keep(session) for session in self.sessions):
+            self.status.showMessage(ONLY_ADDRESSES_TEXT)  # nothing of such a tab is kept, so there is nothing to save (FJ-11)
+            return
         name = self._ask_text(SAVE_TITLE, SAVE_LABEL)
         if name is None:
             return
@@ -124,7 +153,7 @@ class WorkspacesPart(WindowBase):
         kept = saved_workspaces.load()
         if saved_workspaces.named(kept, name) is not None and not asked(self, WINDOW_TITLE, REPLACE_TEXT.format(name=shown_name(name))):
             return
-        tabs = tuple(WorkspaceTab(session.connection.name, session.local_folder, session.remote_folder) for session in self.sessions)
+        tabs = tuple(WorkspaceTab(session.connection.name, session.local_folder, session.remote_folder) for session in self.sessions if may_keep(session))
         if self._write(saved_workspaces.with_workspace(kept, Workspace(name, tabs))):
             self.status.showMessage((SAVED_TEXTS[0] if len(tabs) == 1 else SAVED_TEXTS[1]).format(name=shown_name(name), count=len(tabs)))
 
@@ -138,7 +167,8 @@ class WorkspacesPart(WindowBase):
         known = {connection.name: connection for connection in saved_connections.load().connections}
         open_before: dict[str, int] = {}
         for session in self.sessions:
-            open_before[session.connection.name] = open_before.get(session.connection.name, 0) + 1
+            if may_keep(session):  # a tab opened from an address is no tab of this connection, whatever name it was given (FJ-11)
+                open_before[session.connection.name] = open_before.get(session.connection.name, 0) + 1
         counted: dict[str, int] = {}  # how many tabs of each connection this workspace has accounted for so far
         opened, already = 0, 0
         gone: list[str] = []

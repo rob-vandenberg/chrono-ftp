@@ -40,9 +40,10 @@ from tests.conftest import MemoryStore
 from tests.fakeservers import NOT_AS_ROOT, PASSWORD, USER, SshServer, ftp_server, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sessions.py 0.0.44"
+__version__ = "test_ui_sessions.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A connection of the tree is chosen by name (FJ-01)
 # v0.0.44: settled_tab: a tab is ready only once its connection is up and the listing that connection started has answered, so a test
 #          never ends while its fake server is still being asked something (AGENTS.md 4.4.4)
 # v0.0.44: Synchronize starts from the Start button, not Apply (D-097)
@@ -634,7 +635,7 @@ def test_a_list_keeps_its_selection_when_a_login_keeps_a_user(qtbot: QtBot, wind
     window.show_connection_list()
     view = window.connection_list
     assert view is not None
-    view.list.setCurrentRow(0)
+    view._select("Shop")
     view.user_accepted("Shop", "anna")
     assert view.selected() is not None and view.user.text() == "anna"
     view.close()

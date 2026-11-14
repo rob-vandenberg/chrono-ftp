@@ -231,3 +231,114 @@ name, the order the file list beside it already uses. After the fix that test pa
 Still open: `test_another_folder_renamed_to_the_same_name_is_read_anew` in the same file fails about two runs in fifteen while the
 machine is busy, and passed fifteen of fifteen on its own. It waits five seconds for the file system to report a rename, so the
 deadline is what it depends on; nobody using the program meets this.
+
+## 0.0.47 (2026-11-14): block FJ, the connection list
+
+The list became a tree: a connection whose name holds a slash stands in a folder of that name, folders hold folders, and the saved
+file keeps exactly what it kept before. Dragging a connection onto a folder, or out of every folder, goes through the one rename the
+connections window already had, so its password, bookmarks and location profiles come along; the open folders are kept with the other
+settings, and a folder a connection just moved into stands open. A folder's menu opens every connection in it, in the order the tree
+shows them. Each connection has a note of its own, shown under the mouse in the list, and the menu of a connection can make its
+settings the ones a new connection starts with, or put that back to empty. Typing letters jumps to a connection, with what was typed
+shown under the list and the folder of a match opened. Import gained a second way in: this computer's own `~/.ssh/config`, with every
+server found offered with a tick and every server that cannot come over whole unticked and saying why in plain words (ProxyJump,
+ProxyCommand, a signed certificate, a key on a card; a Match section or an Include line refuses every server of that file). The host
+keys of `~/.ssh/known_hosts` already counted as trusted since 0.0.5; a test now holds that, and that nothing in `~/.ssh` is ever
+written. Open an Address… opens a pasted address as a tab that is saved nowhere, its password used for that one login only, and Copy
+The Address of a connection and of a file on the server puts the address on the clipboard and shows it first, never with a password in
+it. Reading an address and making one live in `core/addresses.py`, the SSH settings in `core/sshsettings.py`, the tree in
+`ui/connectiontree.py`, and the two new windows in `ui/addressdialog.py` and `ui/sshimportdialog.py`; all five are tested without a
+screen or through the window's own events (D-101 to D-103).
+
+Still open: a real drag of a connection with the mouse, and the two address items, have not been tried by hand on the desktop; a
+folder exists only as long as a connection stands in it; the import reads `~/.ssh/config` itself only.
+
+After the first review round of block FJ (17 findings, all fixed in the same version): the move of a connection carries the password
+first and moves nothing when it can't, and it also carries the connection the window starts on, the remembered tab order and every
+workspace; a taken name in a folder says so in its own words; a name with an empty part is refused and the spaces around each part are
+trimmed. An address accepts only a plain server name or a server number in brackets and refuses a user name with a space or a control
+character, so nothing of an address can reach a command as an option; it always opens a tab of its own, and `may_keep` in
+`ui/session.py` is now the one question every writer asks before anything is written under a tab's name, which also closed the password
+write of `ui/windowproperties.py`. Copy the Address leaves out a starting folder that is no path from the root. The SSH import works
+out ~, $HOME, %d, %u and %h, refuses a server whose setting holds a token it can't work out or whose port is no port, reads "none" as
+"not in use", turns a slash in a name into a space, and says apart whether there are no settings, no server or settings that could not
+be read; Add says it when no server at all can come over. Every new name follows the program's own style, and `ARCHITECTURE.md` has a
+module map for the block.
+
+After the second review round of block FJ (10 findings, all fixed in the same version): a copy of a tab that may not be kept may not
+be kept either (`duplicate_tab` and `open_another_tab`), and every action that would write under a tab's name now asks `may_keep` and
+is greyed with its reason — Add Bookmark, Add the Current Folders…, Organize Bookmarks and Organize Location Profiles — while a typed
+path is simply not kept for such a tab. The move of a connection writes the list before it removes the old password, so a list that
+can't be saved moves nothing and the password stays where the connection is. One place now reads a server name in a pasted address:
+an international name is worked out to the form the network uses, underscores are ordinary, every part and the whole name are within
+their length, the scope after a server number is checked, only ASCII digits are a port, a control character in the folder is refused,
+and every cause says its own thing; the user name and the password end at the last @, so a password with a slash in it is read as one.
+Typing in the connection list can type a space. In the SSH settings a # starts a comment, as OpenSSH reads it, which also stopped the
+words of a comment on a Host line becoming servers of their own, and `IdentityFile none` means no key file.
+
+After the third review round of block FJ (12 findings, all fixed in the same version): a port written with a digit of another language
+crashed the reading of the whole settings file, because isdigit is true for such a digit and int cannot read it; only ASCII digits are
+a port now, and one server whose settings cannot be read refuses only itself. %h is the server the connection really uses; a setting
+too long to read and a name that is no server name refuse their server, the name read by the one place a pasted address uses; a
+backslash before a # keeps it. Every refusal is in the person's own words and says what they can do. The import says its three
+"nothing was added" cases apart and adds nothing when the list cannot be written. In an address every cause says its own thing, and a
+network address goes between square brackets wherever a login is built (`core/addresses.login_text`, used by `transfers/rsyncway.py`),
+so a tab from such an address can transfer too. A move asks the connection list, the settings, the workspaces and the bookmarks
+whether they can be written before anything is renamed (`config/connections.can_write`), and no write in that chain is swallowed. Every
+lookup of an open tab by name skips a tab opened from an address.
+
+After the fourth review round of block FJ (12 findings, all fixed in the same version): an unquoted value of more than one word, and a
+value with a character that can't be in it, refuse their server instead of becoming the first word or reaching the login; a bare
+network address is a server name in the settings, where no port can follow it; the settings are read once for every server, so a file
+of 500 servers and 20,000 comment lines takes 0.13 s where it took 2.4 s. Every refusal names its cause from the one place that reads
+a server name, keeps what it echoes short, stands once, and the three a connection by hand cannot mend say what is true. Reconnect,
+and the bookmark and profile menus, no longer take a saved connection for a tab opened from an address. The check before a move writes
+real bytes and flushes them; the stores that follow a name are written before the connection list and put back when one fails; a typed
+password that cannot be kept saves nothing; every sentence about a move that did not happen names the file and says what to do. The
+import window's columns are Name and Server.
+
+After the fifth review round of block FJ (14 findings, all fixed in the same version): a setting above the first Host line counts for
+every server; every message about a move or a rename that did not go through says what is true, in the words of what the person did,
+and names the file that stood in the way; putting a store back writes what stood there before, so no left-over is dragged along, and a
+putting back that fails says what is on the disk. Reconnect, Edit in the tab menu, the tab name, the password read from the store, the
+Open folder window and the Server Information window ask `may_keep` too. In a pasted address an @ in a folder is a folder, a network
+address without brackets and anything but a port after the brackets each say what to do, and the character that makes a name no name is
+named. The SSH refusals drop every word a person would not use, name the short-hand or the character they found, and the port refusal
+offers the Port row. The sentences about the password store, the bookmarks and a copy left behind say what the person can do. Numbers
+read right for one as well as for many.
+
+After the sixth review round of block FJ (15 findings, all fixed in the same version): the paired sentences about a save or a move that
+half failed are gone. Three sentences built from facts took their place — nothing changed, something is left under the other name, a
+copy of a password is left — each under 25 words, with no advice that can be wrong and nothing that reads untrue when a name is empty.
+`rename_stores` now hands back facts and a way to put every store back exactly as it stood, so the old swapped-name undo is gone. A
+deleted connection leaves nothing in the order of the tabs and a rename never doubles a name there. An address is read one way only, so
+a password with a slash is written %2F; a port given twice says so. In the SSH settings a setting above the first Host line counts for
+every server, a network address with a scope is no short-hand, brackets there say to drop them, ~ alone is the person's own home and %%
+is one percent sign, and the three refusals Chrono FTP can't mend are one line each with no terminal in them. The mark of a connection
+that is in no list moved onto the connection itself, which made the log, the log window and the place in the row of tabs follow.
+
+After the seventh review round of block FJ (9 findings, all fixed in the same version): a tab opened from an address counts as no tab
+of a connection that carries the name it was given, so a workspace of that connection opens its own tabs; a deleted connection also
+leaves no connection the window starts on; a sentence about a half-failed move names every file that could not be saved and says why
+it stopped first; a new connection reads that it was not saved, not that it is as it was; the password store says which call failed;
+the leftover-copy box comes after the explanation; a name after Host that is no server name says that; no refusal promises a version
+and the import window says "added"; and a slash in a password says how to write it.
+
+After the eighth review round of block FJ (5 findings, all fixed in the same version): an address whose first part can be read as a
+server with a port or as a user name with a password is read as neither and says so, which replaced the guess that called a mistyped
+port a password; deleting the connection New starts from clears that too; and deleting or copying a connection while the list cannot be
+written now changes nothing and says so, where it crashed before (a fix beyond the changelist, OR-15). The refusal of a name that is no
+server name lost the SSH keyword and the last "yet" in the block is gone.
+
+After the ninth review round of block FJ (2 findings, both fixed in the same version): the refusal of round 8 is gone again. It turned
+away ordinary addresses — `sftp://host:22/reports/bob@mail.txt` and the very address Copy the Address hands out for a connection without
+a user name — so the program refused what it had just given the person. An address is now read the one way addresses are built: the user
+name and its password before the last @ before the first slash, the port after the colon of the server part, so `sftp://user:12/ss@server/x`
+names the server `user` on port 12, which is what it says. Instead of guessing, the window tells the truth at the moment the person acts:
+`core/addresses.understood` puts what was read in plain words and it stands under the field in Open an Address… while they type, with the
+refusal sentence in the same place and Open greyed with it as its reason. Every sentence the earlier rounds settled for a bad port, a bad
+name and the brackets is unchanged. The greyed Export… button says what is true today in place of a promise of a later version.
+
+After the tenth review round of block FJ (2 fixes): the help line asks only for %2F in a password, because an @ in a folder needs no
+writing out; and where no user name was read while the folder holds an @, the window says that too, under the server and the port, so a
+password someone wrote with a plain slash stands out where the eye lands. Open stays enabled: the address is proper and may be meant.

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import cast
@@ -13,9 +14,11 @@ from chrono_ftp.core.presets import LONGEST_NAME, MOST_PRESETS, STANDARD_NAME, P
 from chrono_ftp.core.transferoptions import NAME_CASES, RESUME_MODES, TRANSFER_MODES, TransferOptions, rights_valid
 
 # --- Version ------------------------------------------------------------
-__version__ = "settings.py 0.0.45"
+__version__ = "settings.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: settings_path, so the window can say which file could not be written (FJ-02)
+# v0.0.47: Which folders of the connection list stand open, and the connection a new one starts with, each checked on load (FJ-03, FJ-06)
 # v0.0.45: The order the tabs were dragged into, by connection name, checked on load (FI-01)
 # v0.0.43: The choices of the Synchronize window and the file count of the last scan of each folder pair, each checked on load (FF-11, FF-13)
 # v0.0.42: The checksum algorithm last chosen in Properties (FE-02), checked on load
@@ -75,6 +78,7 @@ KILOBYTES: str = "kilobytes"  # 1,206 KB
 SHORT: str = "short"  # 1.2 MB, as the lists showed sizes before block FG
 SIZE_FORMATS: tuple[str, ...] = (BYTES, KILOBYTES, SHORT)
 MOST_TAB_NAMES: int = 200  # the remembered order of the tabs; a list from a file is input (OR-15)
+MOST_OPEN_FOLDERS: int = 200  # the folders of the connection list that stand open; a list from a file is input (OR-15, FJ-03)
 LONGEST_CONNECTION_NAME: int = 200
 MOST_MASKS_KEPT: int = 20  # the masks typed last, offered again in every mask field (FD-05, FD-06)
 
@@ -124,6 +128,8 @@ class Settings:
     synchronize: SyncOptions = field(default_factory=SyncOptions)  # every choice of the Synchronize window, kept for next time (FF-11)
     scan_counts: tuple[tuple[str, int], ...] = ()  # per folder pair, how many names its last scan looked at (FF-13)
     tab_order: tuple[str, ...] = ()  # the connection names in the order the tabs were dragged into, so a tab opens again in its place (FI-01)
+    open_connection_folders: tuple[str, ...] = ()  # the folders of the connection list that stand open, so the window looks as it was left (FJ-03)
+    new_connection_from: str = ""  # the connection a new one starts with; empty: a new connection starts with empty fields (FJ-06)
 
 
 def remember_mask(history: tuple[str, ...], mask: str) -> tuple[str, ...]:
@@ -280,13 +286,18 @@ def _presets(data: object) -> tuple[Preset, ...]:
     return tuple(found)
 
 
-def _tab_order(data: object) -> tuple[str, ...]:
-    """The remembered order of the tabs, by connection name; a damaged name is left out, and a name twice is kept once (OR-15, FI-01)."""
+def _connection_names(data: object, most: int) -> tuple[str, ...]:
+    """A list of connection or folder names from a file, in its order: a damaged name is left out, and a name twice is kept once (OR-15)."""
     found: list[str] = []
-    for item in cast(list[object], data)[:MOST_TAB_NAMES] if isinstance(data, list) else []:
+    for item in cast(list[object], data)[:most] if isinstance(data, list) else []:
         if isinstance(item, str) and 0 < len(item) <= LONGEST_CONNECTION_NAME and item not in found:
             found.append(item)
     return tuple(found)
+
+
+def _tab_order(data: object) -> tuple[str, ...]:
+    """The remembered order of the tabs, by connection name (FI-01)."""
+    return _connection_names(data, MOST_TAB_NAMES)
 
 
 def _mask_history(data: object) -> tuple[str, ...]:
@@ -307,6 +318,11 @@ def _read(name: str) -> dict[str, object]:
 
 def _write(name: str, data: object) -> None:
     write_whole(config_folder() / name, data, private=False)
+
+
+def settings_path() -> Path:
+    """The file the settings live in. Named so the window can say which file could not be written (FJ-02)."""
+    return config_folder() / FILE_NAME
 
 
 def load() -> Settings:
@@ -369,6 +385,8 @@ def load() -> Settings:
         synchronize=_synchronize(data.get("synchronize")),
         scan_counts=_scan_counts(data.get("scan_counts")),
         tab_order=_tab_order(data.get("tab_order")),
+        open_connection_folders=_connection_names(data.get("open_connection_folders"), MOST_OPEN_FOLDERS),
+        new_connection_from=from_name if isinstance(from_name := data.get("new_connection_from"), str) and len(from_name) <= LONGEST_CONNECTION_NAME else "",
     )
 
 

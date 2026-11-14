@@ -21,7 +21,9 @@ from chrono_ftp.core.connection import FTP
 from chrono_ftp.core.errors import ConnectionLost, RemoteActionFailed
 from chrono_ftp.core.masks import MaskError, parse
 from chrono_ftp.engine import commands
+from chrono_ftp.core.addresses import address_text
 from chrono_ftp.engine.listing import clipboard_names
+from chrono_ftp.ui.addressdialog import show_address
 from chrono_ftp.ui.filelist import FROM_LOCAL, FROM_OUTSIDE, FROM_REMOTE, PARENT_ENTRY, FileList
 from chrono_ftp.ui.localside import LocalSide
 from chrono_ftp.ui.maskdialog import SELECT, UNSELECT, MaskDialog
@@ -32,9 +34,10 @@ from chrono_ftp.ui.session import Session
 from chrono_ftp.ui.windowbase import SETTINGS_NOT_KEPT_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowselection.py 0.0.45"
+__version__ = "windowselection.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Copy the Address of the file under the cursor on the server: on the clipboard and shown first, never with a password in it (FJ-12)
 # v0.0.45: The menu of each list also holds Copy These Files and Paste the Files Here, of block FI (FI-03)
 # v0.0.43: The menu of each list also holds Mark Differences, and the left one Synchronize with another folder on this computer (FF-12, FF-14)
 # v0.0.42: Calculate Folder Sizes (Shift+Space) in the right-click menu of a list (FE-03)
@@ -61,6 +64,8 @@ COPY_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("copy_names", "Copy the Selected Names", "Ctrl+Shift+C"),
     ("copy_full", "Copy the Full Paths", ""),
 )
+ADDRESS_ACTION: tuple[str, str, str] = ("copy_address", "Copy the Address", "")  # the right side only: a file on this computer has no address (FJ-12)
+NO_ADDRESS_TEXT: str = "Put the cursor on a file or folder on the server first: the address is made from it."
 SORT_KEYS: tuple[tuple[str, int, bool], ...] = (  # key, column, by extension (FG-04): the classic two-pane sort keys
     ("Ctrl+F3", 0, False),
     ("Ctrl+F4", 0, True),
@@ -121,7 +126,7 @@ class SelectionPart(WindowBase):
         self.list_actions = {}
         for side_name, side in ((LOCAL, self.local_side), (REMOTE, self.remote_side)):
             view = side.file_list
-            for name, text, key in (*SELECT_ACTIONS, *COPY_ACTIONS):
+            for name, text, key in (*SELECT_ACTIONS, *COPY_ACTIONS, *((ADDRESS_ACTION,) if side_name == REMOTE else ())):
                 self._list_action(f"{side_name}_{name}", text, key, view, self._selection_handler(side_name, name))
             for key, column, by_extension in SORT_KEYS:
                 if column < view.files.column_count:
@@ -172,6 +177,7 @@ class SelectionPart(WindowBase):
             "copy_path": lambda: self.copy_to_clipboard(side_name, "path"),
             "copy_names": lambda: self.copy_to_clipboard(side_name, "names"),
             "copy_full": lambda: self.copy_to_clipboard(side_name, "full"),
+            "copy_address": self.copy_the_address,
         }
         return handlers[name]
 
@@ -261,6 +267,7 @@ class SelectionPart(WindowBase):
                 "copy_path": (shown, NO_FOLDER_TEXT),
                 "copy_names": (acting, NOTHING_SELECTED_TEXT),
                 "copy_full": (acting, NOTHING_SELECTED_TEXT),
+                **({"copy_address": (self._address_of_the_entry() != "", NO_ADDRESS_TEXT)} if side_name == REMOTE else {}),
             }
             for name, (enabled, why) in states.items():
                 action = self.list_actions[f"{side_name}_{name}"]
@@ -298,7 +305,7 @@ class SelectionPart(WindowBase):
             select.addAction(self.list_actions[f"{side_name}_{name}"])
         copy = menu.addMenu(COPY_MENU_TEXT)
         copy.setToolTipsVisible(True)
-        for name, _text, _key in COPY_ACTIONS:
+        for name, _text, _key in (*COPY_ACTIONS, *((ADDRESS_ACTION,) if side_name == REMOTE else ())):
             copy.addAction(self.list_actions[f"{side_name}_{name}"])
 
     def _only_action(self, menu: QMenu, side_name: str, name: str) -> QAction:
@@ -330,6 +337,26 @@ class SelectionPart(WindowBase):
         finally:
             view.only_current = False
             self.update_actions()
+
+    # --- the address of a file on the server (FJ-12) --------------------------------------
+
+    def _address_of_the_entry(self) -> str:
+        """The address of the entry under the cursor on the server; empty where there is none. A password is never in it (OR-19)."""
+        session = self.current()
+        entry = self.remote_side.file_list.current_entry()
+        folder = self.remote_side.folder
+        if session is None or entry is None or entry is PARENT_ENTRY or not folder:
+            return ""
+        return address_text(session.connection, joined(folder, entry.name))
+
+    def copy_the_address(self) -> None:
+        """Copy the Address of the file or folder under the cursor: on the clipboard, and shown, so the person sees what they are about
+        to paste somewhere (FJ-12)."""
+        address = self._address_of_the_entry()
+        if not address:
+            return
+        QGuiApplication.clipboard().setText(address)
+        show_address(self, address)
 
     # --- the clipboard (FG-11) -----------------------------------------------------------
 

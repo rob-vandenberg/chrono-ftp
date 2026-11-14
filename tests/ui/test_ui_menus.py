@@ -11,9 +11,10 @@ from chrono_ftp.ui.mainwindow import MainWindow
 from chrono_ftp.ui.remoteside import RemoteSide
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_menus.py 0.0.30"
+__version__ = "test_ui_menus.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: The connections window is a tree (FJ-01)
 # v0.0.30: The menu style is given to each menu; the right side shows the connection colour with the program's look
 # v0.0.29: Initial: a menu lets go of the keyboard once open, every menu opens that way, and menus have a border and roomy items
 
@@ -72,7 +73,9 @@ def test_the_menu_of_the_connections_window_opens_through_open_menu(qtbot: QtBot
     qtbot.addWidget(window)
     window.show()
     opened = opened_through(monkeypatch, connectionlist)
-    window._show_menu(window.list.visualItemRect(window.list.item(0)).center())
+    item = window.tree.item_of("Shop")
+    assert item is not None
+    window._show_menu(window.tree.visualItemRect(item).center())
     assert len(opened) == 1
 
 

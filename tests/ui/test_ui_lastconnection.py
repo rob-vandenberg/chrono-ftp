@@ -13,9 +13,10 @@ from tests.ui.test_ui_queue import ftp_settings
 from tests.ui.test_ui_sessions import connected, window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_lastconnection.py 0.0.31"
+__version__ = "test_ui_lastconnection.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: The connections window is a tree (FJ-01)
 # v0.0.31: Initial: the connection that was last live is kept, and the connections window starts on it (D-053)
 
 __all__ = ["window"]  # the fixture, used by name
@@ -47,9 +48,9 @@ def test_the_connections_window_starts_on_the_last_connection_in_view(qtbot: QtB
     selected = connection_list.selected()
     assert selected is not None and selected.name == "Server 39"
     assert connection_list.name.text() == "Server 39"
-    item = connection_list.list.currentItem()
+    item = connection_list.tree.currentItem()
     assert item is not None
-    assert connection_list.list.viewport().rect().intersects(connection_list.list.visualItemRect(item))
+    assert connection_list.tree.viewport().rect().intersects(connection_list.tree.visualItemRect(item))
     connection_list.hide()
 
 

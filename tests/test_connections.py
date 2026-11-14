@@ -21,9 +21,10 @@ from tests.conftest import REAL_DATA, REAL_FOLDERS_BEFORE, REAL_HOME, REAL_SETTI
 from tests.fakeservers import PASSWORD, USER, SshServer, end_the_servers, ftp_server, self_signed_certificate, ssh_server
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_connections.py 0.0.38"
+__version__ = "test_connections.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A server trusted from a terminal is not asked about again, and its known_hosts file is only read (FJ-10)
 # v0.0.38: The run's guard also watches the real state folder, where the session logs go (FP-02)
 # v0.0.13: A fake SSH server leaves no thread nor descriptor behind, also when a connection to it is still open at the end of its block
 # v0.0.12: No test reads this computer's own known hosts; the run's guard sees a real folder of Chrono FTP appear; SITE CHMOD is
@@ -173,6 +174,30 @@ def test_ftp_reports_no_shell(tmp_path: Path) -> None:
         connection.connect()
         assert not connection.capabilities.shell
         connection.close()
+
+
+def test_a_server_trusted_from_a_terminal_is_not_asked_about_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The host keys of this computer's own ~/.ssh/known_hosts count as trusted, so a server used before from a terminal is not asked
+    about again; the file itself is only read (FJ-10). The home folder here is the test's own, never the person's."""
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    with ssh_server(tmp_path) as server:
+        settings = Connection(name="T", host="127.0.0.1", port=server.port, user=USER)
+        probe = SshConnection(settings, PASSWORD)
+        with pytest.raises(UnknownServer) as unknown:
+            probe.connect()
+        probe.close()
+        line = unknown.value.to_remember
+        own = home / ".ssh" / "known_hosts"
+        own.write_text(line + "\n", encoding="utf-8")  # as ssh itself writes it after the person answered yes in a terminal
+        before = own.read_bytes()
+        connection = SshConnection(settings, PASSWORD)
+        connection.connect()  # no UnknownServer: the key is already trusted on this computer
+        assert connection.capabilities.system
+        connection.close()
+        assert own.read_bytes() == before  # nothing of the person's own SSH setup is ever written (FJ-10)
+        assert not trust.known_hosts_path().exists()  # nor is it copied into Chrono FTP's own file
 
 
 def test_an_unknown_host_key_is_never_accepted_on_its_own(tmp_path: Path) -> None:

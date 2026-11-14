@@ -23,13 +23,15 @@ from chrono_ftp.engine.keyinstall import PublicKey, install_key, read_public_key
 from chrono_ftp.ui.actiondialogs import CopyToDialog, LinkDialog, NewFolderDialog, PasswordDialog
 from chrono_ftp.ui.plaintext import box_text, fitting
 from chrono_ftp.ui.propertiesdialog import Abilities, Change, PropertiesDialog
-from chrono_ftp.ui.session import Session, no_progress
+from chrono_ftp.ui.session import Session, may_keep, no_progress
 from chrono_ftp.ui.windowbase import NOT_A_NAME_TEXT, WINDOW_TITLE, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowproperties.py 0.0.42"
+__version__ = "windowproperties.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: The password changed on the server is kept here only where this tab's details may be kept at all, which a tab opened from an
+#          address never allows (FJ-11, OR-19)
 # v0.0.42: The Properties window has the Size and Checksum tabs, on both sides (FE-02)
 # v0.0.37: Initial: block FM, Properties and server actions (D-060 to D-063); review round 1: rights for everything inside through
 #          find, never X; a key comment beyond ASCII; a link never lost; a half copy removed; names of directories; a tree listed first;
@@ -553,17 +555,25 @@ class PropertiesPart(WindowBase):
             if not answer.changed:
                 QMessageBox.information(self, WINDOW_TITLE, box_text(PASSWORD_REFUSED_TEXT.format(said=shown_name(answer.text))))
                 return
-            text = PASSWORD_DONE_TEXT
-            try:
-                if session.password is not None or credentials.store.read(session.connection.name) is not None:
-                    credentials.store.write(session.connection.name, new)  # a stored password is never asked for again (OR-24)
-            except CredentialError:
-                text = PASSWORD_DONE_NOT_KEPT_TEXT
+            text = PASSWORD_DONE_TEXT if self.new_password_kept(session, new) else PASSWORD_DONE_NOT_KEPT_TEXT
             if session.password is not None:
                 session.password = new  # the next login of this tab uses the new one
             QMessageBox.information(self, WINDOW_TITLE, box_text(text.format(login=shown_name(login))))
 
         self._ask_live(session, lambda remote: remote.change_password(old, new), done)
+
+    def new_password_kept(self, session: Session, new: str) -> bool:
+        """The password this tab just changed on the server, kept here where this tab's details may be kept at all and where there was
+        a password here before (OR-24). False where it could not be kept; a tab opened from an address keeps nothing, and that is no
+        failure: there was nothing to keep (FJ-11, OR-19)."""
+        if not may_keep(session):
+            return True
+        try:
+            if session.password is not None or credentials.store.read(session.connection.name) is not None:
+                credentials.store.write(session.connection.name, new)
+        except CredentialError:
+            return False
+        return True
 
     @override
     def password_reason(self, session: Session) -> str:

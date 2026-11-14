@@ -20,13 +20,16 @@ from chrono_ftp.transfers.queue import ENDED
 from chrono_ftp.ui.cleanupdialog import CleanupWindow
 from chrono_ftp.ui.logwindow import LogWindow
 from chrono_ftp.ui.serverinfodialog import ServerInfoWindow
-from chrono_ftp.ui.session import Session
+from chrono_ftp.ui.session import Session, may_keep
 from chrono_ftp.ui.windowbase import WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowprogram.py 0.0.40"
+__version__ = "windowprogram.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A tab opened from an address gets its own Session Log window, on the log that stands apart (FJ-11)
+# v0.0.47: A tab opened from an address gets its own Server Information window, never the one of a connection that carries the name
+#          that tab was given (FJ-11)
 # v0.0.40: A tab whose automatic refresh is paused is left alone (FG-15)
 # v0.0.38: Initial: block FP: the double-click on a file opens or transfers it, the right side refreshes itself every few seconds where
 #          chosen, a tab keeps its own sort order and columns where chosen (FP-01); the Session Log (FP-02), Server Information (FP-03)
@@ -165,13 +168,13 @@ class ProgramPart(WindowBase):
 
     @override
     def show_session_log(self, session: Session) -> None:
-        name = session.connection.name
+        name = sessionlog.log_name(session.connection.name, session.connection.not_saved)  # the log of this tab, never another's (FJ-11)
         open_window = self.log_windows.get(name)
         if open_window is not None and open_window.isVisible():
             open_window.raise_()
             open_window.activateWindow()
             return
-        window = LogWindow(name, sessionlog.log_for(name), self)
+        window = LogWindow(name, sessionlog.log_for(session.connection.name, session.connection.not_saved), self)
         self.log_windows[name] = window
         window.destroyed.connect(lambda _gone=None: self.log_windows.pop(name, None) if self.log_windows.get(name) is window else None)
         window.show()
@@ -181,10 +184,11 @@ class ProgramPart(WindowBase):
     @override
     def show_server_info(self, session: Session) -> None:
         name = session.connection.name
-        window = self.info_windows.get(name)
+        key = name if may_keep(session) else f"{name}\0{id(session)}"  # a tab opened from an address has a window of its own (FJ-11)
+        window = self.info_windows.get(key)
         if not isinstance(window, ServerInfoWindow):
             window = ServerInfoWindow(name, self)
-            self.info_windows[name] = window
+            self.info_windows[key] = window
         window.show()
         window.raise_()
         window.show_reading()

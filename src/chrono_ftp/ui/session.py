@@ -9,9 +9,12 @@ from chrono_ftp.transfers.queue import Job
 from chrono_ftp.ui.sidebar import FolderHistory
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.45"
+__version__ = "session.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A tab of a pasted address knows it is in no list, so nothing of it is ever written (FJ-11)
+# v0.0.47: Review round 6: the mark of a tab that is in no list sits on its connection, so every copy of that tab carries it (FJ-11)
+# v0.0.47: Review round 1: one place answers whether anything of a tab may be kept on this computer, and every writer asks it (FJ-03)
 # v0.0.45: What Ctrl+C copied, and a copy from one server to another that goes through this computer (FI-03)
 # v0.0.41: Each tab keeps the filter of the left side too (FD-06)
 # v0.0.40: Each tab can pause its automatic refresh (FG-15)
@@ -21,6 +24,22 @@ __version__ = "session.py 0.0.45"
 #          each side fell back to while the person has not moved it (FH-06)
 # v0.0.13: An edited file knows the last save sent, so a retry of it in the queue counts as its save again
 # v0.0.11: Moved here from mainwindow.py, unchanged; the helpers lost their leading underscore (D-041)
+
+
+MAY_NOT_KEEP_TEXT: str = "This tab was opened from an address, so it is in no connection list and nothing of it is kept on this computer."
+
+
+def may_keep_connection(connection: Connection) -> bool:
+    """The same question of a connection alone, for the places that have one and no tab (FJ-11)."""
+    return not connection.not_saved
+
+
+def may_keep(session: "Session | None") -> bool:
+    """Whether anything may be written on this computer under this tab's name: its password, the user name a server accepted, the
+    connection that was last live, its place in the tab row, a workspace, a bookmark. False for a tab opened from a pasted address,
+    which is saved nowhere (FJ-11, OR-19). Every writer asks this one question, so no new writer can forget it. The mark sits on the
+    connection, so a copy of a tab carries it and the connection layer keeps such a tab's log apart (FJ-11)."""
+    return session is not None and not session.connection.not_saved
 
 
 @dataclass(eq=False)

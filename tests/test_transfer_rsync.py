@@ -36,9 +36,10 @@ from tests.test_engine import Scripted
 from tests.test_transfers import Leftovers, fake_rsync, wait_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_transfer_rsync.py 0.0.13"
+__version__ = "test_transfer_rsync.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: A network address goes between square brackets in the login rsync gets (FJ-11)
 # v0.0.13: The stand-ins for rsync's run take the check of a new speed limit and the percentage done before; the removal of arrived originals is public; with resume
 #          off rsync keeps its unfinished copies in a folder of the job's own; a paused move removes the originals of what arrived
 #          before the pause when it goes on; a pause with resume off keeps what arrived; a file rsync started but did not finish before
@@ -233,6 +234,16 @@ def test_a_stopped_rsync_keeps_its_part_aside_and_the_next_run_finishes(rsync_se
     assert again.state == State.DONE, again.message
     assert (server_side / "big.bin").read_bytes() == content
     assert not (server_side / PARTIAL_FOLDER).exists()
+
+
+def test_rsync_puts_a_network_address_between_brackets() -> None:
+    """A tab opened from a pasted address can be a network address; rsync reads user@::1:/path as something else entirely (FJ-11)."""
+    job = Job(Leftovers([]), Connection(name="T", host="2001:db8::1", user="anna"), "/home/a/tree", "/srv", True, "tree")
+    assert rsync_arguments(job, 0)[-1] == "anna@[2001:db8::1]:/srv/"
+    down = Job(Leftovers([]), Connection(name="T", host="2001:db8::1"), "/home/a/tree", "/srv/tree", False, "tree")
+    assert rsync_arguments(down, 0)[-2] == "[2001:db8::1]:/srv/tree"
+    plain = Job(Leftovers([]), Connection(name="T", host="h.example.com", user="anna"), "/home/a/tree", "/srv", True, "tree")
+    assert rsync_arguments(plain, 0)[-1] == "anna@h.example.com:/srv/"  # an ordinary name keeps its plain form
 
 
 def test_rsync_gets_a_flag_for_every_option() -> None:

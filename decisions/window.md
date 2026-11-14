@@ -53,3 +53,6 @@
 51. [[D-098]] Tab extras
 52. [[D-099]] Copy and paste files between tabs
 53. [[D-100]] Workspaces
+54. [[D-101]] Folders in the connection list
+55. [[D-102]] Reading the SSH settings of this computer
+56. [[D-103]] Addresses
