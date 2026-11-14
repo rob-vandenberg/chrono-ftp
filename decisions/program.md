@@ -5,3 +5,4 @@
 3. [[D-003]] Qt 6 through PySide6
 4. [[D-004]] License
 5. [[D-005]] Names
+6. [[D-104]] The installers

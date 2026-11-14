@@ -7,3 +7,4 @@
 5. [[D-026]] Test elsewhere first
 6. [[D-031]] The owner's word for the first version
 7. [[D-054]] The order of the blocks
+8. [[D-104]] The installers

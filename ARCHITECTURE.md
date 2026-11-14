@@ -24,6 +24,11 @@ All code lives in the package `chrono_ftp` (src layout: `src/chrono_ftp/`).
 
 There is no separate command-line program (D-022).
 
+Outside the package, `packaging/` builds the installers: Nuitka compiles the program with its own Python and Qt inside
+an Ubuntu 22.04 container, nFPM packs that folder into a `.deb` and an `.rpm`, and `packaging/chrono_ftp_main.py` is the
+one file Nuitka compiles, which only calls `chrono_ftp.ui.main()`. It holds no program logic (D-104,
+`packaging/PACKAGING.md`).
+
 ## 3. Layers
 
 A module may import only from lower layers. Modules in one layer are independent siblings and do not import each other. Enforced by import-linter (`.venv/bin/lint-imports`, contract in `pyproject.toml`).

@@ -31,7 +31,7 @@ Result: replaces the reference program for everyday copying.
 2. Search on the remote: done (0.0.5).
 3. Terminal launch: done (0.0.5).
 4. One-time import of a session list: done (0.0.5), checked by the owner with a real export.
-5. The folder `packaging/` for the first installer: open.
+5. The folder `packaging/` for the first installer: done (0.0.48). The `.deb` and the `.rpm` are built and tried in bare containers; nothing is on the release page until the owner has installed one (OR-29).
 6. Compare local and remote files: done (0.0.6), as Synchronize.
 
 ## Milestone 4: daily use

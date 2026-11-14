@@ -1,0 +1,102 @@
+# --- Version ------------------------------------------------------------
+# nfpm.yaml 0.0.48
+# --- Version history ----------------------------------------------------
+# v0.0.48: Initial: the .deb and .rpm of Chrono FTP, made by packaging/package_linux.sh
+#
+# The program folder (build/linux/chrono-ftp.dist, made by packaging/build_linux.sh) carries its own Python and Qt; the
+# packages only ask for the system libraries a desktop may not have, and for the two programs Chrono FTP works
+# with: rsync for fast transfers and the SSH client for the terminal. The SSH client also brings the Kerberos library
+# that Qt's network part needs, so dropping it would stop the program from starting at all.
+# The xcb libraries are named one by one, although a desktop that has libgl1 has them: the program's window cannot open
+# without them, and the start in a bare container cannot see that (it starts without a screen). Run from the project root.
+name: chrono-ftp
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: net
+priority: optional
+maintainer: Rob Vandenberg <RobVandenberg64@gmail.com>
+description: |
+  Copy files between your computer and your servers.
+  Chrono FTP is a free program for Linux. Your computer is always on the left and your server on the right, and every
+  connection can have a colour of its own, so you always know which server you are working on.
+vendor: Chrono FTP
+homepage: https://github.com/rob-vandenberg/chrono-ftp
+license: AGPL-3.0-only
+
+contents:
+  - src: build/linux/chrono-ftp.dist
+    dst: /opt/chrono-ftp
+    type: tree
+  - src: /opt/chrono-ftp/chrono-ftp
+    dst: /usr/bin/chrono-ftp
+    type: symlink
+  - src: packaging/chrono-ftp.desktop
+    dst: /usr/share/applications/chrono-ftp.desktop
+  - src: packaging/chrono-ftp.metainfo.xml
+    dst: /usr/share/metainfo/io.github.rob_vandenberg.chrono_ftp.metainfo.xml
+  - src: src/chrono_ftp/ui/resources/chrono-ftp.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/chrono-ftp.svg
+  - src: LICENSE
+    dst: /usr/share/doc/chrono-ftp/LICENSE
+
+overrides:
+  deb:
+    depends:
+      - rsync
+      - openssh-client
+      - libxcb-cursor0
+      - libxcb-randr0
+      - libxcb-sync1
+      - libxcb-xfixes0
+      - libxcb-glx0
+      - libxcb-icccm4
+      - libxcb-image0
+      - libxcb-keysyms1
+      - libxcb-render-util0
+      - libxcb-shape0
+      - libxcb-xinerama0
+      - libx11-xcb1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libegl1
+      - libgl1
+      - libfontconfig1
+      - libdbus-1-3
+      - libxrandr2
+      - libxi6
+      - libxtst6
+      - libxfixes3
+      - libwayland-cursor0
+      - libwayland-egl1
+      - libglib2.0-0 | libglib2.0-0t64
+  rpm:
+    depends:
+      - rsync
+      - openssh-clients
+      - libxcb-cursor.so.0()(64bit)
+      - libxcb-randr.so.0()(64bit)
+      - libxcb-sync.so.1()(64bit)
+      - libxcb-xfixes.so.0()(64bit)
+      - libxcb-glx.so.0()(64bit)
+      - libxcb-icccm.so.4()(64bit)
+      - libxcb-image.so.0()(64bit)
+      - libxcb-keysyms.so.1()(64bit)
+      - libxcb-render-util.so.0()(64bit)
+      - libxcb-shape.so.0()(64bit)
+      - libxcb-xinerama.so.0()(64bit)
+      - libX11-xcb.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libEGL.so.1()(64bit)
+      - libGL.so.1()(64bit)
+      - libfontconfig.so.1()(64bit)
+      - libdbus-1.so.3()(64bit)
+      - libXrandr.so.2()(64bit)
+      - libXi.so.6()(64bit)
+      - libXtst.so.6()(64bit)
+      - libXfixes.so.3()(64bit)
+      - libwayland-cursor.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
+      - libglib-2.0.so.0()(64bit)

@@ -342,3 +342,22 @@ name and the brackets is unchanged. The greyed Export… button says what is tru
 After the tenth review round of block FJ (2 fixes): the help line asks only for %2F in a password, because an @ in a folder needs no
 writing out; and where no user name was read while the folder holds an @, the window says that too, under the server and the port, so a
 password someone wrote with a plain slash stands out where the eye lands. Open stays enabled: the address is proper and may be meant.
+
+## 0.0.48 (2026-11-14): the installers
+
+The folder `packaging/` makes the first installers: `dist/chrono-ftp_0.0.48_amd64.deb` (98 MB) and
+`dist/chrono-ftp_0.0.48_x86_64.rpm` (100 MB). Nuitka compiles the program with its own Python 3.14 and Qt into one folder inside an
+Ubuntu 22.04 container (`packaging/build_linux.sh`, `packaging/build_in_container.sh`), because a program built on an older system
+also runs on newer ones and not the other way round, and nFPM packs that folder into `/opt/chrono-ftp` with a symlink in `/usr/bin`,
+the menu entry, the icon, the licence and the app information (`packaging/nfpm.yaml`, `packaging/chrono-ftp.desktop`,
+`packaging/chrono-ftp.metainfo.xml`). Everything the build needs from outside is fetched once into a builder image and a wheel cache,
+so a build downloads nothing. The packages name `rsync` and the SSH client as dependencies, so the person's own package manager
+installs what is missing where they see it; no script inside a package runs a package manager itself, and the terminal program and
+`xdg-open` stay out and are detected at run time as before. The version, the repository address and the licence of the About window
+come from the wheel's own package information, which is copied into the program folder: Nuitka can also compile that information in,
+and then the licence text is gone, because it is read from the distribution's files and compiled information has no files (measured in
+the builder image). The build checks all three and refuses to make a package without them. Both packages were installed in a bare
+Ubuntu 22.04 and a bare Fedora 43 and started as a normal user, which also proved the two names of the SSH client. `./build-release.sh`
+runs the whole way and puts nothing on the GitHub release page unless given `--upload` (D-104, `packaging/PACKAGING.md`).
+
+Open: the owner has not installed either package by hand yet, and nothing is on the release page (OR-29).

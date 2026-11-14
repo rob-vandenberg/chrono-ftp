@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- chrono-ftp.metainfo.xml 0.0.48
+     v0.0.48: Initial: the app information software centres (Discover, GNOME Software) need to list Chrono FTP as an
+     installed program, with Uninstall. It must name its package (pkgname): Discover skips every program whose app
+     information does not. Installed in /usr/share/metainfo by packaging/nfpm.yaml. -->
+<component type="desktop-application">
+  <id>io.github.rob_vandenberg.chrono_ftp</id>
+  <name>Chrono FTP</name>
+  <summary>Copy files between your computer and your servers</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <developer id="io.github.rob_vandenberg">
+    <name>Rob Vandenberg</name>
+  </developer>
+  <description>
+    <p>
+      Chrono FTP is a free program for Linux that copies files between your computer and your servers. Your computer is
+      always on the left and your server on the right, so you always know where you are looking, and you copy files by
+      dragging them from one side to the other.
+    </p>
+    <p>
+      Every connection can have a colour of its own. While you are connected, the right-hand side and the tab of that
+      connection show that colour, so you can keep several servers open at the same time, each with its own folders, and
+      still see at a glance which one you are working on.
+    </p>
+    <p>
+      It works with servers over SSH and over FTP. Copying runs in a queue you can watch, pause and stop. Renaming,
+      moving, copying, deleting and changing permissions happen on the server itself, so files are not sent to your
+      computer and back for no reason.
+    </p>
+  </description>
+  <pkgname>chrono-ftp</pkgname>
+  <launchable type="desktop-id">chrono-ftp.desktop</launchable>
+  <icon type="stock">chrono-ftp</icon>
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+  <keywords>
+    <keyword>ftp</keyword>
+    <keyword>sftp</keyword>
+    <keyword>ssh</keyword>
+    <keyword>transfer</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/rob-vandenberg/chrono-ftp</url>
+  <url type="bugtracker">https://github.com/rob-vandenberg/chrono-ftp/issues</url>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>chrono-ftp</binary>
+  </provides>
+</component>

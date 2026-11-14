@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Chrono FTP
+GenericName=File transfer
+Comment=Copy files between your computer and your servers
+Exec=/usr/bin/chrono-ftp
+TryExec=/usr/bin/chrono-ftp
+Icon=chrono-ftp
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=ftp;sftp;ssh;transfer;upload;download;server;
+StartupWMClass=chrono-ftp
