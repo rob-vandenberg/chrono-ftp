@@ -388,3 +388,17 @@ real; dimming on the light look now steps towards the window colour itself rathe
 window steps back instead of forward. Every fix has a test.
 
 Open: the light look has not been seen by a human, and nothing of 0.0.34 onwards has been used by hand on the owner's desktop.
+
+## 0.0.50 (2026-11-14): the Settings window keeps what it does not show
+
+A fault, not a feature. `SettingsDialog.chosen()` built fresh settings out of the fields on its own pages, so every setting the window
+has no field for went back to its standard as soon as a person pressed OK anywhere in Settings. Six were lost: the checksum algorithm
+of Properties, every choice of the Synchronize window, the counted folder pairs, the order the tabs were dragged into, the open folders
+of the connection list, and the connection New starts from; the last connection was patched back by hand in `open_settings`, and the
+toolbars and the mask history were each held by the window as a field of their own. The window now keeps the whole `Settings` it was
+given and `chosen()` returns it with only the shown values replaced, so no setting it does not show can be lost, now or later. One
+setting can change while the window stands open, the connection last live, so `chosen(now)` takes the settings of this moment from the
+main window, which replaced the hand-made patch. Three tests: the dialog keeps every unshown value while a shown one changes, the same
+through the window itself and in the file it writes, and the values of this moment win over the older ones. All three fail on 0.0.49.
+
+Open: the light look of 0.0.49 has not been seen by a human, and nothing of 0.0.34 onwards has been used by hand on the owner's desktop.

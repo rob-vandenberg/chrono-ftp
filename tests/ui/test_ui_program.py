@@ -18,6 +18,7 @@ from chrono_ftp.config.connections import config_folder
 from chrono_ftp.connections import sessionlog
 from chrono_ftp.core.connection import Connection
 from chrono_ftp.core.logrules import DEBUG, DETAILED, NORMAL, OFF, LogRules
+from chrono_ftp.core.synchronizing import Options as SyncOptions
 from chrono_ftp.engine import cleanup, updatecheck
 from chrono_ftp.transfers.queue import ENDED, Job, State
 from chrono_ftp.ui.aboutdialog import CURRENT_TEXT, AboutWindow
@@ -69,6 +70,60 @@ def test_the_settings_window_has_its_pages_and_keeps_every_choice(qtbot: QtBot) 
     dialog.show_page("Confirmations")
     assert dialog.pages.currentIndex() == 6
     assert dialog.chosen() == chosen  # unchanged, every value comes back as it was, also the last connection it does not show
+
+
+def unshown_settings() -> saved_settings.Settings:
+    """Settings in which every value the Settings window does not show is away from its standard, so losing one is visible."""
+    return saved_settings.Settings(
+        last_connection="Shop",
+        toolbars=saved_settings.ToolbarChoices(hidden=("queue",)),
+        mask_history=("*.log", "*.tmp"),
+        checksum_algorithm="md5",
+        synchronize=replace(SyncOptions(), case_matters=False, delete_other_side=True, no_subfolders=True),
+        scan_counts=(("/here\n/there", 12),),
+        tab_order=("Shop", "Office"),
+        open_connection_folders=("Work",),
+        new_connection_from="Shop",
+    )
+
+
+def test_ok_in_settings_keeps_every_setting_the_window_does_not_show(qtbot: QtBot) -> None:
+    """The checksum algorithm, the Synchronize choices, the counted folder pairs, the order of the tabs, the open folders of the
+    connection list, the connection New starts from, the last connection, the toolbars and the masks typed are all kept."""
+    before = unshown_settings()
+    dialog = SettingsDialog(before)
+    qtbot.addWidget(dialog)
+    dialog.show_hidden.setChecked(not before.show_hidden)
+    after = dialog.chosen()
+    assert after.show_hidden is not before.show_hidden  # what the window shows did change
+    assert replace(after, show_hidden=before.show_hidden) == before  # and nothing else changed, whatever else the settings hold
+    for name in ("checksum_algorithm", "synchronize", "scan_counts", "tab_order", "open_connection_folders", "new_connection_from", "last_connection", "toolbars", "mask_history"):
+        assert getattr(after, name) == getattr(before, name)
+
+
+def test_ok_in_settings_keeps_the_settings_the_window_does_not_show_and_writes_them(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Through the window itself: OK changes what was chosen and the file keeps everything else."""
+    before = unshown_settings()
+    window.settings = before
+
+    def accepted(dialog: SettingsDialog) -> int:
+        dialog.show_hidden.setChecked(not before.show_hidden)
+        return QDialog.DialogCode.Accepted.value
+
+    monkeypatch.setattr(SettingsDialog, "exec", accepted)
+    window.open_settings()
+    assert window.settings.show_hidden is not before.show_hidden
+    assert replace(window.settings, show_hidden=before.show_hidden) == before
+    assert replace(saved_settings.load(), show_hidden=before.show_hidden) == before
+
+
+def test_the_settings_window_puts_its_choices_on_the_settings_of_this_moment(qtbot: QtBot) -> None:
+    """A setting can change while the window stands open (the connection last live): OK keeps the value of this moment, not the older one."""
+    dialog = SettingsDialog(saved_settings.Settings(last_connection="Shop"))
+    qtbot.addWidget(dialog)
+    dialog.show_hidden.setChecked(False)
+    after = dialog.chosen(saved_settings.Settings(last_connection="Office"))
+    assert after.last_connection == "Office" and after.show_hidden is False
 
 
 def test_the_automatic_refresh_is_off_at_its_lowest_step(qtbot: QtBot) -> None:

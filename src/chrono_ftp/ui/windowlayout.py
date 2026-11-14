@@ -18,9 +18,10 @@ from chrono_ftp.ui.settingsdialog import SettingsDialog
 from chrono_ftp.ui.windowbase import CONNECTION_LIST_PARTS, CONNECTION_LIST_SIZE, HIGHEST_QUEUE_HEIGHT, LOCAL_MENU, REMOTE_MENU, SETTINGS_NOT_KEPT_TEXT, WindowBase
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowlayout.py 0.0.41"
+__version__ = "windowlayout.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: OK in the Settings window changes only what that window shows, so no setting it does not show is lost
 # v0.0.41: The filter is a window with the mask field and its history, and Clear; each tab keeps the filter of both sides; the button
 #          next to the path clears it (FD-06)
 # v0.0.40: The menu of a list also moves to the other side and has This File Only, Select and Copy to Clipboard (block FG); it opens
@@ -124,7 +125,7 @@ class LayoutPart(WindowBase):
         accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted.value
         dialog.deleteLater()
         if accepted:
-            self.settings = replace(dialog.chosen(), last_connection=self.settings.last_connection)  # not in the settings window
+            self.settings = dialog.chosen(self.settings)  # only what the window shows changes; everything else stays as it is now
             self._apply_settings()
             try:
                 saved_settings.save(self.settings)

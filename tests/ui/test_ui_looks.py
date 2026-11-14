@@ -153,7 +153,7 @@ def test_ok_in_settings_colours_the_rows_at_once(qtbot: QtBot, window: MainWindo
     def accepted(_self: SettingsDialog) -> int:
         return SettingsDialog.DialogCode.Accepted.value
 
-    def given(_self: SettingsDialog) -> saved_settings.Settings:
+    def given(_self: SettingsDialog, _now: saved_settings.Settings | None = None) -> saved_settings.Settings:
         return chosen
 
     monkeypatch.setattr(SettingsDialog, "exec", accepted)
@@ -462,7 +462,7 @@ def chose_in_settings(window: MainWindow, monkeypatch: pytest.MonkeyPatch, setti
     def accepted(_self: SettingsDialog) -> int:
         return SettingsDialog.DialogCode.Accepted.value
 
-    def given(_self: SettingsDialog) -> saved_settings.Settings:
+    def given(_self: SettingsDialog, _now: saved_settings.Settings | None = None) -> saved_settings.Settings:
         return settings
 
     monkeypatch.setattr(SettingsDialog, "exec", accepted)

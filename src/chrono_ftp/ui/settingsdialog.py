@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import replace
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
@@ -16,9 +17,12 @@ from chrono_ftp.ui.presetseditor import PresetsEditor
 from chrono_ftp.ui.transferoptionsform import TransferOptionsForm
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.49"
+__version__ = "settingsdialog.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: OK keeps every setting this window does not show: it changes the settings it was given instead of building new ones, so the
+#          checksum algorithm, the Synchronize choices, the counted folder pairs, the order of the tabs, the open folders of the
+#          connection list and the connection New starts from are no longer lost, and neither is any setting added later
 # v0.0.49: The Look choice on the General page: the same as the desktop, dark or light (FQ-04)
 # v0.0.41: Masks (block FD): the Transfers page has the file mask, text and names tabs (FD-01 to FD-03); a Presets page with the named
 #          sets of transfer settings and their rules (FD-04); the history of masks stays as it is
@@ -80,9 +84,7 @@ class SettingsDialog(QDialog):
         """clean_up: opens the Clean Up window; True when it removed the settings, which closes this window without keeping anything."""
         super().__init__(parent)
         self.setWindowTitle(WINDOW_TITLE)
-        self.last_connection: str = settings.last_connection  # not shown here, and kept as it is
-        self.toolbars = settings.toolbars  # chosen on the toolbars themselves (FQ-03), and kept as they are
-        self.mask_history = settings.mask_history  # grows where a mask is used, and kept as it is
+        self.given: Settings = settings  # the settings as they were: chosen() changes only what this window shows, so nothing else is lost
         self.clean_up_callback: Callable[[], bool] | None = clean_up
         self.pages = QStackedWidget()
         self.page_list = QListWidget()
@@ -285,20 +287,23 @@ class SettingsDialog(QDialog):
             ok.setEnabled(acceptable)
             ok.setToolTip(self.transfer_options.problem_text() or self.presets.form.problem_text())
 
-    def chosen(self) -> Settings:
+    def chosen(self, now: Settings | None = None) -> Settings:
+        """Only the values this window shows, put onto the settings as they are now; everything the window does not show is kept. now:
+        the settings of this moment, for the caller that has them, because one of them (the connection last live) can change while this
+        window stands open; without it, the settings this window was given."""
         refresh = self.refresh.value()
         level = self.log_level.currentData()
         click = self.double_click.currentData()
-        return Settings(
-            str(self.tree_place.currentData()),
-            self.show_hidden.isChecked(),
-            self.transfer_options.chosen(),
-            self.show_transfer_window.isChecked(),
-            self.start_by_themselves.isChecked(),
-            self.keep_done.value(),
-            self.on_error.currentData() is True,
-            self.at_once.value(),
-            self.last_connection,
+        return replace(
+            self.given if now is None else now,
+            tree_place=str(self.tree_place.currentData()),
+            show_hidden=self.show_hidden.isChecked(),
+            transfer_options=self.transfer_options.chosen(),
+            show_transfer_window=self.show_transfer_window.isChecked(),
+            start_by_themselves=self.start_by_themselves.isChecked(),
+            keep_done_seconds=self.keep_done.value(),
+            pause_on_error=self.on_error.currentData() is True,
+            transfers_at_once=self.at_once.value(),
             confirm_close_running=self.confirm_close_running.isChecked(),
             confirm_delete=self.confirm_delete.isChecked(),
             confirm_drop=self.confirm_drop.isChecked(),
@@ -311,7 +316,6 @@ class SettingsDialog(QDialog):
             file_colours=self.file_colours.chosen(),
             thumbnail_megabytes=self.thumbnail_size.value(),
             thumbnail_mask=self.thumbnail_mask.text().strip(),
-            toolbars=self.toolbars,
             two_pane_selection=self.two_pane.isChecked(),
             key_set=key_set if isinstance(key_set := self.key_set.currentData(), str) else CLASSIC_KEYS,
             size_format=size if isinstance(size := self.size_format.currentData(), str) else SHORT,
@@ -319,6 +323,5 @@ class SettingsDialog(QDialog):
             title_path=place if isinstance(place := self.title_path.currentData(), str) else TITLE_SHORT,
             drag_move=self.drag_move.isChecked(),
             presets=self.presets.chosen(),
-            mask_history=self.mask_history,
             look=look if isinstance(look := self.look.currentData(), str) else FOLLOW_DESKTOP,
         )
